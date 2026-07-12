@@ -1,5 +1,5 @@
 import { GOODS, MINED_ORE_GOOD_IDS, getGood } from '../data/goods.js'
-import { getPrice, buyGood, sellGood, sellMinedOre, purchaseShip } from '../game/economy.js'
+import { getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip } from '../game/economy.js'
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
 import { acceptMission, turnInMission } from '../game/missions.js'
 
@@ -13,9 +13,11 @@ const STYLE = `
 #docking-ui table { width: 100%; border-collapse: collapse; }
 #docking-ui th, #docking-ui td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2438; }
 #docking-ui button.close { background: #a13a3a; border: none; color: white; padding: 6px 12px; cursor: pointer; }
-#docking-ui button.buy, #docking-ui button.sell, #docking-ui button.buy-ship, #docking-ui button.accept-mission, #docking-ui button.turnin {
+#docking-ui button.buy, #docking-ui button.sell, #docking-ui button.buy-ship, #docking-ui button.accept-mission, #docking-ui button.turnin, #docking-ui button.repair-btn {
   background: #2a3a55; border: none; color: #cfe3ff; padding: 3px 8px; cursor: pointer; margin-right: 4px;
 }
+#docking-ui button.repair-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#docking-ui .repair-row { margin-bottom: 10px; }
 `
 
 export function createDockingUI(container, gameState, rng) {
@@ -51,11 +53,20 @@ export function createDockingUI(container, gameState, rng) {
 
   function renderTrade() {
     const shipClass = getShipClass(gameState.player.ship.classId)
-    const cargoUsed = Object.values(gameState.player.ship.cargo).reduce((a, b) => a + b, 0)
-    const miningHold = gameState.player.ship.miningHold
+    const ship = gameState.player.ship
+    const cargoUsed = Object.values(ship.cargo).reduce((a, b) => a + b, 0)
+    const miningHold = ship.miningHold
     const miningUsed = Object.values(miningHold).reduce((a, b) => a + b, 0)
+    // Repair (hull/armor only — shields already regenerate on their own,
+    // see combat.js) is a station-only service, per its own docking bay crew.
+    const cost = repairCost(gameState)
     contentEl.innerHTML = `
       <div class="credits">Credits: ${gameState.player.credits}cr | Cargo: ${cargoUsed}/${shipClass.stats.cargoCapacity}</div>
+      ${currentBody.kind === 'station' ? `
+      <div class="repair-row">
+        Hull: ${Math.round(ship.hull)}/${shipClass.stats.hull} | Armor: ${Math.round(ship.armor)}/${shipClass.stats.armor}
+        <button class="repair-btn" ${cost === 0 ? 'disabled' : ''}>${cost === 0 ? 'Fully Repaired' : `Repair Ship (${cost}cr)`}</button>
+      </div>` : ''}
       <table>
         <thead><tr><th>Good</th><th>Price</th><th>Held</th><th></th></tr></thead>
         <tbody>${GOODS.filter((g) => !MINED_ORE_GOOD_IDS.includes(g.id)).map((g) => {
@@ -81,6 +92,14 @@ export function createDockingUI(container, gameState, rng) {
         }).join('')}</tbody>
       </table>
     `
+    contentEl.querySelector('.repair-btn')?.addEventListener('click', () => {
+      try {
+        repairShip(gameState)
+      } catch (err) {
+        alert(err.message)
+      }
+      renderTrade()
+    })
     contentEl.querySelectorAll('.buy').forEach((btn) =>
       btn.addEventListener('click', () => {
         try {

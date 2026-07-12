@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { getPrice, buyGood, sellGood, sellMinedOre, purchaseShip } from './economy.js'
-import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
+import { getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip } from './economy.js'
+import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
 
 function makeGameState() {
   return {
@@ -57,6 +57,38 @@ test('purchaseShip swaps the player ship and deducts credits', () => {
   assert.equal(gameState.player.ship.instanceName, 'Wanderer')
   assert.ok(gameState.player.credits < 50000)
   assert.deepEqual(gameState.player.ship.miningHold, {}, 'the new ship should have its own empty mining hold')
+})
+
+test('repairCost is zero for a fully-healthy ship and positive for a damaged one', () => {
+  const gameState = makeGameState()
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  gameState.player.ship.hull = shipClass.stats.hull
+  gameState.player.ship.armor = shipClass.stats.armor
+  assert.equal(repairCost(gameState), 0)
+
+  gameState.player.ship.hull = shipClass.stats.hull - 10
+  gameState.player.ship.armor = shipClass.stats.armor - 2
+  assert.ok(repairCost(gameState) > 0)
+})
+
+test('repairShip restores hull/armor to max and deducts credits; throws if already full or unaffordable', () => {
+  const gameState = makeGameState()
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  gameState.player.ship.hull = shipClass.stats.hull - 20
+  gameState.player.ship.armor = shipClass.stats.armor - 5
+  gameState.player.credits = 1000
+
+  const cost = repairCost(gameState)
+  repairShip(gameState)
+  assert.equal(gameState.player.ship.hull, shipClass.stats.hull)
+  assert.equal(gameState.player.ship.armor, shipClass.stats.armor)
+  assert.equal(gameState.player.credits, 1000 - cost)
+
+  assert.throws(() => repairShip(gameState), /already fully repaired/)
+
+  gameState.player.ship.hull -= 50
+  gameState.player.credits = 0
+  assert.throws(() => repairShip(gameState), /Not enough credits/)
 })
 
 test('sellMinedOre pays out from the mining hold, separate from regular cargo', () => {

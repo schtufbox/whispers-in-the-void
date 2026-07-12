@@ -63,6 +63,31 @@ export function sellMinedOre(gameState, bodyId, goodId, quantity) {
   nudgePrice(gameState, bodyId, goodId, -quantity)
 }
 
+// Shields already regenerate on their own over time (see combat.js's
+// regenShields) — only hull and armor persist damage indefinitely, so
+// repairing just tops those back up. A modest per-point rate rather than a
+// flat fee, so a near-death ship costs meaningfully more to fix than a
+// lightly-scratched one.
+const REPAIR_COST_PER_POINT = 5
+
+export function repairCost(gameState) {
+  const shipClass = getShipClass(gameState.player.ship.classId)
+  const ship = gameState.player.ship
+  const missing = shipClass.stats.hull - ship.hull + (shipClass.stats.armor - ship.armor)
+  return Math.max(0, Math.round(missing * REPAIR_COST_PER_POINT))
+}
+
+export function repairShip(gameState) {
+  const shipClass = getShipClass(gameState.player.ship.classId)
+  const cost = repairCost(gameState)
+  if (cost === 0) throw new Error('Ship is already fully repaired')
+  if (gameState.player.credits < cost) throw new Error('Not enough credits to repair')
+
+  gameState.player.credits -= cost
+  gameState.player.ship.hull = shipClass.stats.hull
+  gameState.player.ship.armor = shipClass.stats.armor
+}
+
 export function purchaseShip(gameState, newClassId, instanceName) {
   const newClass = getShipClass(newClassId)
   if (gameState.player.credits < newClass.price) throw new Error('Not enough credits')

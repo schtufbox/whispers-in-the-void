@@ -12,9 +12,11 @@ A procedurally generated 3D space trading, combat, and exploration game for the 
 - **Missions** — bounty, exploration, investigation, and probe missions seeded across the galaxy.
 - **Mining** — target an asteroid and toggle mining mode for a continuous mining laser that auto-fires until your hold is full, or just shoot a field manually. Rarer, more valuable ore tiers are found further out toward the galaxy's rim.
 - **Probing** — scan planets, moons, and asteroid fields for a chance at valuable survey data.
-- **Docking** — a scripted docking/undocking animation flies you into a station/base interior before the trade & mission menus appear.
-- **Hyperspace & supercruise** — jump between neighboring systems only (arriving near the system's edge, facing the star) — crossing the galaxy means hopping system to system, not jumping anywhere on the map — and autopilot at 3x speed to an in-system waypoint.
+- **Docking & repair** — a scripted docking/undocking animation flies you into a station/base interior before the trade & mission menus appear; stations also offer ship repair for a modest per-point fee.
+- **Hyperspace & supercruise** — jump between neighboring systems only (arriving near the system's edge, facing the star) — crossing the galaxy means hopping system to system, not jumping anywhere on the map — and autopilot at a brisk multiple of normal cruising speed to an in-system waypoint.
 - **Dramatic stars** — roiling, fiery star cores with pulsing coronas; binary systems orbit a stationary primary with a fiery energy ring connecting the pair.
+- **Music & sound** — a title theme, a rotating ambient soundtrack during gameplay, and dedicated music for the game-over screen; distinct thruster sounds for accelerating vs. braking, a bassy punch on entering/exiting supercruise, a continuous mining-laser hum, and beefed-up synthesized weapon and explosion sound effects.
+- **Thruster particles** — a warm exhaust trail from the rear while accelerating, a smaller cool retro-thruster glow at the nose while braking, and a dramatic cyan streak trail during supercruise.
 - **Permadeath** — no respawns, no checkpoints.
 
 ## Getting started

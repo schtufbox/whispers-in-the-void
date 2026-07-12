@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 
-export const SUPERCRUISE_MULTIPLIER = 3
+export const SUPERCRUISE_MULTIPLIER = 4.2 // "~40% faster" per user request (was 3)
 const ARRIVAL_RANGE = 60
 const STEER_RATE_MULTIPLIER = 1.5
 const DAMPING_PER_SECOND = 0.35

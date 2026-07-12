@@ -10,6 +10,7 @@ import { buildAsteroidFieldMesh, getAsteroidRocks } from './render/asteroidField
 import { buildProjectileMesh, buildImpactFlash } from './render/projectileMesh.js'
 import { buildStationInteriorMesh } from './render/stationInterior.js'
 import { syncMeshToEntity, syncChaseCamera } from './render/sceneSync.js'
+import { createThrusterEffects } from './render/thrusterParticles.js'
 import { createGameState } from './game/state.js'
 import { createInputState, createMouseAimState, updateFlight } from './game/flight.js'
 import { updateSupercruise } from './game/supercruise.js'
@@ -69,7 +70,8 @@ const BAY_PARK_OFFSET = new THREE.Vector3(0, 0, 20)
 
 const appEl = document.getElementById('app')
 const { scene, camera, renderer } = createScene(appEl)
-scene.add(createStarfield())
+const starfield = createStarfield()
+scene.add(starfield)
 const nebula = createNebula()
 scene.add(nebula)
 
@@ -100,6 +102,10 @@ function exitFlightMode() {
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
   if (document.pointerLockElement === renderer.domElement) document.exitPointerLock()
+  // updateMiningBeam() (which would otherwise silence this itself) doesn't
+  // run at all once paused/docked/nav-map-open, so a beam active right as
+  // one of those starts would otherwise hum forever.
+  audio.setMiningBeamActive(false)
 }
 
 document.addEventListener('pointerlockchange', () => {
@@ -109,6 +115,7 @@ document.addEventListener('pointerlockchange', () => {
 let gameState = null
 let playerShipClass = null
 let playerMesh = null
+let thrusterEffects = null
 let hud = null
 let dockingUI = null
 let pauseMenu = null
@@ -255,11 +262,13 @@ function startMenuBackground() {
   menuStationMesh = buildStationMesh()
   scene.add(menuStationMesh)
   menuAnimT = 0
+  audio.playTitleMusic()
 }
 
 function stopMenuBackground() {
   if (menuStationMesh) scene.remove(menuStationMesh)
   menuStationMesh = null
+  audio.stopTitleMusic()
 }
 
 const MENU_FLYBY_LOOP_S = 42
@@ -342,6 +351,7 @@ function updateMiningBeam() {
 
   if (!active) {
     miningBeamMesh.visible = false
+    audio.setMiningBeamActive(false)
     return
   }
 
@@ -353,6 +363,7 @@ function updateMiningBeam() {
   const length = delta.length()
 
   miningBeamMesh.visible = true
+  audio.setMiningBeamActive(true)
   miningBeamMesh.position.copy(origin).addScaledVector(delta, 0.5)
   miningBeamMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize())
   miningBeamMesh.scale.set(1, length, 1)
@@ -387,6 +398,8 @@ const menu = createMenu(appEl, {
 
 function clearSession() {
   if (playerMesh) scene.remove(playerMesh)
+  if (thrusterEffects) scene.remove(thrusterEffects.group)
+  thrusterEffects = null
   if (miningBeamMesh) scene.remove(miningBeamMesh)
   miningBeamMesh = null
   miningMode = false
@@ -418,8 +431,10 @@ function clearSession() {
   miningModeIndicatorEl?.remove()
   jumpFlashEl?.remove()
   if (interiorMesh) scene.remove(interiorMesh)
-  audio.setThrustActive(false)
+  audio.setThrustState(null)
   audio.setSupercruiseActive(false)
+  audio.setMiningBeamActive(false)
+  audio.stopAmbientMusic()
   camera.fov = BASE_FOV
   camera.updateProjectionMatrix()
   docked = false
@@ -439,6 +454,8 @@ function startSession(newGameState) {
   playerShipClass = getShipClass(gameState.player.ship.classId)
   playerMesh = buildShipMesh(playerShipClass)
   scene.add(playerMesh)
+  thrusterEffects = createThrusterEffects()
+  scene.add(thrusterEffects.group)
   miningBeamMesh = buildMiningBeamMesh()
   scene.add(miningBeamMesh)
 
@@ -454,7 +471,7 @@ function startSession(newGameState) {
   pauseMenu = createPauseMenu(appEl, {
     onResume: () => {
       paused = false
-      audio.setThrustActive(false)
+      audio.setThrustState(null)
     },
     onSave: () => doSave(),
     onRestart: () => {
@@ -545,7 +562,7 @@ function startSession(newGameState) {
   appEl.appendChild(jumpFlashEl)
 
   nextAmbientSpawnAt = gameState.simTime + AMBIENT_SPAWN_INTERVAL_S
-  audio.startAmbientHum()
+  audio.startAmbientMusic()
 }
 
 function returnToMenu() {
@@ -729,6 +746,7 @@ function updateJumpEffect(dt) {
   if (jumpEffect && jumpEffect.elapsed >= JUMP_DURATION_S) {
     jumpEffect = null
     jumpFlashEl.style.display = 'none'
+    audio.playHyperspaceArrival()
     camera.fov = BASE_FOV
     camera.updateProjectionMatrix()
   }
@@ -736,7 +754,7 @@ function updateJumpEffect(dt) {
 
 function dock(body) {
   docked = true
-  audio.setThrustActive(false)
+  audio.setThrustState(null)
   markBodyVisited(gameState, body.id)
   dockPromptEl.style.display = 'none'
   dockingUI.show(body, () => beginUndocking())
@@ -765,7 +783,7 @@ function beginDocking(body) {
     facingQuat: quatFacing(exteriorPoint, bodyPos)
   }
   gameState.player.ship.velocity = [0, 0, 0]
-  audio.setThrustActive(false)
+  audio.setThrustState(null)
   exitFlightMode()
   dockPromptEl.style.display = 'none'
   probePromptEl.style.display = 'none'
@@ -862,8 +880,9 @@ function handlePlayerDeath() {
     reputation: gameState.player.reputation,
     cause: 'Ship destroyed in combat'
   }
-  audio.playDeath()
+  audio.playExplosion()
   clearSession()
+  audio.playDeathMusic()
   gameState = null
   deathScreen.show(summary)
 }
@@ -881,7 +900,7 @@ window.addEventListener('keydown', (e) => {
     doSave()
   } else if (e.code === 'Escape' && !docked && !navMapOpen) {
     paused = !paused
-    audio.setThrustActive(false)
+    audio.setThrustState(null)
     if (paused) {
       exitFlightMode()
       pauseMenu.show()
@@ -890,7 +909,7 @@ window.addEventListener('keydown', (e) => {
     }
   } else if (e.code === 'KeyM' && !docked && !paused) {
     navMapOpen = !navMapOpen
-    audio.setThrustActive(false)
+    audio.setThrustState(null)
     if (navMapOpen) {
       exitFlightMode()
       navMap.show({ onJump: handleJump, onClose: () => { navMapOpen = false } })
@@ -1134,6 +1153,13 @@ function animate() {
   const now = performance.now()
   const dt = Math.min((now - lastTime) / 1000, 0.1)
   lastTime = now
+  // Both are fixed-radius point/sprite clouds scattered around world origin
+  // at creation time — recentering them on the camera every frame turns them
+  // into a proper skybox that always surrounds the viewer, rather than a
+  // patch of decoration the camera can fly outside of once it's traveled
+  // far enough from the origin (now routine given how large systems are).
+  starfield.position.copy(camera.position)
+  nebula.position.copy(camera.position)
   updateNebula(nebula, dt)
 
   if (!gameState) {
@@ -1164,6 +1190,7 @@ function animate() {
 
   gameState.simTime += dt
 
+  let thrustState = null
   if (cruising) {
     const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
     const waypointBody = currentSystem.bodies.find((b) => b.id === gameState.player.waypointBodyId)
@@ -1172,10 +1199,11 @@ function animate() {
     } else if (updateSupercruise(gameState.player.ship, playerShipClass, waypointBody.position, dt)) {
       cruising = false
     }
-    audio.setThrustActive(false)
+    audio.setThrustState(null)
   } else {
     updateFlight(gameState.player.ship, playerShipClass, flightMode ? keys : EMPTY_KEYS, mouseAim, dt)
-    audio.setThrustActive(flightMode && keys.has('KeyW'))
+    thrustState = !flightMode ? null : keys.has('KeyW') ? 'accel' : keys.has('KeyS') ? 'brake' : null
+    audio.setThrustState(thrustState)
   }
   audio.setSupercruiseActive(cruising)
 
@@ -1196,6 +1224,14 @@ function animate() {
   }
   miningModeIndicatorEl.style.display = miningMode ? 'block' : 'none'
   syncMeshToEntity(playerMesh, gameState.player.ship)
+  thrusterEffects.update(dt, {
+    accelActive: thrustState === 'accel',
+    brakeActive: thrustState === 'brake',
+    cruiseActive: cruising,
+    shipPos: new THREE.Vector3().fromArray(gameState.player.ship.position),
+    shipQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
+    hullLength: playerShipClass.hull.length
+  })
 
   // Mining mode swaps the laser from manual crosshair fire to an auto-firing
   // beam locked onto the current target — see updateMiningBeam. Missiles are
