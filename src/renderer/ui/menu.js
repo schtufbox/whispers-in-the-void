@@ -1,0 +1,183 @@
+import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
+
+const STYLE = `
+#main-menu { position: fixed; inset: 0; background: radial-gradient(ellipse at center, rgba(6,9,18,0.35) 0%, rgba(4,6,12,0.8) 100%); font-family: monospace; color: #cfe3ff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#main-menu::before {
+  content: ''; position: absolute; inset: -20%; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(79,195,217,0.03) 0px, rgba(79,195,217,0.03) 1px, transparent 1px, transparent 3px);
+  animation: scan 10s linear infinite;
+}
+@keyframes scan { from { transform: translateY(0); } to { transform: translateY(60px); } }
+
+#main-menu .panel {
+  display: flex; flex-direction: column; gap: 10px; width: 420px; position: relative; z-index: 1;
+  padding: 28px 32px;
+}
+#main-menu .main-view { align-items: center; text-align: center; }
+
+#main-menu h1 { margin: 0 0 4px 0; }
+/* Each line of the (now two-line) title is its own box with the gradient/
+   glitch applied per-line, rather than once across the whole h1 — the
+   glitch clip-path bands below are percentages of a single line's height,
+   so splitting them over a taller multi-line block would slice across the
+   gap between lines instead of through each line's own glyphs. */
+#main-menu h1 .line {
+  display: block; position: relative; font-size: 32px; letter-spacing: 3px;
+  background: linear-gradient(90deg, #4fc3d9, #8fb3ff, #7fe0a0, #4fc3d9);
+  background-size: 300% auto;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: titleShift 6s linear infinite, titleGlow 5s ease-in-out infinite;
+}
+@keyframes titleShift { to { background-position: 300% center; } }
+/* A slow, shifting multi-color halo (nebula-gas feel) instead of a single
+   static color pulse — drop-shadow (not box-shadow) so it hugs the glyphs. */
+@keyframes titleGlow {
+  0%   { filter: drop-shadow(0 0 10px rgba(79,195,217,0.6)) drop-shadow(0 0 26px rgba(143,90,255,0.35)); }
+  33%  { filter: drop-shadow(0 0 14px rgba(143,179,255,0.7)) drop-shadow(0 0 30px rgba(255,120,200,0.3)); }
+  66%  { filter: drop-shadow(0 0 12px rgba(127,224,160,0.65)) drop-shadow(0 0 28px rgba(79,195,217,0.35)); }
+  100% { filter: drop-shadow(0 0 10px rgba(79,195,217,0.6)) drop-shadow(0 0 26px rgba(143,90,255,0.35)); }
+}
+
+/* Brief chromatic-aberration glitch slices, sparse (~93-97% of the loop is
+   quiet) so it reads as an occasional signal hiccup rather than constant
+   noise. content: attr(data-text) mirrors whatever's in each .line's
+   data-text attribute, so the glitch layer can never drift out of sync with
+   the line's real text. */
+#main-menu h1 .line::before, #main-menu h1 .line::after {
+  content: attr(data-text); position: absolute; inset: 0;
+  background: inherit; -webkit-background-clip: text; background-clip: text; color: transparent;
+  opacity: 0; mix-blend-mode: screen;
+}
+#main-menu h1 .line::before { clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%); filter: hue-rotate(-50deg); animation: glitchTop 6.5s steps(1) infinite; }
+#main-menu h1 .line::after { clip-path: polygon(0 55%, 100% 55%, 100% 100%, 0 100%); filter: hue-rotate(170deg); animation: glitchBottom 6.5s steps(1) infinite; }
+@keyframes glitchTop {
+  0%, 91%, 100% { opacity: 0; transform: translate(0, 0); }
+  92% { opacity: 0.85; transform: translate(-5px, -1px); }
+  93% { opacity: 0.85; transform: translate(4px, 1px); }
+  94% { opacity: 0; transform: translate(0, 0); }
+  96% { opacity: 0.7; transform: translate(3px, 0); }
+  97% { opacity: 0; transform: translate(0, 0); }
+}
+@keyframes glitchBottom {
+  0%, 91%, 100% { opacity: 0; transform: translate(0, 0); }
+  92% { opacity: 0.85; transform: translate(5px, 1px); }
+  93% { opacity: 0.85; transform: translate(-4px, -1px); }
+  94% { opacity: 0; transform: translate(0, 0); }
+  96% { opacity: 0.7; transform: translate(-3px, 0); }
+  97% { opacity: 0; transform: translate(0, 0); }
+}
+
+#main-menu .subtitle {
+  margin: 0 0 24px 0; font-size: 11px; letter-spacing: 4px; color: #4a6a8a;
+  animation: flicker 5s ease-in-out infinite;
+}
+@keyframes flicker {
+  0%, 92%, 100% { opacity: 0.7; }
+  93%, 95% { opacity: 0.2; }
+}
+
+#main-menu h2 { margin: 0 0 10px 0; }
+#main-menu label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; text-align: left; }
+#main-menu input {
+  background: #10182a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 8px; font-family: monospace;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+#main-menu input:focus { outline: none; border-color: #4fc3d9; box-shadow: 0 0 8px rgba(79,195,217,0.4); }
+
+#main-menu button {
+  background: #16223a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 12px; cursor: pointer; font-family: monospace;
+  letter-spacing: 1px; opacity: 0; transform: translateY(8px);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+#main-menu button:disabled { opacity: 0.35 !important; cursor: not-allowed; }
+#main-menu button.quit { border-color: #a13a3a; }
+#main-menu button:hover:not(:disabled) { background: #223252; border-color: #8fb3ff; box-shadow: 0 0 14px rgba(143,179,255,0.35); transform: translateY(8px) scale(1.02); }
+#main-menu button.quit:hover:not(:disabled) { border-color: #d94f4f; box-shadow: 0 0 14px rgba(217,79,79,0.4); }
+#main-menu button:active:not(:disabled) { transform: translateY(9px) scale(0.99); }
+
+#main-menu.reveal .panel > button, #main-menu.reveal .panel > label, #main-menu.reveal .panel > h2 {
+  animation: riseIn 0.4s ease-out forwards; opacity: 0;
+}
+#main-menu.reveal .panel > button:nth-of-type(1), #main-menu.reveal .panel > label:nth-of-type(1) { animation-delay: 0s; }
+#main-menu.reveal .panel > button:nth-of-type(2), #main-menu.reveal .panel > label:nth-of-type(2) { animation-delay: 0.08s; }
+#main-menu.reveal .panel > button:nth-of-type(3), #main-menu.reveal .panel > label:nth-of-type(3) { animation-delay: 0.16s; }
+#main-menu.reveal .panel > button:nth-of-type(4) { animation-delay: 0.24s; }
+@keyframes riseIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+`
+
+export function createMenu(container, { onNewGame, onLoadGame }) {
+  const style = document.createElement('style')
+  style.textContent = STYLE
+  document.head.appendChild(style)
+
+  const starterShip = getShipClass(STARTER_SHIP_CLASS_ID)
+
+  const root = document.createElement('div')
+  root.id = 'main-menu'
+  root.innerHTML = `
+    <div class="panel main-view">
+      <h1><span class="line" data-text="Whispers In The">Whispers In The</span><span class="line" data-text="Void">Void</span></h1>
+      <div class="subtitle">A PROCEDURALLY GENERATED GALAXY</div>
+      <button class="new-game">New Game</button>
+      <button class="load-game">Load Game</button>
+      <button class="quit">Quit</button>
+    </div>
+    <div class="panel new-game-view" style="display:none">
+      <h2>Create Pilot</h2>
+      <label>Character Name <input class="char-name" value="Pilot" /></label>
+      <label>Ship Model <input value="${starterShip.name}" disabled /></label>
+      <label>Ship Name <input class="ship-name" value="${starterShip.name}" /></label>
+      <button class="confirm-new-game">Launch</button>
+      <button class="back">Back</button>
+    </div>
+  `
+  container.appendChild(root)
+
+  const mainView = root.querySelector('.main-view')
+  const newGameView = root.querySelector('.new-game-view')
+  const loadBtn = root.querySelector('.load-game')
+
+  function replayEntrance() {
+    root.classList.remove('reveal')
+    void root.offsetWidth
+    root.classList.add('reveal')
+  }
+
+  root.querySelector('.new-game').addEventListener('click', () => {
+    mainView.style.display = 'none'
+    newGameView.style.display = 'flex'
+    replayEntrance()
+  })
+  root.querySelector('.back').addEventListener('click', () => {
+    newGameView.style.display = 'none'
+    mainView.style.display = 'flex'
+    replayEntrance()
+  })
+  root.querySelector('.confirm-new-game').addEventListener('click', () => {
+    const characterName = root.querySelector('.char-name').value.trim() || 'Pilot'
+    const shipInstanceName = root.querySelector('.ship-name').value.trim() || starterShip.name
+    hide()
+    onNewGame({ characterName, shipInstanceName })
+  })
+  loadBtn.addEventListener('click', () => {
+    hide()
+    onLoadGame()
+  })
+  root.querySelector('.quit').addEventListener('click', () => window.electronAPI.quitApp())
+
+  function hide() {
+    root.style.display = 'none'
+  }
+
+  return {
+    show(hasSaveGame) {
+      loadBtn.disabled = !hasSaveGame
+      mainView.style.display = 'flex'
+      newGameView.style.display = 'none'
+      root.style.display = 'flex'
+      replayEntrance()
+    },
+    hide,
+    element: root
+  }
+}
