@@ -21,7 +21,7 @@ import { markBodyVisited, markBodyProbed, updateMissionProgress } from './game/m
 import { launchProbe } from './game/probe.js'
 import { saveGame as persistSaveGame, loadGame as persistLoadGame, hasSave } from './game/save.js'
 import { hyperspaceJump } from './game/hyperspace.js'
-import { getSystem, findBody, coreFraction } from './procgen/galaxy.js'
+import { getSystem, findBody, coreFraction, canJumpTo } from './procgen/galaxy.js'
 import { createHud } from './ui/hud.js'
 import { createDockingUI } from './ui/dockingUI.js'
 import { createMenu } from './ui/menu.js'
@@ -672,6 +672,11 @@ function handleJump(targetSystemId) {
   }
   if (targetSystemId === gameState.player.currentSystemId) {
     alert('Already in that system.')
+    return
+  }
+  const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (!canJumpTo(currentSystem, targetSystemId)) {
+    alert('Out of hyperspace range — jump via a neighboring system first.')
     return
   }
   navMapOpen = false

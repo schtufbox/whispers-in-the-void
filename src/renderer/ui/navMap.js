@@ -1,4 +1,4 @@
-import { getSystem } from '../procgen/galaxy.js'
+import { getSystem, canJumpTo } from '../procgen/galaxy.js'
 
 const STYLE = `
 #nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; }
@@ -78,16 +78,34 @@ export function createNavMap(container, gameState) {
 
     function draw() {
       ctx.clearRect(0, 0, size, size)
+
+      // Jump lanes: thin lines from the current system to each system it can
+      // actually reach, drawn under the dots so the map reads as "here's
+      // where you can go from here", not just "here's every system".
+      ctx.strokeStyle = 'rgba(94,230,255,0.35)'
+      ctx.lineWidth = 1
+      const [cx, cy] = toCanvas(currentSystem.galaxyPosition)
+      for (const neighborId of currentSystem.neighborIds) {
+        const neighbor = systems.find((s) => s.id === neighborId)
+        if (!neighbor) continue
+        const [nx, ny] = toCanvas(neighbor.galaxyPosition)
+        ctx.beginPath()
+        ctx.moveTo(cx, cy)
+        ctx.lineTo(nx, ny)
+        ctx.stroke()
+      }
+
       for (const system of systems) {
         const [px, py] = toCanvas(system.galaxyPosition)
         const isCurrent = system.id === currentSystem.id
         const isSelected = system.id === selectedSystemId
+        const inRange = isCurrent || canJumpTo(currentSystem, system.id)
         ctx.beginPath()
         ctx.arc(px, py, isCurrent ? 4 : isSelected ? 3.5 : 2, 0, Math.PI * 2)
-        ctx.fillStyle = isCurrent ? '#5ee6ff' : isSelected ? '#ffcc66' : '#3a5a8a'
-        if (isCurrent || isSelected) {
+        ctx.fillStyle = isCurrent ? '#5ee6ff' : isSelected ? '#ffcc66' : inRange ? '#7fe0a0' : '#3a5a8a'
+        if (isCurrent || isSelected || inRange) {
           ctx.shadowColor = ctx.fillStyle
-          ctx.shadowBlur = 8
+          ctx.shadowBlur = isCurrent || isSelected ? 8 : 4
         } else {
           ctx.shadowBlur = 0
         }
@@ -103,17 +121,22 @@ export function createNavMap(container, gameState) {
         contentEl.querySelector('.sel-bodies').textContent = ''
         contentEl.querySelector('.sel-distance').textContent = ''
         jumpBtn.disabled = true
+        jumpBtn.textContent = 'Hyperspace Jump'
         return
       }
       const system = systems.find((s) => s.id === selectedSystemId)
       const counts = system.bodies.reduce((acc, b) => ((acc[b.kind] = (acc[b.kind] ?? 0) + 1), acc), {})
       const distance = dist3(system.galaxyPosition, currentSystem.galaxyPosition)
+      const isCurrent = system.id === currentSystem.id
+      const inRange = isCurrent || canJumpTo(currentSystem, system.id)
       contentEl.querySelector('.sel-name').textContent = system.name
       contentEl.querySelector('.sel-bodies').textContent =
         `${counts.planet ?? 0} planets, ${counts.station ?? 0} stations, ${counts.settlement ?? 0} settlements`
-      contentEl.querySelector('.sel-distance').textContent =
-        system.id === currentSystem.id ? 'Current system' : `${Math.round(distance)} ly away`
-      jumpBtn.disabled = system.id === currentSystem.id
+      contentEl.querySelector('.sel-distance').textContent = isCurrent
+        ? 'Current system'
+        : `${Math.round(distance)} ly away${inRange ? '' : ' — out of hyperspace range'}`
+      jumpBtn.disabled = !inRange || isCurrent
+      jumpBtn.textContent = !isCurrent && !inRange ? 'Out of Range' : 'Hyperspace Jump'
     }
 
     canvas.addEventListener('click', (e) => {

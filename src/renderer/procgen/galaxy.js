@@ -29,6 +29,14 @@ const MOON_ORBIT_MAX_RADIUS = 45
 // moon's orbit (a circle at a constant radius — see main.js's moonOrbits)
 // never sweeps through the parent planet's collision shell.
 const MOON_ORBIT_CLEARANCE_MARGIN = 6
+// Hyperspace only reaches "neighboring" systems (game/hyperspace.js checks
+// system.neighborIds) — crossing the galaxy means hopping system to system
+// rather than jumping anywhere freely. A fixed distance cutoff could strand
+// an outlier system with zero systems in range, so instead every system is
+// guaranteed exactly this many nearest-neighbor connections, made symmetric
+// (see computeNeighborLanes) so a reachable system can always be jumped back
+// from too.
+const JUMP_NEIGHBOR_COUNT = 5
 
 // Ships always arrive/start at this fixed point relative to the system's
 // star (at local origin) — near the system's edge, facing the star (identity
@@ -121,6 +129,29 @@ function makeBody(rng, idCounter, kind, parent, systemScale) {
   }
 }
 
+// Gives every system a `neighborIds` list: its JUMP_NEIGHBOR_COUNT nearest
+// systems by galaxy-map distance, plus a symmetric pass so if A lists B, B
+// also lists A — otherwise a system could be jumped *to* but not jumped
+// back *from*, which would read as a bug rather than a one-way lane.
+function computeNeighborLanes(systems) {
+  const neighborSets = new Map(systems.map((s) => [s.id, new Set()]))
+  for (const system of systems) {
+    const nearest = systems
+      .filter((other) => other !== system)
+      .map((other) => ({
+        id: other.id,
+        dist: Math.hypot(other.galaxyPosition[0] - system.galaxyPosition[0], other.galaxyPosition[2] - system.galaxyPosition[2])
+      }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, JUMP_NEIGHBOR_COUNT)
+    for (const { id } of nearest) {
+      neighborSets.get(system.id).add(id)
+      neighborSets.get(id).add(system.id)
+    }
+  }
+  for (const system of systems) system.neighborIds = [...neighborSets.get(system.id)]
+}
+
 export function generateGalaxy(seed, opts = {}) {
   const {
     systemCount = 450,
@@ -177,10 +208,19 @@ export function generateGalaxy(seed, opts = {}) {
     system.bodies.push(makeBody(rng, bodyIdCounter++, 'asteroidField', null, system.sizeScale))
   }
 
+  computeNeighborLanes(systems)
+
   const species = []
   for (let i = 0; i < speciesCount; i++) species.push(generateSpeciesName(rng))
 
   return { seed, systems, species }
+}
+
+// Whether a hyperspace jump from `fromSystem` to `toSystemId` is allowed —
+// shared by game/hyperspace.js (enforcement) and main.js/ui/navMap.js
+// (pre-validation and the galaxy map's jump-lane UI).
+export function canJumpTo(fromSystem, toSystemId) {
+  return fromSystem.neighborIds.includes(toSystemId)
 }
 
 // 0 at the galactic core, 1 at the rim — shared by game/mining.js's ore-tier

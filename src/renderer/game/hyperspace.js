@@ -1,4 +1,4 @@
-import { getSystem, SYSTEM_ARRIVAL_POSITION } from '../procgen/galaxy.js'
+import { getSystem, canJumpTo, SYSTEM_ARRIVAL_POSITION } from '../procgen/galaxy.js'
 import { ensureBountyNpcsForSystem } from './missions.js'
 
 export function hyperspaceJump(gameState, targetSystemId, rng) {
@@ -6,6 +6,8 @@ export function hyperspaceJump(gameState, targetSystemId, rng) {
   if (targetSystemId === gameState.player.currentSystemId) throw new Error('Already in that system')
   const system = getSystem(gameState.galaxy, targetSystemId)
   if (!system) throw new Error('Unknown system')
+  const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (!canJumpTo(currentSystem, targetSystemId)) throw new Error('Target system is out of hyperspace range — jump via a neighboring system first')
 
   gameState.player.currentSystemId = targetSystemId
   gameState.player.waypointBodyId = null

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { generateGalaxy } from './galaxy.js'
+import { generateGalaxy, canJumpTo } from './galaxy.js'
 
 function allBodies(galaxy) {
   return galaxy.systems.flatMap((s) => s.bodies)
@@ -73,4 +73,17 @@ test('planets, moons, and asteroid fields have a physical radius sized for their
   for (const b of byKind('moon')) assert.ok(b.radius >= 3 * 1.65 * 0.85 && b.radius <= 8 * 1.65 * 1.15)
   for (const b of byKind('asteroidField')) assert.ok(b.radius >= 70 * 0.85 && b.radius <= 110 * 1.15)
   for (const b of [...byKind('station'), ...byKind('settlement')]) assert.equal(b.radius, null)
+})
+
+test('every system has hyperspace neighbors, and the jump lanes are symmetric', () => {
+  const galaxy = generateGalaxy(42)
+  const byId = new Map(galaxy.systems.map((s) => [s.id, s]))
+
+  for (const system of galaxy.systems) {
+    assert.ok(system.neighborIds.length >= 5, `${system.id} should have at least 5 hyperspace neighbors`)
+    assert.ok(!system.neighborIds.includes(system.id), 'a system is never its own neighbor')
+    for (const neighborId of system.neighborIds) {
+      assert.ok(canJumpTo(byId.get(neighborId), system.id), `${neighborId} should list ${system.id} back (symmetric lanes)`)
+    }
+  }
 })

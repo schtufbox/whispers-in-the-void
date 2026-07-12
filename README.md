@@ -13,7 +13,7 @@ A procedurally generated 3D space trading, combat, and exploration game for the 
 - **Mining** — target an asteroid and toggle mining mode for a continuous mining laser that auto-fires until your hold is full, or just shoot a field manually. Rarer, more valuable ore tiers are found further out toward the galaxy's rim.
 - **Probing** — scan planets, moons, and asteroid fields for a chance at valuable survey data.
 - **Docking** — a scripted docking/undocking animation flies you into a station/base interior before the trade & mission menus appear.
-- **Hyperspace & supercruise** — jump between systems (arriving near the system's edge, facing the star), and autopilot at 3x speed to an in-system waypoint.
+- **Hyperspace & supercruise** — jump between neighboring systems only (arriving near the system's edge, facing the star) — crossing the galaxy means hopping system to system, not jumping anywhere on the map — and autopilot at 3x speed to an in-system waypoint.
 - **Dramatic stars** — roiling, fiery star cores with pulsing coronas; binary systems orbit a stationary primary with a fiery energy ring connecting the pair.
 - **Permadeath** — no respawns, no checkpoints.
 
