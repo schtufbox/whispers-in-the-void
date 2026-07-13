@@ -49,17 +49,15 @@ function seededOffsets(rng) {
   return [rng() * 10, rng() * 10, rng() * 10]
 }
 
-// IcosahedronGeometry's subdivision level used to be a flat "2" regardless
-// of the body's actual radius — fine at the original body-size ranges, but
-// several since-then scale-up passes (see procgen/galaxy.js's
-// PLANET_SIZE_SCALE/MOON_SIZE_SCALE) made the same handful of flat facets
-// span a much bigger sphere, reading as crudely faceted/broken rather than a
-// deliberately low-poly stylized planet. Scaling detail with radius keeps
-// facet size visually consistent regardless of how big bodies have grown.
+// Icosahedron subdivision scales with radius so facet size stays roughly
+// constant after PLANET_SIZE_SCALE/MOON_SIZE_SCALE growth (see galaxy.js).
+// Cap at 6 — enough for the largest planets (~900 radius) without blowing
+// vertex counts (only a handful of bodies are live per system).
 function detailForRadius(radius) {
-  if (radius > 400) return 5
-  if (radius > 180) return 4
-  if (radius > 70) return 3
+  if (radius > 550) return 6
+  if (radius > 250) return 5
+  if (radius > 100) return 4
+  if (radius > 40) return 3
   return 2
 }
 
@@ -173,10 +171,9 @@ function buildRing(radius, rng) {
 // Moons are always small barren rock — cratered, muted, no atmosphere-driven
 // variety (bands/oceans/lava wouldn't make sense at that scale).
 function buildMoon(radius, rng) {
-  // One step cruder than a full planet at the same radius — moons are
-  // meant to look like small barren rocks, not scaled-down planets — but
-  // still scales up with radius for the same reason detailForRadius exists.
-  const geometry = new THREE.IcosahedronGeometry(radius, Math.max(1, detailForRadius(radius) - 1))
+  // Same detail curve as planets (no -1) so large moons don't re-faceted
+  // after the size scale-up; barren look still comes from rock texture + jitter.
+  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
   jitterGeometry(geometry, radius, rng, 0.18)
   const base = new THREE.Color().setHSL(range(rng, 20, 60) / 360, 0.12, 0.42)
   const accent = base.clone().multiplyScalar(0.6)
@@ -203,21 +200,19 @@ export function buildPlanetMesh(body) {
   // shared textures still reads as ~1500 visually distinct worlds. Gas
   // giants have no texture set (cloud bands don't suit a tiled photo), so
   // they fall back to vertex-color-only shading, same as before.
+  // Smooth shading (not flat) so high-detail icosahedra read as continuous
+  // spheres — flatShading + EdgesGeometry made large planets look shattered
+  // into crystal facets even after detailForRadius stepped up. Surface
+  // interest comes from vertex colors + PBR maps, not per-face normals.
   const textures = getSurfaceTextures(archetypeName)
   const material = new THREE.MeshStandardMaterial({
     vertexColors: true,
-    flatShading: true,
+    flatShading: false,
     roughness: 1,
     metalness: 0,
     ...textures
   })
   const mesh = new THREE.Mesh(geometry, material)
-
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry, 25),
-    new THREE.LineBasicMaterial({ color: 0x0a0a0a, transparent: true, opacity: 0.25 })
-  )
-  mesh.add(edges)
 
   // ~3% of planets (never moons) get a ring — purely cosmetic, so it's
   // decided from the same per-body rng rather than a persisted field, same

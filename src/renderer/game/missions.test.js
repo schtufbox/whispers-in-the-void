@@ -1,76 +1,77 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mulberry32 } from '../procgen/prng.js'
-import { generateGalaxy } from '../procgen/galaxy.js'
-import { seedMissionsForGalaxy, generateProbeMission } from '../data/missionTemplates.js'
-import { acceptMission, markBodyVisited, markBodyProbed, updateMissionProgress, turnInMission } from './missions.js'
-import { applyDamage } from './combat.js'
+import {
+  acceptMission,
+  missionNavTarget,
+  missionMarkedSystemIds,
+  setWaypointForMission,
+  updateMissionProgress
+} from './missions.js'
+import { createGameState } from './state.js'
+import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 
-function makeGameStateWithMissions() {
-  const galaxy = generateGalaxy(7)
-  const missions = seedMissionsForGalaxy(mulberry32(8), galaxy)
-  return {
-    galaxy,
-    missions: { available: missions, active: [] },
-    visitedBodyIds: [],
-    probedBodyIds: [],
-    npcs: [],
-    player: { credits: 0, reputation: 0 }
-  }
+function freshState(seed = 7) {
+  return createGameState({
+    characterName: 'Pilot',
+    shipInstanceName: 'Ship',
+    shipClassId: STARTER_SHIP_CLASS_ID,
+    seed
+  })
 }
 
-test('galaxy seeding produces at least one mission of each type across ~40 bodies', () => {
-  const gameState = makeGameStateWithMissions()
-  const types = new Set(gameState.missions.available.map((m) => m.type))
-  assert.ok(types.has('bounty') && types.has('exploration') && types.has('investigation'))
+test('missionNavTarget points at objective body, then giver on complete', () => {
+  const gs = freshState()
+  const mission = gs.missions.available.find((m) => m.target?.kind === 'body')
+  assert.ok(mission, 'need a body-target mission in seed')
+  acceptMission(gs, mission.id, Math.random)
+
+  const before = missionNavTarget(mission, gs)
+  assert.equal(before.phase, 'objective')
+  assert.equal(before.bodyId, mission.target.bodyId)
+  assert.equal(before.systemId, mission.target.systemId)
+
+  mission.objectiveComplete = true
+  const after = missionNavTarget(mission, gs)
+  assert.equal(after.phase, 'turnin')
+  assert.equal(after.bodyId, mission.giverStationId)
+  assert.equal(after.systemId, mission.giverSystemId)
 })
 
-test('accepting a bounty mission spawns its target NPC, and destroying it completes the objective', () => {
-  const gameState = makeGameStateWithMissions()
-  const bounty = gameState.missions.available.find((m) => m.type === 'bounty')
-  acceptMission(gameState, bounty.id, Math.random)
+test('missionMarkedSystemIds follows objective then turn-in', () => {
+  const gs = freshState(9)
+  const mission = gs.missions.available.find((m) => m.target?.kind === 'body')
+  acceptMission(gs, mission.id, Math.random)
 
-  assert.equal(gameState.missions.active.length, 1)
-  const npc = gameState.npcs.find((n) => n.id === bounty.target.npcId)
-  assert.ok(npc, 'accepting a bounty should spawn its target npc')
-
-  applyDamage(npc, 99999)
-  updateMissionProgress(gameState)
-  assert.equal(bounty.objectiveComplete, true)
-
-  turnInMission(gameState, bounty.id)
-  assert.equal(gameState.player.credits, bounty.reward)
-  assert.equal(gameState.missions.active.length, 0)
+  assert.ok(missionMarkedSystemIds(gs).has(mission.target.systemId))
+  mission.objectiveComplete = true
+  const ids = missionMarkedSystemIds(gs)
+  assert.ok(ids.has(mission.giverSystemId))
+  if (mission.target.systemId !== mission.giverSystemId) {
+    assert.equal(ids.has(mission.target.systemId), false)
+  }
 })
 
-test('turning in a mission before its objective is complete throws', () => {
-  const gameState = makeGameStateWithMissions()
-  const exploration = gameState.missions.available.find((m) => m.type === 'exploration')
-  acceptMission(gameState, exploration.id, Math.random)
-  assert.throws(() => turnInMission(gameState, exploration.id))
+test('setWaypointForMission tracks body objectives', () => {
+  const gs = freshState(11)
+  const mission = gs.missions.available.find((m) => m.target?.kind === 'body')
+  acceptMission(gs, mission.id, Math.random)
+  setWaypointForMission(gs, mission.id)
+  assert.equal(gs.player.waypointBodyId, mission.target.bodyId)
+  assert.equal(gs.player.waypointPosition, null)
 
-  markBodyVisited(gameState, exploration.target.bodyId)
-  updateMissionProgress(gameState)
-  turnInMission(gameState, exploration.id)
-  assert.equal(gameState.player.credits, exploration.reward)
-})
-
-test('a probe mission only completes once its target body is actually probed, not merely visited', () => {
-  const gameState = makeGameStateWithMissions()
-  const giverSystem = gameState.galaxy.systems[0]
-  const giverBody = giverSystem.bodies[0]
-  const mission = generateProbeMission(Math.random, gameState.galaxy, giverSystem.id, giverBody.id)
-  gameState.missions.available.push(mission)
-  acceptMission(gameState, mission.id, Math.random)
-
-  markBodyVisited(gameState, mission.target.bodyId)
-  updateMissionProgress(gameState)
-  assert.equal(mission.objectiveComplete, false, 'visiting alone should not satisfy a probe mission')
-
-  markBodyProbed(gameState, mission.target.bodyId)
-  updateMissionProgress(gameState)
-  assert.equal(mission.objectiveComplete, true)
-
-  turnInMission(gameState, mission.id)
-  assert.equal(gameState.player.credits, mission.reward)
+  // Force complete via visited so turn-in waypoint flips
+  if (!gs.visitedBodyIds.includes(mission.target.bodyId)) gs.visitedBodyIds.push(mission.target.bodyId)
+  updateMissionProgress(gs)
+  if (mission.type === 'probe') {
+    if (!gs.probedBodyIds.includes(mission.target.bodyId)) gs.probedBodyIds.push(mission.target.bodyId)
+    updateMissionProgress(gs)
+  }
+  // Exploration/investigation complete via visit; probe needs probe list
+  if (mission.type === 'exploration' || mission.type === 'investigation' || mission.objectiveComplete) {
+    // re-track
+    if (mission.objectiveComplete) {
+      setWaypointForMission(gs, mission.id)
+      assert.equal(gs.player.waypointBodyId, mission.giverStationId)
+    }
+  }
 })

@@ -76,13 +76,24 @@ export function regenShields(entity, shipClass, simTime, dt) {
 // hardpoint's *mount* kind (what category of weapon fits), not the weapon
 // itself. Falls back to that category's free base weapon if nothing (or an
 // NPC, which never shops) has equippedWeapons set for it.
+// Hardpoints sit off the centerline (especially +Y), but the crosshair is
+// the ship boresight. Flying parallel to forward from a raised mount lands
+// above the reticle — aim every shot at a convergence point far ahead on
+// the boresight instead (standard multi-hardpoint game fix).
+const AIM_CONVERGENCE = 350
+const _aimPoint = new THREE.Vector3()
+const _projDir = new THREE.Vector3()
+const _projQuat = new THREE.Quaternion()
+const _localForward = new THREE.Vector3(0, 0, 1)
+
 export function fireProjectile(gameState, shooter, shooterShipClass, ownerId, onFire, weaponTypeFilter = null, targetRef = null) {
   shooter.hardpointCooldowns ??= {}
   shooter.equippedWeapons ??= {}
 
   const quat = new THREE.Quaternion().fromArray(shooter.quaternion)
   const shooterPos = new THREE.Vector3().fromArray(shooter.position)
-  const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat)
+  const forward = _localForward.clone().applyQuaternion(quat)
+  _aimPoint.copy(shooterPos).addScaledVector(forward, AIM_CONVERGENCE)
 
   for (const hp of shooterShipClass.hardpoints) {
     const mountType = hp.type === 'missile' ? 'missile' : 'laser'
@@ -94,6 +105,11 @@ export function fireProjectile(gameState, shooter, shooterShipClass, ownerId, on
     shooter.hardpointCooldowns[hp.id] = gameState.simTime + weapon.cooldownS
 
     const worldPos = new THREE.Vector3(...hp.position).applyQuaternion(quat).add(shooterPos)
+    _projDir.copy(_aimPoint).sub(worldPos)
+    if (_projDir.lengthSq() < 1e-8) _projDir.copy(forward)
+    else _projDir.normalize()
+    _projQuat.setFromUnitVectors(_localForward, _projDir)
+
     gameState.projectiles.push({
       id: `proj-${projectileCounter++}`,
       ownerId,
@@ -101,8 +117,8 @@ export function fireProjectile(gameState, shooter, shooterShipClass, ownerId, on
       weaponType: mountType,
       weaponId,
       position: worldPos.toArray(),
-      quaternion: quat.toArray(),
-      velocity: forward.clone().multiplyScalar(weapon.speed).toArray(),
+      quaternion: _projQuat.toArray(),
+      velocity: _projDir.clone().multiplyScalar(weapon.speed).toArray(),
       damage: weapon.damage,
       ttl: weapon.ttl
     })

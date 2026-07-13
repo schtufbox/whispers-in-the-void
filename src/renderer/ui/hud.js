@@ -112,6 +112,7 @@ const HINTS = [
   ['Tab', 'Target'],
   ['R', 'Mining Mode'],
   ['I', 'Inventory'],
+  ['J', 'Missions'],
   ['F', 'Dock'],
   ['P', 'Probe'],
   ['M', 'Navigation'],
@@ -169,7 +170,7 @@ export function createHud(container) {
   const radarSize = radarCanvas.width
   const radarCenter = radarSize / 2
 
-  const CONTACT_COLORS = { hostile: '#e05a5a', neutral: '#5ee6ff', body: '#5a7a9a', waypoint: '#7fe0a0', wreck: '#ff8a3d' }
+  const CONTACT_COLORS = { hostile: '#e05a5a', neutral: '#5ee6ff', body: '#5a7a9a', waypoint: '#7fe0a0', mission: '#ff8a3d', wreck: '#c27a3a' }
   // Below this fraction the hull bar pulses red as an urgent low-hull cue.
   const CRITICAL_HULL_FRACTION = 0.25
 

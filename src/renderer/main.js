@@ -21,7 +21,7 @@ import { fireProjectile, updateProjectiles, updateNpcAI, updateCombatFlag, getSh
 import { resolveBodyCollisions, collisionRadiusFor } from './game/collision.js'
 import { mineRock, isRockAlive, rockDisplayName } from './game/mining.js'
 import { pruneWrecks, lootWreck } from './game/wrecks.js'
-import { markBodyVisited, markBodyProbed, updateMissionProgress } from './game/missions.js'
+import { markBodyVisited, markBodyProbed, updateMissionProgress, missionMarkedBodyIds } from './game/missions.js'
 import { launchProbe } from './game/probe.js'
 import { saveGame as persistSaveGame, loadGame as persistLoadGame, hasSave } from './game/save.js'
 import { hyperspaceJump } from './game/hyperspace.js'
@@ -32,6 +32,7 @@ import { createMenu } from './ui/menu.js'
 import { createPauseMenu } from './ui/pauseMenu.js'
 import { createNavMap } from './ui/navMap.js'
 import { createInventoryUI } from './ui/inventoryUI.js'
+import { createMissionsUI } from './ui/missionsUI.js'
 import { createDeathScreen } from './ui/deathScreen.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from './data/shipClasses.js'
 import { getGood } from './data/goods.js'
@@ -53,7 +54,7 @@ const MINING_RANGE = 200
 const MINING_TICK_INTERVAL_S = 0.4
 const AMBIENT_SPAWN_INTERVAL_S = 90
 const AMBIENT_NPC_CAP = 3
-const RADAR_RANGE = 400
+const RADAR_RANGE = 1500
 const IMPACT_FLASH_TTL = 0.25
 const JUMP_DURATION_S = 1.1
 const BASE_FOV = 60
@@ -113,7 +114,7 @@ window.addEventListener('mouseup', (e) => {
 window.addEventListener('contextmenu', (e) => e.preventDefault())
 
 function canUseFlightMode() {
-  if (!gameState || paused || navMapOpen || inventoryOpen || jumpEffect) return false
+  if (!gameState || paused || navMapOpen || inventoryOpen || missionsOpen || jumpEffect) return false
   // Parked at the docking UI: no flight. Mid undock animation is fine —
   // pointer lock is requested on the Undock click (needs a live gesture).
   if (docked && !dockEffect) return false
@@ -209,6 +210,7 @@ let dockingUI = null
 let pauseMenu = null
 let navMap = null
 let inventoryUI = null
+let missionsUI = null
 let dockPromptEl = null
 let probePromptEl = null
 let wreckPromptEl = null
@@ -345,6 +347,7 @@ let docked = false
 let paused = false
 let navMapOpen = false
 let inventoryOpen = false
+let missionsOpen = false
 let cruising = false
 // Edge-detected in animate() to fire the supercruise engage/disengage voice
 // callout exactly once per transition, regardless of whether cruising flips
@@ -558,6 +561,7 @@ function clearSession() {
   pauseMenu?.element.remove()
   navMap?.element.remove()
   inventoryUI?.element.remove()
+  missionsUI?.element.remove()
   dockPromptEl?.remove()
   probePromptEl?.remove()
   wreckPromptEl?.remove()
@@ -582,6 +586,7 @@ function clearSession() {
   paused = false
   navMapOpen = false
   inventoryOpen = false
+  missionsOpen = false
   cruising = false
   wasCruising = false
   jumpEffect = null
@@ -630,6 +635,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   })
   navMap = createNavMap(appEl, gameState)
   inventoryUI = createInventoryUI(appEl, gameState)
+  missionsUI = createMissionsUI(appEl, gameState)
 
   dockPromptEl = document.createElement('div')
   dockPromptEl.id = 'dock-prompt'
@@ -862,11 +868,24 @@ function computeRadarContacts() {
   }
 
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  const missionBodies = missionMarkedBodyIds(gameState, currentSystem.id)
   for (const body of currentSystem.bodies) {
     const rel = new THREE.Vector3().fromArray(body.position).sub(shipPos)
     if (rel.length() > RADAR_RANGE) continue
     rel.applyQuaternion(shipQuatInverse)
-    contacts.push({ x: -rel.x, z: rel.z, kind: body.id === gameState.player.waypointBodyId ? 'waypoint' : 'body' })
+    let kind = 'body'
+    if (body.id === gameState.player.waypointBodyId) kind = 'waypoint'
+    else if (missionBodies.has(body.id)) kind = 'mission'
+    contacts.push({ x: -rel.x, z: rel.z, kind })
+  }
+
+  // Free-space mission waypoint (bounty hunt marker) when no body is set.
+  if (gameState.player.waypointPosition && !gameState.player.waypointBodyId) {
+    const rel = new THREE.Vector3().fromArray(gameState.player.waypointPosition).sub(shipPos)
+    if (rel.length() <= RADAR_RANGE) {
+      rel.applyQuaternion(shipQuatInverse)
+      contacts.push({ x: -rel.x, z: rel.z, kind: 'mission' })
+    }
   }
 
   for (const wreck of gameState.wrecks) {
@@ -1144,7 +1163,7 @@ function handlePlayerDeath() {
 
 window.addEventListener('keydown', (e) => {
   if (!gameState) return
-  if (e.code === 'KeyF' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen) {
+  if (e.code === 'KeyF' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     const body = findNearbyDockableBody()
     if (body) {
       beginDocking(body)
@@ -1152,13 +1171,13 @@ window.addEventListener('keydown', (e) => {
       const wreck = findNearbyWreck()
       if (wreck) lootNearbyWreck(wreck)
     }
-  } else if (e.code === 'KeyP' && !docked && !navMapOpen && !paused && !inventoryOpen) {
+  } else if (e.code === 'KeyP' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     const body = findNearbyProbeableBody()
     if (body) probeBody(body)
   } else if (e.code === 'F5') {
     e.preventDefault()
     doSave()
-  } else if (e.code === 'Escape' && !docked && !navMapOpen && !inventoryOpen) {
+  } else if (e.code === 'Escape' && !docked && !navMapOpen && !inventoryOpen && !missionsOpen) {
     paused = !paused
     audio.setThrustState(null)
     if (paused) {
@@ -1168,7 +1187,7 @@ window.addEventListener('keydown', (e) => {
       pauseMenu.hide()
       reenterFlightMode()
     }
-  } else if (e.code === 'KeyM' && !docked && !paused && !inventoryOpen) {
+  } else if (e.code === 'KeyM' && !docked && !paused && !inventoryOpen && !missionsOpen) {
     navMapOpen = !navMapOpen
     audio.setThrustState(null)
     if (navMapOpen) {
@@ -1178,17 +1197,17 @@ window.addEventListener('keydown', (e) => {
       navMap.hide()
       reenterFlightMode()
     }
-  } else if (e.code === 'KeyC' && !docked && !navMapOpen && !paused && !inventoryOpen) {
+  } else if (e.code === 'KeyC' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     if (cruising) {
       cruising = false
-    } else if (!gameState.player.waypointBodyId) {
-      alert('Set a waypoint (Navigation > Current System) before engaging supercruise.')
+    } else if (!getActiveWaypoint()) {
+      alert('Set a waypoint (Navigation, or track a mission with J) before engaging supercruise.')
     } else if (gameState.inCombat) {
       alert('Cannot engage supercruise while in combat.')
     } else {
       cruising = true
     }
-  } else if (e.code === 'Space' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen) {
+  } else if (e.code === 'Space' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     // If locked in flight, Space exits. If wanted-but-lost (tab-out) or off,
     // Space (re)enters — so tabbing out then Space re-acquires cleanly.
     if (flightMode && document.pointerLockElement === renderer.domElement) {
@@ -1196,12 +1215,12 @@ window.addEventListener('keydown', (e) => {
     } else {
       reenterFlightMode()
     }
-  } else if (e.code === 'Tab' && !docked && !navMapOpen && !paused && !inventoryOpen) {
+  } else if (e.code === 'Tab' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     e.preventDefault()
     cycleTarget()
-  } else if (e.code === 'KeyR' && !docked && !navMapOpen && !paused && !inventoryOpen) {
+  } else if (e.code === 'KeyR' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     miningMode = !miningMode
-  } else if (e.code === 'KeyI' && !docked && !navMapOpen && !paused) {
+  } else if (e.code === 'KeyI' && !docked && !navMapOpen && !paused && !missionsOpen) {
     inventoryOpen = !inventoryOpen
     audio.setThrustState(null)
     if (inventoryOpen) {
@@ -1211,13 +1230,23 @@ window.addEventListener('keydown', (e) => {
       inventoryUI.hide()
       reenterFlightMode()
     }
+  } else if (e.code === 'KeyJ' && !docked && !navMapOpen && !paused && !inventoryOpen) {
+    missionsOpen = !missionsOpen
+    audio.setThrustState(null)
+    if (missionsOpen) {
+      exitFlightMode()
+      missionsUI.show(() => { missionsOpen = false; reenterFlightMode() })
+    } else {
+      missionsUI.hide()
+      reenterFlightMode()
+    }
   }
 })
 
 // Ships, stations/settlements, and individual asteroids within a field are
 // targetable; planets and moons are deliberately excluded (per design —
 // they're never a combat or scan target, only dock/probe candidates). Only
-// entities within TARGET_RANGE are considered, same range as the radar.
+// Tab-targeting uses the same range as the radar.
 const TARGET_RANGE = RADAR_RANGE
 
 function asteroidWorldPosition(field, rock) {
@@ -1383,16 +1412,42 @@ function updateCrosshair() {
   crosshairEl.style.top = `${(-projected.y * 0.5 + 0.5) * window.innerHeight}px`
 }
 
-function updateWaypointIndicator() {
-  const bodyId = gameState.player.waypointBodyId
+// Body waypoint and optional free-space mission marker (bounty location).
+function getActiveWaypoint() {
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-  const body = bodyId ? currentSystem.bodies.find((b) => b.id === bodyId) : null
-  if (!body) {
+  if (gameState.player.waypointBodyId) {
+    const body = currentSystem.bodies.find((b) => b.id === gameState.player.waypointBodyId)
+    if (body) {
+      const missionBodies = missionMarkedBodyIds(gameState, currentSystem.id)
+      const bodyRadius = collisionRadiusFor(body) ?? 0
+      return {
+        position: body.position,
+        name: body.name,
+        isMission: missionBodies.has(body.id),
+        arrivalRange: bodyRadius + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
+      }
+    }
+  }
+  if (gameState.player.waypointPosition) {
+    return {
+      position: gameState.player.waypointPosition,
+      name: 'Mission Target',
+      isMission: true,
+      arrivalRange: 80
+    }
+  }
+  return null
+}
+
+function updateWaypointIndicator() {
+  const wp = getActiveWaypoint()
+  if (!wp) {
     waypointEl.style.display = 'none'
     return
   }
 
-  const targetPos = new THREE.Vector3(...body.position)
+  const color = wp.isMission ? '#ff8a3d' : '#7fe0a0'
+  const targetPos = new THREE.Vector3(...wp.position)
   const projected = targetPos.clone().project(camera)
   const behind = projected.z > 1
   const w = window.innerWidth
@@ -1420,9 +1475,13 @@ function updateWaypointIndicator() {
   waypointEl.style.top = `${cy + dy}px`
   waypointEl.style.transform = 'translate(-50%, -50%)'
   waypointEl.style.display = 'block'
-  waypointEl.querySelector('.wp-arrow').style.transform = `rotate(${angle}rad)`
+  const arrow = waypointEl.querySelector('.wp-arrow')
+  arrow.style.transform = `rotate(${angle}rad)`
+  arrow.style.borderBottomColor = color
+  const label = waypointEl.querySelector('.wp-label')
+  label.style.color = color
   const distance = new THREE.Vector3().fromArray(gameState.player.ship.position).distanceTo(targetPos)
-  waypointEl.querySelector('.wp-label').textContent = `${body.name} · ${Math.round(distance)}m`
+  label.textContent = `${wp.name} · ${Math.round(distance)}m`
 }
 
 let lastTime = performance.now()
@@ -1462,7 +1521,7 @@ function animate() {
     return
   }
 
-  if (docked || paused || navMapOpen || inventoryOpen) {
+  if (docked || paused || navMapOpen || inventoryOpen || missionsOpen) {
     renderer.render(scene, camera)
     return
   }
@@ -1471,19 +1530,11 @@ function animate() {
 
   let thrustState = null
   if (cruising) {
-    const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-    const waypointBody = currentSystem.bodies.find((b) => b.id === gameState.player.waypointBodyId)
-    if (!waypointBody || gameState.inCombat) {
+    const wp = getActiveWaypoint()
+    if (!wp || gameState.inCombat) {
       cruising = false
-    } else {
-      // Arrive at the body's surface shell, not a flat 60m from its center —
-      // large planets/stations would never "arrive" otherwise (collision
-      // keeps you hundreds of units out).
-      const bodyRadius = collisionRadiusFor(waypointBody) ?? 0
-      const arrivalRange = bodyRadius + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
-      if (updateSupercruise(gameState.player.ship, playerShipClass, waypointBody.position, dt, arrivalRange)) {
-        cruising = false
-      }
+    } else if (updateSupercruise(gameState.player.ship, playerShipClass, wp.position, dt, wp.arrivalRange)) {
+      cruising = false
     }
     audio.setThrustState(null)
   } else {

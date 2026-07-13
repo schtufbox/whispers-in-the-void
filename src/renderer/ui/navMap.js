@@ -1,4 +1,5 @@
 import { getSystem, canJumpTo } from '../procgen/galaxy.js'
+import { missionMarkedSystemIds, missionMarkedBodyIds } from '../game/missions.js'
 
 const STYLE = `
 #nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
@@ -54,6 +55,12 @@ const STYLE = `
 }
 #nav-map button.waypoint:hover { background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35); }
 #nav-map tr.active-waypoint td { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
+#nav-map tr.mission-marker td { color: #ffb07a; }
+#nav-map tr.mission-marker td.body-name { text-shadow: 0 0 6px rgba(255,138,61,0.45); }
+#nav-map .mission-tag {
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  color: #ff8a3d; margin-left: 4px; opacity: 0.9;
+}
 `
 
 // Small per-kind glyphs (not emoji) so the system-body list reads at a
@@ -158,16 +165,32 @@ export function createNavMap(container, gameState) {
         ctx.stroke()
       }
 
+      // Mission objective / turn-in systems get an orange ring under the dot.
+      const missionSystems = missionMarkedSystemIds(gameState)
+      for (const system of systems) {
+        if (!missionSystems.has(system.id)) continue
+        const [px, py] = toCanvas(system.galaxyPosition)
+        ctx.beginPath()
+        ctx.arc(px, py, 9, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(255,138,61,0.95)'
+        ctx.lineWidth = 2
+        ctx.shadowColor = '#ff8a3d'
+        ctx.shadowBlur = 12
+        ctx.stroke()
+      }
+      ctx.shadowBlur = 0
+
       for (const system of systems) {
         const [px, py] = toCanvas(system.galaxyPosition)
         const isCurrent = system.id === currentSystem.id
         const isSelected = system.id === selectedSystemId
         const isHovered = system.id === hoveredSystemId
         const inRange = isCurrent || canJumpTo(currentSystem, system.id)
+        const hasMission = missionSystems.has(system.id)
         ctx.beginPath()
         ctx.arc(px, py, isCurrent ? 5 : isSelected || isHovered ? 4.5 : 2.5, 0, Math.PI * 2)
-        ctx.fillStyle = isCurrent ? '#5ee6ff' : isSelected ? '#ffcc66' : isHovered ? '#eaffff' : inRange ? '#7fe0a0' : '#3a5a8a'
-        if (isCurrent || isSelected || isHovered || inRange) {
+        ctx.fillStyle = isCurrent ? '#5ee6ff' : isSelected ? '#ffcc66' : isHovered ? '#eaffff' : hasMission ? '#ff9a4a' : inRange ? '#7fe0a0' : '#3a5a8a'
+        if (isCurrent || isSelected || isHovered || inRange || hasMission) {
           ctx.shadowColor = ctx.fillStyle
           ctx.shadowBlur = isCurrent || isSelected || isHovered ? 10 : 5
         } else {
@@ -239,7 +262,8 @@ export function createNavMap(container, gameState) {
         draw()
       }
       if (nearest) {
-        tooltipEl.textContent = nearest.name
+        const tag = missionSystems.has(nearest.id) ? ' · mission' : ''
+        tooltipEl.textContent = `${nearest.name}${tag}`
         tooltipEl.style.left = `${mx}px`
         tooltipEl.style.top = `${my}px`
         tooltipEl.style.display = 'block'
@@ -267,6 +291,7 @@ export function createNavMap(container, gameState) {
   function renderSystemTab() {
     const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
     const playerPos = gameState.player.ship.position
+    const missionBodies = missionMarkedBodyIds(gameState, system.id)
     const rows = system.bodies
       .map((b) => ({ b, d: dist3(playerPos, b.position) }))
       .sort((a, b) => a.d - b.d)
@@ -277,18 +302,29 @@ export function createNavMap(container, gameState) {
         <thead><tr><th>Name</th><th>Kind</th><th>Distance</th><th></th></tr></thead>
         <tbody>${rows
           .map(
-            ({ b, d }) => `
-          <tr class="${gameState.player.waypointBodyId === b.id ? 'active-waypoint' : ''}">
-            <td class="body-name">${BODY_ICONS[b.kind] ?? ''}${b.name}</td><td>${b.kind}</td><td>${Math.round(d)}m</td>
-            <td><button class="waypoint" data-id="${b.id}">${gameState.player.waypointBodyId === b.id ? 'Clear' : 'Set Waypoint'}</button></td>
+            ({ b, d }) => {
+              const isWp = gameState.player.waypointBodyId === b.id
+              const isMission = missionBodies.has(b.id)
+              const classes = [isWp ? 'active-waypoint' : '', isMission ? 'mission-marker' : ''].filter(Boolean).join(' ')
+              return `
+          <tr class="${classes}">
+            <td class="body-name">${BODY_ICONS[b.kind] ?? ''}${b.name}${isMission ? '<span class="mission-tag">mission</span>' : ''}</td>
+            <td>${b.kind}</td><td>${Math.round(d)}m</td>
+            <td><button class="waypoint" data-id="${b.id}">${isWp ? 'Clear' : 'Set Waypoint'}</button></td>
           </tr>`
+            }
           )
           .join('')}</tbody>
       </table>
     `
     contentEl.querySelectorAll('.waypoint').forEach((btn) =>
       btn.addEventListener('click', () => {
-        gameState.player.waypointBodyId = gameState.player.waypointBodyId === btn.dataset.id ? null : btn.dataset.id
+        if (gameState.player.waypointBodyId === btn.dataset.id) {
+          gameState.player.waypointBodyId = null
+        } else {
+          gameState.player.waypointBodyId = btn.dataset.id
+          gameState.player.waypointPosition = null
+        }
         renderSystemTab()
       })
     )

@@ -35,6 +35,7 @@ export function deserializeGameState(data) {
   // before the starting-system peace existed — null just means that save
   // never gets the "no hostiles at home" protection, which is harmless.
   gameState.player.startingSystemId ??= null
+  gameState.player.waypointPosition ??= null
   gameState.flags.startingSystemPeaceBroken ??= false
 
   // Encounter/NPC state is never persisted (see plan). Only the current

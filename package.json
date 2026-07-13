@@ -1,6 +1,6 @@
 {
   "name": "whispers-in-the-void",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Procedurally generated 3D space trading/combat/exploration game",
   "main": "./out/main/index.js",
   "author": "",

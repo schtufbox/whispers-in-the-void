@@ -75,3 +75,83 @@ export function turnInMission(gameState, missionId) {
   gameState.player.credits += mission.reward
   gameState.player.reputation += 1
 }
+
+// Where the player should go next for an active mission: the objective
+// system/body while incomplete, or the giver station once ready to turn in.
+// Bounty objectives have no body — only a system + world position (live NPC
+// if spawned, else the original locationHint).
+export function missionNavTarget(mission, gameState) {
+  if (mission.objectiveComplete) {
+    return {
+      phase: 'turnin',
+      systemId: mission.giverSystemId,
+      bodyId: mission.giverStationId,
+      position: null
+    }
+  }
+  if (mission.target.kind === 'body') {
+    return {
+      phase: 'objective',
+      systemId: mission.target.systemId,
+      bodyId: mission.target.bodyId,
+      position: null
+    }
+  }
+  // bounty
+  let position = mission.target.locationHint
+  if (mission.target.npcId && gameState.player.currentSystemId === mission.target.systemId) {
+    const npc = gameState.npcs.find((n) => n.id === mission.target.npcId && !n.destroyed)
+    if (npc) position = npc.position
+  }
+  return {
+    phase: 'objective',
+    systemId: mission.target.systemId,
+    bodyId: null,
+    position: position ? [...position] : null
+  }
+}
+
+// Galaxy-map system ids that currently need an orange objective ring.
+export function missionMarkedSystemIds(gameState) {
+  const ids = new Set()
+  for (const mission of gameState.missions.active) {
+    ids.add(missionNavTarget(mission, gameState).systemId)
+  }
+  return ids
+}
+
+// Body ids in a given system that are active mission markers (objective or turn-in).
+export function missionMarkedBodyIds(gameState, systemId) {
+  const ids = new Set()
+  for (const mission of gameState.missions.active) {
+    const t = missionNavTarget(mission, gameState)
+    if (t.systemId === systemId && t.bodyId) ids.add(t.bodyId)
+  }
+  return ids
+}
+
+// Point the player's waypoint at a mission's current nav target.
+// Free-space positions (bounty hunts) are only set while already in that
+// system — local coords from another system would point at nothing useful.
+export function setWaypointForMission(gameState, missionId) {
+  const mission = gameState.missions.active.find((m) => m.id === missionId)
+  if (!mission) throw new Error('Mission not active')
+  const t = missionNavTarget(mission, gameState)
+  if (t.bodyId) {
+    gameState.player.waypointBodyId = t.bodyId
+    gameState.player.waypointPosition = null
+    return
+  }
+  if (t.position && t.systemId === gameState.player.currentSystemId) {
+    gameState.player.waypointBodyId = null
+    gameState.player.waypointPosition = t.position
+    return
+  }
+  if (t.systemId !== gameState.player.currentSystemId) {
+    // Clear local markers; galaxy map orange ring is the cross-system cue.
+    gameState.player.waypointBodyId = null
+    gameState.player.waypointPosition = null
+    return
+  }
+  throw new Error('Mission has no trackable location')
+}

@@ -46,6 +46,9 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
       // see the starting-system peace flag below.
       startingSystemId: startingSystem.id,
       waypointBodyId: null,
+      // Free-space waypoint (e.g. bounty hunt marker) — cleared when a body
+      // waypoint is set. Not required for normal body navigation.
+      waypointPosition: null,
       ship: {
         classId: shipClassId,
         instanceName: shipInstanceName,
