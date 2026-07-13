@@ -1,17 +1,22 @@
 import * as THREE from 'three'
 
 export const SUPERCRUISE_MULTIPLIER = 4.2 // "~40% faster" per user request (was 3)
-const ARRIVAL_RANGE = 60
+// Default for tests / callers that don't pass a body-sized range. Real play
+// uses collisionRadius + ship radius + margin — a flat 60 never reaches the
+// center of a large planet/station (collision stops you far outside it).
+export const DEFAULT_ARRIVAL_RANGE = 60
 const STEER_RATE_MULTIPLIER = 1.5
 const DAMPING_PER_SECOND = 0.35
 
 // Autopilot flight toward a fixed target while supercruise is engaged.
 // Returns true once the ship has arrived (caller should disengage).
-export function updateSupercruise(shipState, shipClass, targetPosition, dt) {
+// arrivalRange is the distance-to-target center that counts as "there"
+// (main.js sizes this off the waypoint body's collision shell).
+export function updateSupercruise(shipState, shipClass, targetPosition, dt, arrivalRange = DEFAULT_ARRIVAL_RANGE) {
   const shipPos = new THREE.Vector3().fromArray(shipState.position)
   const targetPos = new THREE.Vector3(...targetPosition)
   const toTarget = targetPos.clone().sub(shipPos)
-  if (toTarget.length() < ARRIVAL_RANGE) return true
+  if (toTarget.length() < arrivalRange) return true
 
   const quat = new THREE.Quaternion().fromArray(shipState.quaternion)
   // Matrix4.lookAt follows the camera convention (local +Z points away from

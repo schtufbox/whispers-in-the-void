@@ -46,3 +46,11 @@ test('arriving within range on the first call returns true immediately without m
   const arrived = updateSupercruise(shipState, shipClass, [0, 0, 10], DT)
   assert.equal(arrived, true)
 })
+
+test('custom arrivalRange is respected (body-sized shells for large stations/planets)', () => {
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  const shipState = { position: [0, 0, 0], velocity: [0, 0, 0], quaternion: [0, 0, 0, 1] }
+  // 200 units out — default range would not count as arrived, body-sized range does.
+  assert.equal(updateSupercruise(shipState, shipClass, [0, 0, 200], DT, 250), true)
+  assert.equal(updateSupercruise(shipState, shipClass, [0, 0, 200], DT, 60), false)
+})

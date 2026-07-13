@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mulberry32 } from '../procgen/prng.js'
+import { STAR_TYPES } from '../procgen/starType.js'
 import { buildLensFlare } from './lensFlare.js'
 import { getSurfaceTextures } from './textures.js'
 
@@ -11,9 +12,6 @@ function hashString(str) {
 
 const STAR_HUES = [45, 30, 55, 10, 200]
 
-// Weighted so a normal yellow/white star is the common case; the rest give
-// systems visual variety without every system looking exotic.
-const STAR_TYPES = ['mainSequence', 'mainSequence', 'mainSequence', 'redDwarf', 'redDwarf', 'whiteDwarf', 'giant', 'binary']
 const BINARY_COMPONENT_TYPES = ['mainSequence', 'redDwarf', 'whiteDwarf']
 
 // Cheap seeded "value noise" over the unit sphere (a sum of a few sine

@@ -61,12 +61,16 @@ const CRUISE_FOV = 78
 
 const CROSSHAIR_DISTANCE = 80
 
-const DOCK_ANIM_DURATION_S = 2.4
-const DOCK_EXTERIOR_STANDOFF = 18
-const UNDOCK_BACKOFF_DISTANCE = 70
-const DOCK_FLASH_FADE_S = 0.4
+// Approach + bay glide; long enough to read as a proper docking sequence.
+const DOCK_ANIM_DURATION_S = 3.2
+// Extra clearance beyond the body's collision shell for the exterior hang
+// point — the old flat 18 was deep *inside* station/planet radii (~100–200+).
+const DOCK_EXTERIOR_MARGIN = 28
+const UNDOCK_BACKOFF_MARGIN = 55
+const DOCK_FLASH_FADE_S = 0.55
 const HYPERSPACE_FLASH_COLOR = '#eaffff'
 const DOCK_FLASH_COLOR = '#4fc3d9'
+const SUPERCRUISE_ARRIVAL_MARGIN = 45
 // A dedicated coordinate region for the docking-bay interior, far enough
 // from any system-local coordinates (which top out around 2200) that it can
 // never overlap real flight space.
@@ -84,7 +88,12 @@ scene.add(nebula)
 const keys = createInputState()
 const mouseAim = createMouseAimState()
 const EMPTY_KEYS = new Set()
+// flightModeWanted = player intends to be in mouse-aim flight (Space / undock).
+// flightMode = actually receiving mouse aim (pointer is locked). Tabbing out
+// drops the lock and clears flightMode, but keeps wanted so focus/click can
+// re-acquire without needing another Space press.
 let flightMode = false
+let flightModeWanted = false
 let laserFireHeld = false
 let missileFireHeld = false
 // Mining mode swaps laser control from manual/crosshair fire to an
@@ -103,7 +112,16 @@ window.addEventListener('mouseup', (e) => {
 // Right-click is used for missile fire, not the OS/browser context menu.
 window.addEventListener('contextmenu', (e) => e.preventDefault())
 
+function canUseFlightMode() {
+  if (!gameState || paused || navMapOpen || inventoryOpen || jumpEffect) return false
+  // Parked at the docking UI: no flight. Mid undock animation is fine —
+  // pointer lock is requested on the Undock click (needs a live gesture).
+  if (docked && !dockEffect) return false
+  return true
+}
+
 function exitFlightMode() {
+  flightModeWanted = false
   flightMode = false
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
@@ -119,18 +137,66 @@ function exitFlightMode() {
 // again, so the player lands back in flight controls without having to
 // press Space themselves. Same fire-and-forget pointer-lock request/catch
 // pattern as the Space keydown handler below; if the browser refuses it
-// (e.g. too long after the last user gesture), flightMode just settles back
-// to false instead of throwing.
+// (e.g. too long after the last user gesture), flightMode drops but
+// flightModeWanted stays so a later focus/click can re-acquire.
 function reenterFlightMode() {
+  flightModeWanted = true
+  if (!canUseFlightMode()) {
+    flightMode = false
+    return
+  }
   flightMode = true
+  if (document.pointerLockElement === renderer.domElement) return
   renderer.domElement.requestPointerLock().catch((err) => {
     console.error('Pointer lock request failed:', err)
     flightMode = false
   })
 }
 
+// After alt-tab / OS focus steal, Chromium drops pointer lock. Keep the
+// player's intent (flightModeWanted) and re-request on focus or any click
+// on the canvas — focus alone is often rejected as a non-gesture.
+function tryRestoreFlightMode() {
+  if (!flightModeWanted || !canUseFlightMode()) return
+  if (document.pointerLockElement === renderer.domElement) {
+    flightMode = true
+    return
+  }
+  flightMode = true
+  renderer.domElement.requestPointerLock().catch(() => {
+    flightMode = false
+  })
+}
+
 document.addEventListener('pointerlockchange', () => {
-  if (document.pointerLockElement !== renderer.domElement) flightMode = false
+  if (document.pointerLockElement === renderer.domElement) {
+    if (flightModeWanted) flightMode = true
+  } else {
+    flightMode = false
+    if (crosshairEl) crosshairEl.style.display = 'none'
+    if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
+  }
+})
+
+window.addEventListener('blur', () => {
+  keys.clear()
+  laserFireHeld = false
+  missileFireHeld = false
+})
+
+window.addEventListener('focus', () => {
+  tryRestoreFlightMode()
+})
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') tryRestoreFlightMode()
+})
+
+renderer.domElement.addEventListener('click', () => {
+  // Click is a reliable user gesture for re-locking after tabbing out.
+  if (flightModeWanted && canUseFlightMode() && document.pointerLockElement !== renderer.domElement) {
+    tryRestoreFlightMode()
+  }
 })
 
 let gameState = null
@@ -901,16 +967,32 @@ function dock(body) {
   dockingUI.show(body, () => beginUndocking())
 }
 
+// Smoothstep-ish ease so docking approaches decelerate into the hang point
+// instead of a robotic linear slide.
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+}
+
+// Hang point just outside the body's collision shell, on the approach line.
+function dockExteriorPoint(body, shipPos) {
+  const bodyPos = new THREE.Vector3(...body.position)
+  const approachDir = bodyPos.clone().sub(shipPos)
+  if (approachDir.lengthSq() < 1e-6) approachDir.set(0, 0, 1)
+  else approachDir.normalize()
+  const bodyRadius = collisionRadiusFor(body) ?? 0
+  const standoff = bodyRadius + getShipCollisionRadius(playerShipClass) + DOCK_EXTERIOR_MARGIN
+  const exteriorPoint = bodyPos.clone().addScaledVector(approachDir, -standoff)
+  return { bodyPos, approachDir, exteriorPoint, standoff }
+}
+
 // Docking/undocking is a scripted two-half animation: fly from wherever the
-// ship is to just outside the body, swap the whole exterior scene for the
-// bay interior behind a brief flash (masking the cut), then glide to the
-// parked spot. Undocking reverses the same path. dockedApproach remembers
-// the original approach vector/point so the reverse trip lines up.
+// ship is to just outside the body's collision shell, swap the whole exterior
+// scene for the bay interior behind a brief flash (masking the cut), then
+// glide to the parked spot. Undocking reverses the same path. dockedApproach
+// remembers the original approach so the reverse trip lines up.
 function beginDocking(body) {
   const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
-  const bodyPos = new THREE.Vector3(...body.position)
-  const approachDir = bodyPos.clone().sub(shipPos).normalize()
-  const exteriorPoint = bodyPos.clone().addScaledVector(approachDir, -DOCK_EXTERIOR_STANDOFF)
+  const { bodyPos, approachDir, exteriorPoint } = dockExteriorPoint(body, shipPos)
 
   dockedApproach = { body, exteriorPoint, approachDir }
   dockEffect = {
@@ -918,13 +1000,23 @@ function beginDocking(body) {
     elapsed: 0,
     body,
     swapped: false,
-    fromPos: shipPos,
+    fromPos: shipPos.clone(),
     fromQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
     exteriorPoint,
-    facingQuat: quatFacing(exteriorPoint, bodyPos)
+    // Face the body while approaching the hang, then bay-forward inside.
+    facingQuat: quatFacing(exteriorPoint, bodyPos),
+    bayFacingQuat: new THREE.Quaternion() // identity — bay local +Z into the bay
   }
   gameState.player.ship.velocity = [0, 0, 0]
   audio.setThrustState(null)
+  // Drop supercruise cleanly (sound + flag) — dockEffect early-returns from
+  // animate() so the usual edge-detect path won't run this frame.
+  if (cruising || wasCruising) {
+    cruising = false
+    wasCruising = false
+    audio.setSupercruiseActive(false)
+    audio.announce('Supercruise disengaged')
+  }
   exitFlightMode()
   dockPromptEl.style.display = 'none'
   probePromptEl.style.display = 'none'
@@ -940,14 +1032,19 @@ function beginUndocking() {
     return
   }
   const { exteriorPoint, approachDir, body } = dockedApproach
+  const backAwayPoint = exteriorPoint.clone().addScaledVector(
+    approachDir,
+    -(getShipCollisionRadius(playerShipClass) + UNDOCK_BACKOFF_MARGIN)
+  )
   dockEffect = {
     undocking: true,
     elapsed: 0,
     body,
     swapped: false,
     exteriorPoint,
-    awayQuat: quatFacing(exteriorPoint, exteriorPoint.clone().addScaledVector(approachDir, -1)),
-    backAwayPoint: exteriorPoint.clone().addScaledVector(approachDir, -UNDOCK_BACKOFF_DISTANCE)
+    fromBayQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
+    awayQuat: quatFacing(exteriorPoint, backAwayPoint),
+    backAwayPoint
   }
   jumpFlashEl.style.background = DOCK_FLASH_COLOR
   jumpFlashEl.style.opacity = '0'
@@ -965,26 +1062,29 @@ function beginUndocking() {
 function updateDockEffect(dt) {
   dockEffect.elapsed += dt
   const half = DOCK_ANIM_DURATION_S / 2
+  // Flash peaks at the exterior↔interior swap, not for the whole second half.
+  const flashWindow = DOCK_FLASH_FADE_S
 
   if (!dockEffect.undocking) {
     if (dockEffect.elapsed < half) {
-      const lt = dockEffect.elapsed / half
+      const lt = easeInOutCubic(dockEffect.elapsed / half)
       gameState.player.ship.position = dockEffect.fromPos.clone().lerp(dockEffect.exteriorPoint, lt).toArray()
       gameState.player.ship.quaternion = dockEffect.fromQuat.clone().slerp(dockEffect.facingQuat, lt).toArray()
     } else {
       if (!dockEffect.swapped) {
         dockEffect.swapped = true
         swapToInterior()
-        gameState.player.ship.quaternion = [0, 0, 0, 1]
+        gameState.player.ship.position = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET).toArray()
+        gameState.player.ship.quaternion = dockEffect.bayFacingQuat.toArray()
       }
-      const lt = Math.min(1, (dockEffect.elapsed - half) / half)
+      const lt = easeInOutCubic(Math.min(1, (dockEffect.elapsed - half) / half))
       const entry = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET)
       const park = DOCKING_BAY_ORIGIN.clone().add(BAY_PARK_OFFSET)
       gameState.player.ship.position = entry.lerp(park, lt).toArray()
     }
   } else {
     if (dockEffect.elapsed < half) {
-      const lt = dockEffect.elapsed / half
+      const lt = easeInOutCubic(dockEffect.elapsed / half)
       const park = DOCKING_BAY_ORIGIN.clone().add(BAY_PARK_OFFSET)
       const entry = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET)
       gameState.player.ship.position = park.clone().lerp(entry, lt).toArray()
@@ -995,7 +1095,7 @@ function updateDockEffect(dt) {
         gameState.player.ship.position = dockEffect.exteriorPoint.toArray()
         gameState.player.ship.quaternion = dockEffect.awayQuat.toArray()
       }
-      const lt = Math.min(1, (dockEffect.elapsed - half) / half)
+      const lt = easeInOutCubic(Math.min(1, (dockEffect.elapsed - half) / half))
       gameState.player.ship.position = dockEffect.exteriorPoint.clone().lerp(dockEffect.backAwayPoint, lt).toArray()
     }
   }
@@ -1003,8 +1103,17 @@ function updateDockEffect(dt) {
   syncMeshToEntity(playerMesh, gameState.player.ship)
   syncChaseCamera(camera, gameState.player.ship)
 
+  // Bright flash centered on the scene swap, fading out over flashWindow.
   const sinceSwap = dockEffect.elapsed - half
-  if (sinceSwap >= 0) jumpFlashEl.style.opacity = String(Math.max(0, 1 - sinceSwap / DOCK_FLASH_FADE_S))
+  if (sinceSwap >= 0 && sinceSwap < flashWindow) {
+    jumpFlashEl.style.opacity = String(Math.max(0, 1 - sinceSwap / flashWindow))
+  } else if (sinceSwap >= flashWindow) {
+    jumpFlashEl.style.opacity = '0'
+  } else {
+    // Soft ramp-up into the swap so the cut isn't a hard pop.
+    const untilSwap = half - dockEffect.elapsed
+    jumpFlashEl.style.opacity = untilSwap < 0.15 ? String(1 - untilSwap / 0.15) : '0'
+  }
 
   if (dockEffect.elapsed >= DOCK_ANIM_DURATION_S) {
     jumpFlashEl.style.display = 'none'
@@ -1082,16 +1191,12 @@ window.addEventListener('keydown', (e) => {
       cruising = true
     }
   } else if (e.code === 'Space' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen) {
-    flightMode = !flightMode
-    if (flightMode) {
-      // If the lock request fails, resolve flightMode immediately rather
-      // than waiting on an uncertain-timing pointerlockchange event.
-      renderer.domElement.requestPointerLock().catch((err) => {
-        console.error('Pointer lock request failed:', err)
-        flightMode = false
-      })
+    // If locked in flight, Space exits. If wanted-but-lost (tab-out) or off,
+    // Space (re)enters — so tabbing out then Space re-acquires cleanly.
+    if (flightMode && document.pointerLockElement === renderer.domElement) {
+      exitFlightMode()
     } else {
-      document.exitPointerLock()
+      reenterFlightMode()
     }
   } else if (e.code === 'Tab' && !docked && !navMapOpen && !paused && !inventoryOpen) {
     e.preventDefault()
@@ -1372,8 +1477,15 @@ function animate() {
     const waypointBody = currentSystem.bodies.find((b) => b.id === gameState.player.waypointBodyId)
     if (!waypointBody || gameState.inCombat) {
       cruising = false
-    } else if (updateSupercruise(gameState.player.ship, playerShipClass, waypointBody.position, dt)) {
-      cruising = false
+    } else {
+      // Arrive at the body's surface shell, not a flat 60m from its center —
+      // large planets/stations would never "arrive" otherwise (collision
+      // keeps you hundreds of units out).
+      const bodyRadius = collisionRadiusFor(waypointBody) ?? 0
+      const arrivalRange = bodyRadius + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
+      if (updateSupercruise(gameState.player.ship, playerShipClass, waypointBody.position, dt, arrivalRange)) {
+        cruising = false
+      }
     }
     audio.setThrustState(null)
   } else {
@@ -1381,6 +1493,8 @@ function animate() {
     thrustState = !flightMode ? null : keys.has('KeyW') ? 'accel' : keys.has('KeyS') ? 'brake' : null
     audio.setThrustState(thrustState)
   }
+  // Edge-detect engage/disengage so sample spool-down + voice callout both
+  // fire on auto-arrival, combat interrupt, and manual KeyC alike.
   audio.setSupercruiseActive(cruising)
   if (cruising !== wasCruising) {
     audio.announce(cruising ? 'Supercruise engaged' : 'Supercruise disengaged')

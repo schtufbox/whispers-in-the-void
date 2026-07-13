@@ -15,12 +15,91 @@ function getContext() {
 // doesn't need this retry.
 function resumeAudioOnGesture() {
   getContext()
+  ensureSfx()
   titleMusic?.play().catch(() => {})
   deathMusic?.play().catch(() => {})
   ambientMusic?.play().catch(() => {})
 }
 window.addEventListener('keydown', resumeAudioOnGesture, { once: true })
 window.addEventListener('click', resumeAudioOnGesture, { once: true })
+
+// --- Sample SFX (Kenney Sci-Fi Sounds, CC0 — see public/audio/sfx/KENNEY_LICENSE.txt) ---
+// Real engine/weapon recordings beat pure oscillators for "sounds like a ship".
+// Loaded lazily on first user gesture; synth code remains as a fallback until
+// (or if) decode finishes so nothing goes silent mid-frame.
+const sfxBuffers = new Map()
+let sfxLoadPromise = null
+
+const SFX_FILES = [
+  'thrust.ogg', 'thrust_brake.ogg', 'supercruise.ogg', 'engine_engage.ogg',
+  'laser_pulse.ogg', 'laser_rapid.ogg', 'laser_burst.ogg', 'laser_beam.ogg', 'laser_plasma.ogg',
+  'rocket.ogg', 'missile.ogg', 'torpedo.ogg',
+  'dock.ogg', 'undock.ogg', 'dock_clamp.ogg', 'dock_seal.ogg'
+]
+
+function ensureSfx() {
+  if (sfxLoadPromise) return sfxLoadPromise
+  const audio = getContext()
+  sfxLoadPromise = Promise.all(SFX_FILES.map(async (name) => {
+    try {
+      const res = await fetch(`audio/sfx/${name}`)
+      if (!res.ok) throw new Error(res.statusText)
+      const raw = await res.arrayBuffer()
+      const buf = await audio.decodeAudioData(raw.slice(0))
+      sfxBuffers.set(name, buf)
+    } catch (err) {
+      console.warn(`sfx load failed: ${name}`, err)
+    }
+  })).then(() => {
+    // If thrust/cruise started on synth before decode finished, swap to samples.
+    if (thrustMode && !thrustNodes) {
+      const mode = thrustMode
+      thrustMode = null
+      setThrustState(mode)
+    }
+    if (cruiseOscs && !cruiseNodes) {
+      stopCruiseAudio()
+      setSupercruiseActive(true)
+    }
+  })
+  return sfxLoadPromise
+}
+
+// One-shot or looping sample. Returns { source, gain } or null if not loaded.
+function playSample(name, { volume = 0.5, rate = 1, loop = false, fadeIn = 0, delay = 0 } = {}) {
+  const buf = sfxBuffers.get(name)
+  if (!buf) return null
+  const audio = getContext()
+  const source = audio.createBufferSource()
+  source.buffer = buf
+  source.loop = loop
+  source.playbackRate.value = rate
+  const gain = audio.createGain()
+  const now = audio.currentTime + delay
+  if (fadeIn > 0) {
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.linearRampToValueAtTime(volume, now + fadeIn)
+  } else {
+    gain.gain.setValueAtTime(volume, audio.currentTime)
+  }
+  source.connect(gain).connect(audio.destination)
+  source.start(now)
+  return { source, gain }
+}
+
+function stopSampleNodes(nodes, fadeOut = 0.15) {
+  if (!nodes) return
+  const audio = getContext()
+  const now = audio.currentTime
+  try {
+    nodes.gain.gain.cancelScheduledValues(now)
+    nodes.gain.gain.setValueAtTime(Math.max(nodes.gain.gain.value, 0.0001), now)
+    nodes.gain.gain.linearRampToValueAtTime(0.0001, now + fadeOut)
+    nodes.source.stop(now + fadeOut + 0.05)
+  } catch {
+    // already stopped
+  }
+}
 
 // delay (seconds, from now) lets callers layer several tone()/noiseBurst()
 // calls with a slight offset instead of all starting simultaneously — used
@@ -82,27 +161,30 @@ function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0, delay =
   source.start(start)
 }
 
-// One firing sound per weapon in data/weapons.js's catalog, keyed by weapon
-// id directly (no separate "sound theme" indirection — each weapon already
-// has exactly one sound). pulse_laser/rocket_pod reuse the original
-// playLaser/playMissileLaunch layering unchanged; the rest scale the same
-// "transient + body + sub" layering technique up or down with the weapon's
-// own power so bigger guns read as meaningfully beefier, not just louder.
-const WEAPON_SOUND_PROFILES = {
+// One sample (plus small rate jitter) per weapon id in data/weapons.js.
+// Synth fallbacks keep fire audible if samples haven't decoded yet.
+const WEAPON_SAMPLES = {
+  pulse_laser: { file: 'laser_pulse.ogg', volume: 0.5, rate: 1 },
+  rapid_laser: { file: 'laser_rapid.ogg', volume: 0.42, rate: 1.12 },
+  burst_laser: { file: 'laser_burst.ogg', volume: 0.5, rate: 0.95 },
+  beam_laser: { file: 'laser_beam.ogg', volume: 0.55, rate: 1 },
+  plasma_cannon: { file: 'laser_plasma.ogg', volume: 0.6, rate: 0.88 },
+  rocket_pod: { file: 'rocket.ogg', volume: 0.55, rate: 1 },
+  seeker_missile: { file: 'missile.ogg', volume: 0.58, rate: 1.05 },
+  torpedo: { file: 'torpedo.ogg', volume: 0.65, rate: 0.9 }
+}
+
+const WEAPON_SYNTH_FALLBACK = {
   pulse_laser: () => {
     tone({ type: 'sawtooth', freq: 1300, freqEnd: 350, duration: 0.15, peak: 0.22 })
     tone({ type: 'square', freq: 650, freqEnd: 175, duration: 0.12, peak: 0.12 })
     tone({ type: 'sine', freq: 150, freqEnd: 60, duration: 0.12, peak: 0.2 })
   },
   rapid_laser: () => {
-    // Higher-pitched and shorter than pulse_laser — reads as a faster,
-    // lighter-caliber weapon to match its quicker cooldown/lower damage.
     tone({ type: 'sawtooth', freq: 1700, freqEnd: 550, duration: 0.09, peak: 0.18 })
     tone({ type: 'square', freq: 850, freqEnd: 300, duration: 0.07, peak: 0.1 })
   },
   burst_laser: () => {
-    // Two closely-spaced zaps (a real delay via tone's own `delay` param)
-    // for a "burst" read instead of one shot.
     tone({ type: 'square', freq: 1100, freqEnd: 320, duration: 0.13, peak: 0.2 })
     tone({ type: 'sawtooth', freq: 1100, freqEnd: 320, duration: 0.13, peak: 0.16, delay: 0.05 })
     tone({ type: 'sine', freq: 140, freqEnd: 55, duration: 0.14, peak: 0.18 })
@@ -119,24 +201,27 @@ const WEAPON_SOUND_PROFILES = {
   },
   rocket_pod: () => {
     tone({ type: 'sine', freq: 90, freqEnd: 45, duration: 0.5, peak: 0.3 })
-    tone({ type: 'sawtooth', freq: 220, freqEnd: 60, duration: 0.35, peak: 0.14 })
     noiseBurst({ duration: 0.45, filterFreq: 350, peak: 0.28, drive: 2.5 })
   },
   seeker_missile: () => {
     tone({ type: 'sine', freq: 130, freqEnd: 55, duration: 0.55, peak: 0.32 })
-    tone({ type: 'triangle', freq: 900, freqEnd: 1400, duration: 0.18, peak: 0.12 }) // a targeting-lock chirp
+    tone({ type: 'triangle', freq: 900, freqEnd: 1400, duration: 0.18, peak: 0.12 })
     noiseBurst({ duration: 0.5, filterFreq: 300, peak: 0.3, drive: 2.5 })
   },
   torpedo: () => {
     tone({ type: 'sine', freq: 70, freqEnd: 30, duration: 0.7, peak: 0.4 })
     noiseBurst({ duration: 0.6, filterFreq: 220, peak: 0.36, drive: 3 })
-    tone({ type: 'square', freq: 55, freqEnd: 22, duration: 0.55, peak: 0.2 })
   }
 }
 
 export function playWeaponFire(weaponId) {
-  const play = WEAPON_SOUND_PROFILES[weaponId] ?? WEAPON_SOUND_PROFILES.pulse_laser
-  play()
+  ensureSfx()
+  const sample = WEAPON_SAMPLES[weaponId] ?? WEAPON_SAMPLES.pulse_laser
+  // Slight rate jitter so rapid fire doesn't sound like a stuck sample.
+  const rate = sample.rate * (0.96 + Math.random() * 0.08)
+  if (playSample(sample.file, { volume: sample.volume, rate })) return
+  const fallback = WEAPON_SYNTH_FALLBACK[weaponId] ?? WEAPON_SYNTH_FALLBACK.pulse_laser
+  fallback()
 }
 
 export function playHit() {
@@ -173,20 +258,26 @@ export function playHyperspaceArrival() {
   noiseBurst({ duration: 0.4, filterFreq: 1800, peak: 0.15 })
 }
 
-// A heavier, more mechanical clamp-and-seal sound (a hard metallic clunk as
-// the docking clamps engage, then a hydraulic hiss as the bay seals) layered
-// on top of the original rising access-granted tone, rather than that tone
-// alone reading as a soft chime.
+// Dock: metal clamp + bay door close + soft seal. Undock reverses the order.
+// Kenney CC0 samples (see public/audio/sfx/); synth fallback if not loaded.
 export function playDock() {
+  ensureSfx()
+  const clamp = playSample('dock_clamp.ogg', { volume: 0.55, rate: 0.92 })
+  const door = playSample('dock.ogg', { volume: 0.5, delay: 0.06 })
+  const seal = playSample('dock_seal.ogg', { volume: 0.28, rate: 0.85, delay: 0.22 })
+  if (clamp || door || seal) return
   tone({ type: 'sine', freq: 260, freqEnd: 480, duration: 0.7, attack: 0.1, peak: 0.16 })
   tone({ type: 'square', freq: 90, freqEnd: 55, duration: 0.18, peak: 0.32 })
   noiseBurst({ duration: 0.1, filterFreq: 1800, peak: 0.3, drive: 2.5 })
   noiseBurst({ duration: 0.5, filterFreq: 3000, peak: 0.14, delay: 0.08 })
 }
 
-// The reverse sequence — hiss (clamps releasing) first, then the clunk of
-// mechanical disengagement — under the original falling departure tone.
 export function playUndock() {
+  ensureSfx()
+  const seal = playSample('dock_seal.ogg', { volume: 0.25, rate: 1.15 })
+  const door = playSample('undock.ogg', { volume: 0.52, delay: 0.05 })
+  const clamp = playSample('dock_clamp.ogg', { volume: 0.45, rate: 1.08, delay: 0.28 })
+  if (seal || door || clamp) return
   tone({ type: 'sine', freq: 480, freqEnd: 260, duration: 0.7, attack: 0.1, peak: 0.16 })
   noiseBurst({ duration: 0.35, filterFreq: 3000, peak: 0.14 })
   tone({ type: 'square', freq: 70, freqEnd: 105, duration: 0.16, peak: 0.3, delay: 0.3 })
@@ -201,86 +292,209 @@ export function playMiningPing() {
 // disengaged", etc.) — gracefully a no-op wherever the Web Speech API isn't
 // available, rather than throwing, since this is a nice-to-have layered on
 // top of the existing synthesized SFX above, not a required system.
+//
+// OS TTS can't be wired into the Web Audio graph, so "reverb" is faked as a
+// soft multi-tap delay bloom under the phrase (plus a slower rate), not a
+// true wet process of the voice itself.
+let femaleVoice = null
+
+function refreshFemaleVoice() {
+  if (!window.speechSynthesis) return
+  const voices = window.speechSynthesis.getVoices()
+  if (!voices.length) return
+  const en = voices.filter((v) => /^en\b/i.test(v.lang))
+  const pool = en.length ? en : voices
+  // Known female system voices across macOS / Windows / Chrome.
+  const prefer = /samantha|victoria|karen|moira|tessa|fiona|veena|zira|hazel|susan|linda|heather|serena|catherine|google us english female|microsoft zira|female|woman/i
+  const avoidMale = /david|mark|daniel|alex|fred|jorge|male|\bman\b|guy|tom|bruce|rishi|aaron/i
+  femaleVoice =
+    pool.find((v) => prefer.test(v.name)) ??
+    pool.find((v) => !avoidMale.test(v.name)) ??
+    pool[0]
+}
+
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  refreshFemaleVoice()
+  window.speechSynthesis.addEventListener('voiceschanged', refreshFemaleVoice)
+}
+
+// Quiet noise through a decaying multi-tap delay — sits under the TTS so the
+// callout reads as radio-in-a-large-space rather than a dry desktop voice.
+function playAnnounceReverbBloom(durationS = 2.2) {
+  const audio = getContext()
+  const now = audio.currentTime
+  const length = Math.ceil(audio.sampleRate * 0.08)
+  const buffer = audio.createBuffer(1, length, audio.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length)
+
+  const src = audio.createBufferSource()
+  src.buffer = buffer
+
+  const band = audio.createBiquadFilter()
+  band.type = 'bandpass'
+  band.frequency.value = 1200
+  band.Q.value = 0.7
+
+  const wet = audio.createGain()
+  wet.gain.setValueAtTime(0.0001, now)
+  wet.gain.exponentialRampToValueAtTime(0.045, now + 0.05)
+  wet.gain.exponentialRampToValueAtTime(0.0001, now + durationS)
+
+  // Multi-tap delay line (poor-man's reverb) — no IR file needed.
+  src.connect(band)
+  for (const [delayS, feedback] of [[0.09, 0.45], [0.17, 0.35], [0.28, 0.25], [0.41, 0.18]]) {
+    const delay = audio.createDelay(1)
+    delay.delayTime.value = delayS
+    const fb = audio.createGain()
+    fb.gain.value = feedback
+    band.connect(delay)
+    delay.connect(fb)
+    fb.connect(delay)
+    delay.connect(wet)
+  }
+  wet.connect(audio.destination)
+  src.start(now)
+  src.stop(now + 0.1)
+}
+
 export function announce(text) {
   if (!window.speechSynthesis) return
   window.speechSynthesis.cancel() // don't queue up stale callouts behind a new one
+  if (!femaleVoice) refreshFemaleVoice()
+
+  playAnnounceReverbBloom(2.4)
+
   const utterance = new SpeechSynthesisUtterance(text)
-  utterance.rate = 1.05
-  utterance.pitch = 0.85
-  utterance.volume = 0.8
+  if (femaleVoice) utterance.voice = femaleVoice
+  utterance.rate = 0.72
+  utterance.pitch = 1.15
+  utterance.volume = 0.85
   window.speechSynthesis.speak(utterance)
 }
 
+let thrustNodes = null
+let thrustMode = null // 'accel' | 'brake' | null
+// Synth fallback nodes when samples aren't ready yet.
 let thrustOsc = null
 let thrustGain = null
-let thrustMode = null // 'accel' | 'brake' | null
 
-// Distinct waveform + pitch per mode (not just on/off) — a duller square
-// wave a fourth lower for braking reads as "backing off/reverse" against the
-// brighter accelerating sawtooth, without needing a second signal chain.
-const THRUST_PROFILES = {
-  accel: { type: 'sawtooth', freq: 70, peak: 0.05 },
-  brake: { type: 'square', freq: 48, peak: 0.045 }
+const THRUST_SAMPLE = {
+  accel: { file: 'thrust.ogg', volume: 0.32, rate: 1 },
+  brake: { file: 'thrust_brake.ogg', volume: 0.26, rate: 0.92 }
 }
 
-export function setThrustState(mode) {
-  const audio = getContext()
-  if (mode === thrustMode) return
+function stopThrustAudio() {
+  if (thrustNodes) {
+    stopSampleNodes(thrustNodes, 0.18)
+    thrustNodes = null
+  }
   if (thrustOsc) {
-    thrustGain.gain.linearRampToValueAtTime(0, audio.currentTime + 0.15)
-    thrustOsc.stop(audio.currentTime + 0.2)
+    const audio = getContext()
+    thrustGain.gain.linearRampToValueAtTime(0.0001, audio.currentTime + 0.15)
+    try { thrustOsc.stop(audio.currentTime + 0.2) } catch { /* already stopped */ }
     thrustOsc = null
     thrustGain = null
   }
+}
+
+export function setThrustState(mode) {
+  ensureSfx()
+  if (mode === thrustMode) return
+  stopThrustAudio()
   thrustMode = mode
   if (!mode) return
 
-  const profile = THRUST_PROFILES[mode]
+  const profile = THRUST_SAMPLE[mode]
+  const nodes = playSample(profile.file, {
+    volume: profile.volume,
+    rate: profile.rate,
+    loop: true,
+    fadeIn: 0.18
+  })
+  if (nodes) {
+    thrustNodes = nodes
+    return
+  }
+
+  // Fallback: filtered saw/square hum until samples load.
+  const audio = getContext()
   thrustOsc = audio.createOscillator()
   thrustGain = audio.createGain()
-  thrustOsc.type = profile.type
-  thrustOsc.frequency.value = profile.freq
+  const filter = audio.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.value = mode === 'brake' ? 280 : 420
+  thrustOsc.type = mode === 'brake' ? 'square' : 'sawtooth'
+  thrustOsc.frequency.value = mode === 'brake' ? 48 : 70
   thrustGain.gain.setValueAtTime(0, audio.currentTime)
-  thrustGain.gain.linearRampToValueAtTime(profile.peak, audio.currentTime + 0.2)
-  thrustOsc.connect(thrustGain).connect(audio.destination)
+  thrustGain.gain.linearRampToValueAtTime(0.05, audio.currentTime + 0.2)
+  thrustOsc.connect(filter).connect(thrustGain).connect(audio.destination)
   thrustOsc.start()
 }
 
+let cruiseNodes = null
+// Synth fallback for cruise
 let cruiseOscs = null
 let cruiseGain = null
 
+function stopCruiseAudio() {
+  if (cruiseNodes) {
+    stopSampleNodes(cruiseNodes, 0.35)
+    cruiseNodes = null
+  }
+  if (cruiseOscs) {
+    const audio = getContext()
+    cruiseGain.gain.linearRampToValueAtTime(0.0001, audio.currentTime + 0.3)
+    for (const osc of cruiseOscs) {
+      try { osc.stop(audio.currentTime + 0.35) } catch { /* already stopped */ }
+    }
+    cruiseOscs = null
+    cruiseGain = null
+  }
+}
+
 export function setSupercruiseActive(active) {
+  ensureSfx()
   const audio = getContext()
-  if (active && !cruiseOscs) {
-    // A much bassier one-shot "punch" for the engage moment, on top of the
-    // sustained cruise hum below — a rising sub-bass sweep plus a driven
-    // low rumble, not just a louder version of the hum.
-    tone({ type: 'sine', freq: 45, freqEnd: 130, duration: 0.6, attack: 0.05, peak: 0.5 })
-    tone({ type: 'square', freq: 30, freqEnd: 70, duration: 0.5, peak: 0.3 })
-    noiseBurst({ duration: 0.4, filterFreq: 250, peak: 0.3, drive: 2 })
+  if (active && !cruiseNodes && !cruiseOscs) {
+    // One-shot spool-up, then a looping big-engine bed.
+    if (!playSample('engine_engage.ogg', { volume: 0.45, rate: 1.05 })) {
+      tone({ type: 'sine', freq: 45, freqEnd: 130, duration: 0.6, attack: 0.05, peak: 0.5 })
+      noiseBurst({ duration: 0.4, filterFreq: 250, peak: 0.3, drive: 2 })
+    }
+
+    const nodes = playSample('supercruise.ogg', {
+      volume: 0.38,
+      rate: 1.08,
+      loop: true,
+      fadeIn: 0.35
+    })
+    if (nodes) {
+      cruiseNodes = nodes
+      return
+    }
 
     cruiseGain = audio.createGain()
     cruiseGain.gain.setValueAtTime(0, audio.currentTime)
     cruiseGain.gain.linearRampToValueAtTime(0.06, audio.currentTime + 0.4)
-    cruiseOscs = [220, 224].map((freq) => {
+    cruiseOscs = [55, 58, 110].map((freq) => {
       const osc = audio.createOscillator()
-      osc.type = 'sine'
+      osc.type = freq < 80 ? 'sawtooth' : 'sine'
       osc.frequency.value = freq
-      osc.connect(cruiseGain)
+      const f = audio.createBiquadFilter()
+      f.type = 'lowpass'
+      f.frequency.value = 400
+      osc.connect(f).connect(cruiseGain)
       osc.start()
       return osc
     })
     cruiseGain.connect(audio.destination)
-  } else if (!active && cruiseOscs) {
-    // The mirror disengage punch — falling instead of rising.
-    tone({ type: 'sine', freq: 130, freqEnd: 35, duration: 0.6, attack: 0.02, peak: 0.45 })
-    tone({ type: 'square', freq: 70, freqEnd: 25, duration: 0.5, peak: 0.28 })
-    noiseBurst({ duration: 0.35, filterFreq: 200, peak: 0.25, drive: 1.5 })
-
-    cruiseGain.gain.linearRampToValueAtTime(0, audio.currentTime + 0.3)
-    for (const osc of cruiseOscs) osc.stop(audio.currentTime + 0.35)
-    cruiseOscs = null
-    cruiseGain = null
+  } else if (!active && (cruiseNodes || cruiseOscs)) {
+    if (!playSample('engine_engage.ogg', { volume: 0.35, rate: 0.75 })) {
+      tone({ type: 'sine', freq: 130, freqEnd: 35, duration: 0.6, attack: 0.02, peak: 0.45 })
+      noiseBurst({ duration: 0.35, filterFreq: 200, peak: 0.25, drive: 1.5 })
+    }
+    stopCruiseAudio()
   }
 }
 

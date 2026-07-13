@@ -1,15 +1,24 @@
 import { mulberry32, pick } from '../procgen/prng.js'
 import { generateGalaxy, SYSTEM_ARRIVAL_POSITION, coreFraction } from '../procgen/galaxy.js'
+import { starTypeForSystem } from '../procgen/starType.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { seedMissionsForGalaxy } from '../data/missionTemplates.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
 
 // The player starts nearer the galactic core than the edge — picked from
 // among the 10% of systems closest to it, rather than an arbitrary system.
+// Binaries are excluded so a new game always opens on a single sun (menu
+// flyby still forces a binary; that's separate).
 function pickStartingSystem(galaxy, rng) {
   const sorted = [...galaxy.systems].sort((a, b) => coreFraction(a) - coreFraction(b))
   const nearCoreCount = Math.max(1, Math.floor(sorted.length * 0.1))
-  return pick(rng, sorted.slice(0, nearCoreCount))
+  const nearCore = sorted.slice(0, nearCoreCount)
+  const nonBinary = nearCore.filter((s) => starTypeForSystem(s) !== 'binary')
+  if (nonBinary.length) return pick(rng, nonBinary)
+  // Extremely unlikely (~1/8 of systems are binary); fall back galaxy-wide
+  // rather than accept a binary start.
+  const anyNonBinary = sorted.filter((s) => starTypeForSystem(s) !== 'binary')
+  return pick(rng, anyNonBinary.length ? anyNonBinary : nearCore)
 }
 
 export function createGameState({ characterName, shipInstanceName, shipClassId, seed }) {

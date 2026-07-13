@@ -130,17 +130,19 @@ function getTextures() {
 // halo ring past center.
 export function buildLensFlare(color) {
   const { glow, ring, dot, streak, hex } = getTextures()
-  const tint = new THREE.Color(color)
+  // Tint scaled down — LensflareElement multiplies texture by color, so this
+  // is the main brightness knob (sizes alone still wash out with additive blend).
+  const tint = new THREE.Color(color).multiplyScalar(0.55)
   const flare = new Lensflare()
   // At the light source itself.
-  flare.addElement(new LensflareElement(glow, 700, 0, tint))
-  flare.addElement(new LensflareElement(streak, 900, 0, new THREE.Color(0.6, 0.75, 1)))
-  // Ghost chain along the lens axis.
-  flare.addElement(new LensflareElement(hex, 70, 0.3, new THREE.Color(0.4, 0.9, 0.85)))
-  flare.addElement(new LensflareElement(dot, 35, 0.45, new THREE.Color(0.5, 1, 0.6)))
-  flare.addElement(new LensflareElement(hex, 130, 0.6, new THREE.Color(0.55, 0.5, 0.9)))
-  flare.addElement(new LensflareElement(hex, 50, 0.75, tint))
-  flare.addElement(new LensflareElement(ring, 260, 0.95, new THREE.Color(0.9, 0.55, 0.35)))
-  flare.addElement(new LensflareElement(hex, 180, 1.15, new THREE.Color(0.45, 0.6, 1)))
+  flare.addElement(new LensflareElement(glow, 420, 0, tint))
+  flare.addElement(new LensflareElement(streak, 520, 0, new THREE.Color(0.35, 0.45, 0.65)))
+  // Ghost chain along the lens axis — smaller and dimmer than the source.
+  flare.addElement(new LensflareElement(hex, 48, 0.3, new THREE.Color(0.25, 0.55, 0.5)))
+  flare.addElement(new LensflareElement(dot, 24, 0.45, new THREE.Color(0.3, 0.55, 0.35)))
+  flare.addElement(new LensflareElement(hex, 85, 0.6, new THREE.Color(0.35, 0.3, 0.55)))
+  flare.addElement(new LensflareElement(hex, 34, 0.75, tint))
+  flare.addElement(new LensflareElement(ring, 160, 0.95, new THREE.Color(0.5, 0.32, 0.2)))
+  flare.addElement(new LensflareElement(hex, 110, 1.15, new THREE.Color(0.28, 0.38, 0.6)))
   return flare
 }
