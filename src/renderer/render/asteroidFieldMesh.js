@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mulberry32, range } from '../procgen/prng.js'
+import { getSurfaceTextures } from './textures.js'
 
 function hashString(str) {
   let h = 0
@@ -31,8 +32,11 @@ export function getAsteroidRocks(body) {
   return rocks
 }
 
+// Reuses the same 'rocky' CC0 photo texture (render/textures.js) every rock
+// in every field shares, same as planetMesh.js's moons — a bare rock doesn't
+// need its own per-body archetype variety.
 export function buildAsteroidFieldMesh(body) {
-  const material = new THREE.MeshLambertMaterial({ color: 0x6b6459, flatShading: true })
+  const material = new THREE.MeshStandardMaterial({ color: 0x6b6459, flatShading: true, roughness: 1, metalness: 0, ...getSurfaceTextures('rocky') })
   const group = new THREE.Group()
 
   for (const rock of getAsteroidRocks(body)) {

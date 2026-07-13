@@ -4,14 +4,32 @@ import { useShipPart } from '../game/economy.js'
 import { findBody } from '../procgen/galaxy.js'
 
 const STYLE = `
-#inventory-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.85); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
-#inventory-ui .panel { width: 520px; max-height: 80vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
-#inventory-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+#inventory-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+#inventory-ui .panel {
+  width: 520px; max-height: 80vh; overflow-y: auto; padding: 18px 22px;
+  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
+  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
+  box-shadow: 0 0 26px rgba(79,195,217,0.22), inset 0 0 26px rgba(79,195,217,0.05);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+}
+#inventory-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
+#inventory-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 18px 0 8px; }
+#inventory-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 #inventory-ui table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-#inventory-ui th, #inventory-ui td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2438; }
-#inventory-ui button.close { background: #a13a3a; border: none; color: white; padding: 6px 12px; cursor: pointer; }
-#inventory-ui button.use-part { background: #2a5a3a; border: none; color: #cfe3ff; padding: 4px 10px; cursor: pointer; }
-#inventory-ui button.use-part:disabled { opacity: 0.4; cursor: not-allowed; }
+#inventory-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); }
+#inventory-ui td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
+#inventory-ui button.close {
+  background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
+  padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#inventory-ui button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
+#inventory-ui button.use-part {
+  background: rgba(127,224,160,0.12); border: 1px solid rgba(127,224,160,0.5); color: #bdf5cf;
+  padding: 5px 12px; cursor: pointer; font-family: monospace; transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#inventory-ui button.use-part:not(:disabled):hover { background: rgba(127,224,160,0.22); box-shadow: 0 0 12px rgba(127,224,160,0.35); }
+#inventory-ui button.use-part:disabled { opacity: 0.35; cursor: not-allowed; }
 #inventory-ui .empty { opacity: 0.5; font-size: 12px; }
 #inventory-ui .remote-station { margin-bottom: 10px; }
 #inventory-ui .remote-station h4 { margin: 0 0 4px 0; font-size: 13px; color: #7fe6ff; }

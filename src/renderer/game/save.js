@@ -1,4 +1,6 @@
 import { ensureBountyNpcsForSystem } from './missions.js'
+import { getShipClass } from '../data/shipClasses.js'
+import { defaultLoadoutFor } from '../data/weapons.js'
 
 export function serializeGameState(gameState) {
   return {
@@ -18,12 +20,16 @@ export function serializeGameState(gameState) {
 
 export function deserializeGameState(data) {
   // probedBodyIds falls back to [] for saves written before probe missions existed.
-  // wrecks are ephemeral like npcs/projectiles — never persisted, always
-  // start empty on load.
-  const gameState = { ...data, npcs: [], projectiles: [], wrecks: [], inCombat: false, simTime: 0, probedBodyIds: data.probedBodyIds ?? [] }
+  // wrecks/asteroids are ephemeral like npcs/projectiles — never persisted,
+  // always start empty on load.
+  const gameState = { ...data, npcs: [], projectiles: [], wrecks: [], asteroids: {}, inCombat: false, simTime: 0, probedBodyIds: data.probedBodyIds ?? [] }
   // miningHold falls back to {} for saves written before mining existed.
   gameState.player.ship.miningHold ??= {}
   gameState.player.ship.shipParts ??= 0
+  // equippedWeapons falls back for saves written before weapons were
+  // swappable — every hardpoint just defaults to its category's free base
+  // weapon, matching how it already behaved.
+  gameState.player.ship.equippedWeapons ??= defaultLoadoutFor(getShipClass(gameState.player.ship.classId))
   gameState.stationStorage ??= {}
   // startingSystemId/startingSystemPeaceBroken fall back for saves written
   // before the starting-system peace existed — null just means that save

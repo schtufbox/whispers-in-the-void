@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mulberry32, range, pick } from '../procgen/prng.js'
+import { getSurfaceTextures } from './textures.js'
 
 function hashString(str) {
   let h = 0
@@ -126,7 +127,17 @@ function buildVolcanic(radius, rng) {
   return geometry
 }
 
-const PLANET_BUILDERS = [buildRocky, buildGasGiant, buildIce, buildLush, buildVolcanic]
+// Named rather than a plain array of functions so buildPlanetMesh can look up
+// the matching getSurfaceTextures() entry (gasGiant has none — cloud bands
+// don't suit a tiled photo texture, so it stays purely vertex-colored).
+const PLANET_ARCHETYPES = {
+  rocky: buildRocky,
+  gasGiant: buildGasGiant,
+  ice: buildIce,
+  lush: buildLush,
+  volcanic: buildVolcanic
+}
+const PLANET_ARCHETYPE_NAMES = Object.keys(PLANET_ARCHETYPES)
 
 // A thin, tilted debris ring — MeshBasicMaterial (self-lit) rather than
 // Lambert, since a paper-thin disc only catches directional light at very
@@ -181,9 +192,25 @@ export function buildPlanetMesh(body) {
   const rng = mulberry32(hashString(body.id))
   const radius = body.radius
 
-  const geometry = body.kind === 'moon' ? buildMoon(radius, rng) : pick(rng, PLANET_BUILDERS)(radius, rng)
+  // Moons always reuse the 'rocky' texture set (barren cratered rock, same
+  // as an asteroid) rather than picking their own archetype.
+  const archetypeName = body.kind === 'moon' ? 'rocky' : pick(rng, PLANET_ARCHETYPE_NAMES)
+  const geometry = body.kind === 'moon' ? buildMoon(radius, rng) : PLANET_ARCHETYPES[archetypeName](radius, rng)
 
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })
+  // Real CC0 photo textures (see render/textures.js) layered under the
+  // existing per-body vertex-color tint/craters/bands — MeshStandardMaterial
+  // multiplies map * vertexColors * material.color, so the same handful of
+  // shared textures still reads as ~1500 visually distinct worlds. Gas
+  // giants have no texture set (cloud bands don't suit a tiled photo), so
+  // they fall back to vertex-color-only shading, same as before.
+  const textures = getSurfaceTextures(archetypeName)
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    flatShading: true,
+    roughness: 1,
+    metalness: 0,
+    ...textures
+  })
   const mesh = new THREE.Mesh(geometry, material)
 
   const edges = new THREE.LineSegments(

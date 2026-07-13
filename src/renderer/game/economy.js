@@ -1,6 +1,7 @@
 import { GOODS, getGood, SHIP_PARTS_GOOD_ID } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { findBody } from '../procgen/galaxy.js'
+import { getWeapon, BASE_WEAPON_ID, defaultLoadoutFor } from '../data/weapons.js'
 
 const TRADE_PRICE_NUDGE_FACTOR = 0.002
 
@@ -112,12 +113,16 @@ export function repairShip(gameState, body = null) {
   gameState.player.ship.armor = shipClass.stats.armor
 }
 
-// Per-station storage — cargo/ore/ship-parts left behind, and ships owned
-// but not currently flown, all keyed by body id (never retrievable at a
-// different station, per its own design). Created lazily on first use.
+// Per-station storage — cargo/ore/ship-parts/weapons left behind, and ships
+// owned but not currently flown, all keyed by body id (never retrievable at
+// a different station, per its own design). Created lazily on first use.
+// `weapons` is patched onto older entries too (`??=`, not part of the
+// initial default) since it was added after storage entries already existed
+// for some players — same pattern as the other per-field fallbacks below.
 function storageFor(gameState, bodyId) {
-  gameState.stationStorage[bodyId] ??= { cargo: {}, miningHold: {}, shipParts: 0, ships: [] }
-  return gameState.stationStorage[bodyId]
+  const storage = (gameState.stationStorage[bodyId] ??= { cargo: {}, miningHold: {}, shipParts: 0, ships: [] })
+  storage.weapons ??= {}
+  return storage
 }
 
 function mergeInto(target, source) {
@@ -141,7 +146,8 @@ export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
     armor: newClass.stats.armor,
     cargo: {},
     miningHold: {},
-    shipParts: 0
+    shipParts: 0,
+    equippedWeapons: defaultLoadoutFor(newClass)
   })
 }
 
@@ -181,7 +187,8 @@ export function activateStoredShip(gameState, bodyId, index) {
     armor: current.armor,
     cargo: current.cargo,
     miningHold: current.miningHold,
-    shipParts: current.shipParts
+    shipParts: current.shipParts,
+    equippedWeapons: current.equippedWeapons
   })
   gameState.player.ship = {
     ...stored,
@@ -275,6 +282,54 @@ export function useShipPart(gameState) {
   ship.hull = Math.min(shipClass.stats.hull, ship.hull + shipClass.stats.hull * SHIP_PART_REPAIR_FRACTION)
   ship.armor = Math.min(shipClass.stats.armor, ship.armor + shipClass.stats.armor * SHIP_PART_REPAIR_FRACTION)
   ship.shipParts -= 1
+}
+
+// Weapons (see data/weapons.js) are bought into this station's storage, not
+// straight onto the ship — the only way one actually gets flown is
+// equipWeapon below, mirroring how a bought ship sits in storage.ships until
+// activateStoredShip swaps it in.
+export function buyWeapon(gameState, bodyId, weaponId) {
+  const weapon = getWeapon(weaponId)
+  if (gameState.player.credits < weapon.price) throw new Error('Not enough credits')
+  gameState.player.credits -= weapon.price
+  const storage = storageFor(gameState, bodyId)
+  storage.weapons[weaponId] = (storage.weapons[weaponId] ?? 0) + 1
+}
+
+const WEAPON_RESALE_FRACTION = 0.5
+
+export function sellStoredWeapon(gameState, bodyId, weaponId) {
+  const storage = storageFor(gameState, bodyId)
+  if (!(storage.weapons[weaponId] > 0)) throw new Error('No such weapon in storage')
+  storage.weapons[weaponId] -= 1
+  if (storage.weapons[weaponId] <= 0) delete storage.weapons[weaponId]
+  gameState.player.credits += Math.round(getWeapon(weaponId).price * WEAPON_RESALE_FRACTION)
+}
+
+// Swaps whatever's equipped at this hardpoint for a weapon sitting in this
+// same station's storage — the weapon that was equipped goes back into
+// storage (never destroyed), the same swap-not-discard pattern
+// activateStoredShip uses for ships.
+export function equipWeapon(gameState, bodyId, hardpointId, weaponId) {
+  const ship = gameState.player.ship
+  const shipClass = getShipClass(ship.classId)
+  const hardpoint = shipClass.hardpoints.find((hp) => hp.id === hardpointId)
+  if (!hardpoint) throw new Error('No such hardpoint')
+  const mountType = hardpoint.type === 'missile' ? 'missile' : 'laser'
+  const weapon = getWeapon(weaponId)
+  if (weapon.category !== mountType) throw new Error('That weapon does not fit this hardpoint')
+
+  const storage = storageFor(gameState, bodyId)
+  if (!(storage.weapons[weaponId] > 0)) throw new Error('That weapon is not in storage here')
+
+  ship.equippedWeapons ??= {}
+  const previousId = ship.equippedWeapons[hardpointId] ?? BASE_WEAPON_ID[mountType]
+
+  storage.weapons[weaponId] -= 1
+  if (storage.weapons[weaponId] <= 0) delete storage.weapons[weaponId]
+  storage.weapons[previousId] = (storage.weapons[previousId] ?? 0) + 1
+
+  ship.equippedWeapons[hardpointId] = weaponId
 }
 
 export { GOODS }

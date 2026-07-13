@@ -1,13 +1,10 @@
 import * as THREE from 'three'
 import { getShipClass } from '../data/shipClasses.js'
 import { getSystem } from '../procgen/galaxy.js'
-import { mineAsteroidField } from './mining.js'
+import { mineRock, isRockAlive } from './mining.js'
 import { spawnWreck } from './wrecks.js'
-
-const WEAPON_PRESETS = {
-  laser: { speed: 600, damage: 6, ttl: 1.2, cooldownS: 0.25 },
-  missile: { speed: 220, damage: 30, ttl: 4, cooldownS: 1.4 }
-}
+import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
+import { getWeapon, BASE_WEAPON_ID } from '../data/weapons.js'
 
 const HIT_RADIUS = 1.5
 const SHIELD_REGEN_DELAY_S = 4
@@ -72,34 +69,44 @@ export function regenShields(entity, shipClass, simTime, dt) {
 // hitting any NPC in range, unchanged. updateProjectiles uses it to resolve
 // NPC-vs-NPC hits (e.g. a pirate firing on an alien during a truce) without
 // every NPC projectile defaulting to "hits the player".
+//
+// Each hardpoint's actual damage/speed/cooldown/ttl comes from whatever
+// weapon is equipped there (shooter.equippedWeapons[hp.id], from
+// data/weapons.js) rather than a fixed per-type preset — hp.type is only the
+// hardpoint's *mount* kind (what category of weapon fits), not the weapon
+// itself. Falls back to that category's free base weapon if nothing (or an
+// NPC, which never shops) has equippedWeapons set for it.
 export function fireProjectile(gameState, shooter, shooterShipClass, ownerId, onFire, weaponTypeFilter = null, targetRef = null) {
   shooter.hardpointCooldowns ??= {}
+  shooter.equippedWeapons ??= {}
 
   const quat = new THREE.Quaternion().fromArray(shooter.quaternion)
   const shooterPos = new THREE.Vector3().fromArray(shooter.position)
   const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat)
 
   for (const hp of shooterShipClass.hardpoints) {
-    const weaponType = hp.type in WEAPON_PRESETS ? hp.type : 'laser'
-    if (weaponTypeFilter && weaponType !== weaponTypeFilter) continue
-    const preset = WEAPON_PRESETS[weaponType]
+    const mountType = hp.type === 'missile' ? 'missile' : 'laser'
+    if (weaponTypeFilter && mountType !== weaponTypeFilter) continue
+    const weaponId = shooter.equippedWeapons[hp.id] ?? BASE_WEAPON_ID[mountType]
+    const weapon = getWeapon(weaponId)
     const readyAt = shooter.hardpointCooldowns[hp.id] ?? -Infinity
     if (gameState.simTime < readyAt) continue
-    shooter.hardpointCooldowns[hp.id] = gameState.simTime + preset.cooldownS
+    shooter.hardpointCooldowns[hp.id] = gameState.simTime + weapon.cooldownS
 
     const worldPos = new THREE.Vector3(...hp.position).applyQuaternion(quat).add(shooterPos)
     gameState.projectiles.push({
       id: `proj-${projectileCounter++}`,
       ownerId,
       targetRef,
-      weaponType,
+      weaponType: mountType,
+      weaponId,
       position: worldPos.toArray(),
       quaternion: quat.toArray(),
-      velocity: forward.clone().multiplyScalar(preset.speed).toArray(),
-      damage: preset.damage,
-      ttl: preset.ttl
+      velocity: forward.clone().multiplyScalar(weapon.speed).toArray(),
+      damage: weapon.damage,
+      ttl: weapon.ttl
     })
-    onFire?.(weaponType)
+    onFire?.(weaponId, mountType)
   }
 }
 
@@ -155,22 +162,30 @@ export function updateProjectiles(gameState, dt, onHit) {
         if (proj.ownerId === 'player' && target.destroyed) {
           gameState.wrecks.push(spawnWreck(newPos.toArray(), gameState.simTime, Math.random))
         }
-        onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, destroyed: !!target.destroyed })
+        onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, weaponId: proj.weaponId, destroyed: !!target.destroyed })
         hit = true
         break
       }
     }
 
+    // Hit-tests individual rocks (matching the per-rock Tab-targeting system
+    // in main.js) rather than the field's whole bounding sphere, since ore is
+    // now a finite, depletable, per-rock resource.
     if (!hit && proj.ownerId === 'player' && currentSystem) {
-      for (const body of currentSystem.bodies) {
+      fieldLoop: for (const body of currentSystem.bodies) {
         if (body.kind !== 'asteroidField') continue
-        const bodyPos = new THREE.Vector3(...body.position)
-        if (closestDistanceToSegment(bodyPos, prevPos, newPos) < body.radius) {
-          const shipClass = getShipClass(gameState.player.ship.classId)
-          const mined = mineAsteroidField(gameState, shipClass, currentSystem)
-          onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, destroyed: false, mined })
-          hit = true
-          break
+        const rocks = getAsteroidRocks(body)
+        for (let i = 0; i < rocks.length; i++) {
+          if (!isRockAlive(gameState, body.id, i)) continue
+          const rock = rocks[i]
+          const rockPos = new THREE.Vector3(body.position[0] + rock.position[0], body.position[1] + rock.position[1], body.position[2] + rock.position[2])
+          if (closestDistanceToSegment(rockPos, prevPos, newPos) < rock.radius + HIT_RADIUS) {
+            const shipClass = getShipClass(gameState.player.ship.classId)
+            const mined = mineRock(gameState, shipClass, currentSystem, body.id, i)
+            onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, weaponId: proj.weaponId, destroyed: false, mined })
+            hit = true
+            break fieldLoop
+          }
         }
       }
     }

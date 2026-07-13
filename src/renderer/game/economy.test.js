@@ -3,9 +3,10 @@ import assert from 'node:assert/strict'
 import {
   getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip, storeCargo, retrieveCargo, useShipPart,
-  renameActiveShip, renameStoredShip
+  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon
 } from './economy.js'
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
+import { BASE_WEAPON_ID } from '../data/weapons.js'
 
 function makeGameState() {
   return {
@@ -167,4 +168,41 @@ test('sellMinedOre pays out from the mining hold, separate from regular cargo', 
   assert.ok(gameState.player.credits > startCredits)
 
   assert.throws(() => sellMinedOre(gameState, 'agri-world', 'raw_ore', 10))
+})
+
+test('buyWeapon deducts credits and adds one to station storage; sellStoredWeapon reverses it for a resale cut', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 50000
+
+  buyWeapon(gameState, 'agri-world', 'beam_laser')
+  assert.equal(gameState.stationStorage['agri-world'].weapons.beam_laser, 1)
+  assert.ok(gameState.player.credits < 50000)
+
+  const creditsBeforeSale = gameState.player.credits
+  sellStoredWeapon(gameState, 'agri-world', 'beam_laser')
+  assert.equal(gameState.stationStorage['agri-world'].weapons.beam_laser, undefined)
+  assert.ok(gameState.player.credits > creditsBeforeSale)
+
+  assert.throws(() => sellStoredWeapon(gameState, 'agri-world', 'beam_laser'), /No such weapon/)
+})
+
+test('equipWeapon swaps a hardpoint\'s weapon with one in storage, returning the old one to storage', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 50000
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID) // one laser hardpoint: fwd1
+  const hardpointId = shipClass.hardpoints[0].id
+
+  buyWeapon(gameState, 'agri-world', 'burst_laser')
+  equipWeapon(gameState, 'agri-world', hardpointId, 'burst_laser')
+
+  assert.equal(gameState.player.ship.equippedWeapons[hardpointId], 'burst_laser')
+  assert.equal(gameState.stationStorage['agri-world'].weapons.burst_laser, undefined, 'the equipped weapon should leave storage')
+  assert.equal(gameState.stationStorage['agri-world'].weapons[BASE_WEAPON_ID.laser], 1, 'the previously equipped base weapon should return to storage')
+
+  // Equipping a weapon that doesn't fit the hardpoint's mount category throws.
+  buyWeapon(gameState, 'agri-world', 'rocket_pod')
+  assert.throws(() => equipWeapon(gameState, 'agri-world', hardpointId, 'rocket_pod'), /does not fit/)
+
+  // Equipping something not actually in storage here throws too.
+  assert.throws(() => equipWeapon(gameState, 'agri-world', hardpointId, 'plasma_cannon'), /not in storage/)
 })

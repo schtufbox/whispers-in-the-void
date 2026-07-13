@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { applyDamage, fireProjectile, updateProjectiles, updateNpcAI } from './combat.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
+import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
 
 const DT = 1 / 60
 
@@ -62,6 +63,21 @@ test('fireProjectile with a weaponTypeFilter only fires matching hardpoints', ()
   assert.equal(gameState.projectiles[1].weaponType, 'missile')
 })
 
+test('fireProjectile uses the shooter\'s equipped weapon stats, not just a fixed per-type preset', () => {
+  const shipClass = getShipClass('corvette') // hardpoints: wing1 (laser), wing2 (missile)
+  const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], equippedWeapons: { wing1: 'plasma_cannon' } }
+  const gameState = { simTime: 0, projectiles: [] }
+
+  fireProjectile(gameState, shooter, shipClass, 'player', null, 'laser')
+  assert.equal(gameState.projectiles[0].weaponId, 'plasma_cannon')
+  assert.equal(gameState.projectiles[0].damage, 22, 'should use plasma_cannon\'s damage, not the old fixed laser preset')
+
+  // The missile hardpoint has no explicit equippedWeapons entry, so it
+  // should fall back to the category's free base weapon.
+  fireProjectile(gameState, shooter, shipClass, 'player', null, 'missile')
+  assert.equal(gameState.projectiles[1].weaponId, 'rocket_pod')
+})
+
 test('fireProjectile with a weaponTypeFilter the ship has no hardpoint for fires nothing', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID) // laser-only starter ship
   const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
@@ -73,7 +89,13 @@ test('fireProjectile with a weaponTypeFilter the ship has no hardpoint for fires
 
 test('a player laser hitting an asteroid field mines ore instead of dealing damage', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
-  const asteroidField = { kind: 'asteroidField', position: [0, 0, 100], radius: 90 }
+  const fieldId = 'field-test'
+  const rock = getAsteroidRocks({ id: fieldId, radius: 90 })[0]
+  // Places the field so this specific rock sits exactly on the shooter's
+  // straight-ahead flight path (matching the starter ship's single, centered
+  // hardpoint), since per-rock hit detection needs actual alignment rather
+  // than the old field-wide bounding sphere.
+  const asteroidField = { id: fieldId, kind: 'asteroidField', position: [-rock.position[0], -rock.position[1], 100 - rock.position[2]], radius: 90 }
   const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], lastFireAt: -Infinity }
   const gameState = {
     simTime: 0,

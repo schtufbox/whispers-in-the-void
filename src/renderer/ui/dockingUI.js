@@ -2,42 +2,83 @@ import { GOODS, MINED_ORE_GOOD_IDS, SHIP_PARTS_GOOD_ID, getGood } from '../data/
 import {
   getPrice, buyGood, sellGood, sellMinedOre, buyMinedOre, buyShipParts, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip, storeCargo, retrieveCargo, storeOre, retrieveOre, storeShipParts, retrieveShipParts,
-  renameActiveShip, renameStoredShip
+  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon
 } from '../game/economy.js'
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
+import { WEAPONS, BASE_WEAPON_ID, getWeapon, weaponsForCategory } from '../data/weapons.js'
 import { acceptMission, turnInMission } from '../game/missions.js'
 
 const STYLE = `
-#docking-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.35); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+#docking-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.55); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
 #docking-ui .docked-layout { display: flex; gap: 16px; align-items: flex-start; }
-#docking-ui .panel { width: 640px; max-height: 80vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
-#docking-ui .side-panel { width: 220px; max-height: 80vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
-#docking-ui .side-panel h3 { margin: 0 0 8px 0; font-size: 13px; }
+#docking-ui .panel, #docking-ui .side-panel {
+  max-height: 80vh; overflow-y: auto; padding: 18px 22px;
+  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
+  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
+  box-shadow: 0 0 26px rgba(79,195,217,0.22), inset 0 0 26px rgba(79,195,217,0.05);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+}
+#docking-ui .panel { width: 640px; }
+#docking-ui .side-panel { width: 220px; }
+#docking-ui .side-panel h3 { margin: 0 0 8px 0; }
 #docking-ui .side-panel .empty { opacity: 0.5; font-size: 12px; }
-#docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-#docking-ui .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-#docking-ui .tab { background: #10182a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 6px 12px; cursor: pointer; }
-#docking-ui .tab.active { background: #2a3a55; }
+#docking-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
+#docking-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 18px 0 8px; }
+#docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+#docking-ui .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid rgba(111,216,242,0.25); }
+#docking-ui .tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent; color: #8fb3d9;
+  padding: 8px 16px; cursor: pointer; font-family: monospace; font-size: 11px;
+  letter-spacing: 1.5px; text-transform: uppercase; transition: color 0.15s ease, border-color 0.15s ease;
+}
+#docking-ui .tab:hover { color: #cfe3ff; }
+#docking-ui .tab.active { color: #7fe6ff; border-bottom-color: #6fd8f2; text-shadow: 0 0 6px rgba(79,195,217,0.6); }
 #docking-ui table { width: 100%; border-collapse: collapse; }
-#docking-ui th, #docking-ui td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2438; }
-#docking-ui button.close { background: #a13a3a; border: none; color: white; padding: 6px 12px; cursor: pointer; }
+#docking-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); }
+#docking-ui td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
+#docking-ui tbody tr:hover td { background: rgba(111,216,242,0.05); }
+#docking-ui .credits { margin-bottom: 10px; opacity: 0.85; font-size: 12px; letter-spacing: 0.5px; }
+#docking-ui button.close {
+  background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
+  padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#docking-ui button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
 #docking-ui button.buy, #docking-ui button.sell, #docking-ui button.buy-ore, #docking-ui button.sell-ore,
 #docking-ui button.buy-parts, #docking-ui button.buy-ship, #docking-ui button.accept-mission, #docking-ui button.turnin,
 #docking-ui button.repair-btn, #docking-ui button.store-cargo, #docking-ui button.retrieve-cargo,
 #docking-ui button.store-ore, #docking-ui button.retrieve-ore, #docking-ui button.store-parts,
 #docking-ui button.retrieve-parts, #docking-ui button.activate-ship, #docking-ui button.sell-ship,
-#docking-ui button.rename-active, #docking-ui button.rename-stored {
-  background: #2a3a55; border: none; color: #cfe3ff; padding: 3px 8px; cursor: pointer; margin-right: 4px;
+#docking-ui button.rename-active, #docking-ui button.rename-stored,
+#docking-ui button.buy-weapon, #docking-ui button.sell-weapon {
+  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  padding: 4px 10px; cursor: pointer; margin-right: 4px; font-family: monospace;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#docking-ui button.repair-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#docking-ui button.buy:hover, #docking-ui button.sell:hover, #docking-ui button.buy-ore:hover, #docking-ui button.sell-ore:hover,
+#docking-ui button.buy-parts:hover, #docking-ui button.buy-ship:hover, #docking-ui button.accept-mission:hover, #docking-ui button.turnin:hover,
+#docking-ui button.repair-btn:not(:disabled):hover, #docking-ui button.store-cargo:hover, #docking-ui button.retrieve-cargo:hover,
+#docking-ui button.store-ore:hover, #docking-ui button.retrieve-ore:hover, #docking-ui button.store-parts:hover,
+#docking-ui button.retrieve-parts:hover, #docking-ui button.activate-ship:hover, #docking-ui button.sell-ship:hover,
+#docking-ui button.rename-active:hover, #docking-ui button.rename-stored:hover,
+#docking-ui button.buy-weapon:hover, #docking-ui button.sell-weapon:hover {
+  background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35);
+}
+#docking-ui button.repair-btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 #docking-ui .repair-row { margin-bottom: 10px; }
 #docking-ui .shipyard-body { display: flex; gap: 16px; align-items: flex-start; }
 #docking-ui .shipyard-body .ship-list { flex: 1.4; min-width: 0; }
 #docking-ui .shipyard-body tr[data-class] { cursor: pointer; }
-#docking-ui .shipyard-body tr[data-class].selected td { color: #7fe0a0; }
-#docking-ui .ship-stats-panel { flex: 1; min-width: 200px; background: #10182a; border: 1px solid #2a3a55; padding: 10px 14px; }
-#docking-ui .ship-stats-panel h3 { margin: 0 0 8px 0; }
-#docking-ui .ship-stats-panel .stat { font-size: 13px; margin-bottom: 4px; }
+#docking-ui .shipyard-body tr[data-class]:hover td { background: rgba(111,216,242,0.08); }
+#docking-ui .shipyard-body tr[data-class].selected td { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
+#docking-ui .ship-stats-panel {
+  flex: 1; min-width: 200px; padding: 12px 16px;
+  background: rgba(111,216,242,0.05); border: 1px solid rgba(111,216,242,0.3);
+}
+#docking-ui .ship-stats-panel h3 { margin-top: 0; }
+#docking-ui .ship-stats-panel .stat { font-size: 13px; margin-bottom: 4px; opacity: 0.9; }
+#docking-ui select.equip-select { background: rgba(8,14,26,0.9); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff; padding: 4px 8px; font-family: monospace; }
+#docking-ui select.equip-select option:disabled { color: #4a5a75; }
 `
 
 export function createDockingUI(container, gameState, rng) {
@@ -225,6 +266,46 @@ export function createDockingUI(container, gameState, rng) {
         </div>`
       : ''
 
+    // Weapons (see data/weapons.js) are also a shipyard-only service, same
+    // gating as buying/selling ships — a settlement's repair bay doesn't
+    // stock hardpoint weapons.
+    const storageWeapons = currentBody.hasShipyard ? (gameState.stationStorage[currentBody.id]?.weapons ?? {}) : {}
+    const armorySection = currentBody.hasShipyard
+      ? `
+        <h3>Armory</h3>
+        <table>
+          <thead><tr><th>Weapon</th><th>Category</th><th>Damage</th><th>Price</th><th>In Storage</th><th></th></tr></thead>
+          <tbody>${WEAPONS.map((w) => `
+            <tr>
+              <td>${w.name}</td><td>${w.category}</td><td>${w.damage}</td><td>${w.price}cr</td><td>${storageWeapons[w.id] ?? 0}</td>
+              <td><button class="buy-weapon" data-weapon="${w.id}">Buy</button></td>
+            </tr>`).join('')}</tbody>
+        </table>
+        <h3>Loadout</h3>
+        <table>
+          <thead><tr><th>Hardpoint</th><th>Mount</th><th>Equipped Weapon</th></tr></thead>
+          <tbody>${shipClass.hardpoints.map((hp) => {
+            const mountType = hp.type === 'missile' ? 'missile' : 'laser'
+            const equippedId = ship.equippedWeapons?.[hp.id] ?? BASE_WEAPON_ID[mountType]
+            const options = weaponsForCategory(mountType).map((w) => {
+              const isEquipped = w.id === equippedId
+              const owned = isEquipped || (storageWeapons[w.id] ?? 0) > 0
+              const label = isEquipped
+                ? `${w.name} (equipped)`
+                : owned
+                  ? `${w.name} (${storageWeapons[w.id]} in storage)`
+                  : `${w.name} (none in storage)`
+              return `<option value="${w.id}" ${isEquipped ? 'selected' : ''} ${!owned ? 'disabled' : ''}>${label}</option>`
+            }).join('')
+            return `<tr>
+              <td>${hp.id}</td><td>${mountType}</td>
+              <td><select class="equip-select" data-hardpoint="${hp.id}">${options}</select></td>
+            </tr>`
+          }).join('')}</tbody>
+        </table>
+      `
+      : ''
+
     if (!currentBody.hasShipyard) {
       contentEl.innerHTML = `${repairSection}<p>No shipyard at this location.</p>`
     } else {
@@ -245,6 +326,7 @@ export function createDockingUI(container, gameState, rng) {
           </div>
           ${renderShipStatsPanel(selectedClass)}
         </div>
+        ${armorySection}
       `
     }
     contentEl.querySelector('.repair-btn')?.addEventListener('click', () => {
@@ -285,15 +367,36 @@ export function createDockingUI(container, gameState, rng) {
         renderShipyard()
       })
     )
+    contentEl.querySelectorAll('.buy-weapon').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        try {
+          buyWeapon(gameState, currentBody.id, btn.dataset.weapon)
+        } catch (err) {
+          alert(err.message)
+        }
+        renderShipyard()
+      })
+    )
+    contentEl.querySelectorAll('.equip-select').forEach((select) =>
+      select.addEventListener('change', () => {
+        try {
+          equipWeapon(gameState, currentBody.id, select.dataset.hardpoint, select.value)
+        } catch (err) {
+          alert(err.message)
+        }
+        renderShipyard()
+      })
+    )
     renderSidePanel()
   }
 
   function renderStorage() {
-    const storage = gameState.stationStorage[currentBody.id] ?? { cargo: {}, miningHold: {}, shipParts: 0, ships: [] }
+    const storage = gameState.stationStorage[currentBody.id] ?? { cargo: {}, miningHold: {}, shipParts: 0, ships: [], weapons: {} }
     const ship = gameState.player.ship
     const shipClass = getShipClass(ship.classId)
     const cargoRows = Object.entries(storage.cargo).filter(([, qty]) => qty > 0)
     const oreRows = Object.entries(storage.miningHold).filter(([, qty]) => qty > 0)
+    const weaponRows = Object.entries(storage.weapons ?? {}).filter(([, qty]) => qty > 0)
 
     contentEl.innerHTML = `
       <p style="opacity:0.7;font-size:12px;">Storage is per-station — anything left here can only be picked up again at ${currentBody.name}.</p>
@@ -308,6 +411,16 @@ export function createDockingUI(container, gameState, rng) {
       <h3>Ship Parts</h3>
       <div class="credits">Carried: ${ship.shipParts ?? 0} | In storage: ${storage.shipParts ?? 0}</div>
       <button class="store-parts">Store All</button><button class="retrieve-parts">Retrieve All</button>
+      <h3>Weapons</h3>
+      ${weaponRows.length ? `
+      <table>
+        <thead><tr><th>Weapon</th><th>In Storage</th><th></th></tr></thead>
+        <tbody>${weaponRows.map(([id, qty]) => `
+          <tr>
+            <td>${getWeapon(id).name}</td><td>${qty}</td>
+            <td><button class="sell-weapon" data-weapon="${id}">Sell (${Math.round(getWeapon(id).price * 0.5)}cr)</button></td>
+          </tr>`).join('')}</tbody>
+      </table>` : '<p>No spare weapons stored here.</p>'}
       <h3>Stored Ships</h3>
       ${storage.ships.length ? `
       <table>
@@ -335,6 +448,16 @@ export function createDockingUI(container, gameState, rng) {
     })
     contentEl.querySelector('.store-parts').addEventListener('click', () => { storeShipParts(gameState, currentBody.id); renderStorage() })
     contentEl.querySelector('.retrieve-parts').addEventListener('click', () => { retrieveShipParts(gameState, currentBody.id); renderStorage() })
+    contentEl.querySelectorAll('.sell-weapon').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        try {
+          sellStoredWeapon(gameState, currentBody.id, btn.dataset.weapon)
+        } catch (err) {
+          alert(err.message)
+        }
+        renderStorage()
+      })
+    )
     contentEl.querySelectorAll('.rename-stored').forEach((btn) =>
       btn.addEventListener('click', () => {
         const index = Number(btn.dataset.index)

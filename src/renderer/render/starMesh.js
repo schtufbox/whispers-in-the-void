@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { mulberry32 } from '../procgen/prng.js'
+import { buildLensFlare } from './lensFlare.js'
+import { getSurfaceTextures } from './textures.js'
 
 function hashString(str) {
   let h = 0
@@ -114,9 +116,19 @@ function buildSingleStar(type, rng) {
 
   const group = new THREE.Group()
 
+  // The lava CC0 photo texture (render/textures.js) layers cracked/molten
+  // surface detail under the existing turbulent vertex-color noise (which
+  // still drives the animated hot-spot flare look) — MeshBasicMaterial
+  // multiplies vertexColors * map * material.color, all self-lit (ignores
+  // scene lighting) same as before. No normalMap here: MeshBasicMaterial
+  // doesn't light-shade at all, so a normal map would have zero visible
+  // effect — switching to a lit material risked the self-lit "roiling
+  // plasma" look and the lens flare's self-occlusion fix (see below), for a
+  // detail that wouldn't even show through additive corona shells most of
+  // the time.
   const core = new THREE.Mesh(
     buildTurbulentSurface(radius, offsets, coreColor, hotColor),
-    new THREE.MeshBasicMaterial({ vertexColors: true })
+    new THREE.MeshBasicMaterial({ vertexColors: true, map: getSurfaceTextures('volcanic').map })
   )
   group.add(core)
 
@@ -132,6 +144,13 @@ function buildSingleStar(type, rng) {
   )
   group.add(corona2)
 
+  // Added at the star's local origin initially; updateStarMesh repositions
+  // it every frame to just outside the core's near surface facing the
+  // camera (see the comment there for why — the exact center sits behind
+  // the star's own opaque front hemisphere and always self-occludes).
+  const flare = buildLensFlare(color)
+  group.add(flare)
+
   return {
     group,
     radius,
@@ -139,7 +158,8 @@ function buildSingleStar(type, rng) {
     spinSpeed: 0.015 + rng() * 0.02,
     pulsePhase: rng() * Math.PI * 2,
     corona1,
-    corona2
+    corona2,
+    flare
   }
 }
 
@@ -156,8 +176,16 @@ function buildSingleStar(type, rng) {
 // phase/speed on top of that. Static position once built (only pulses/spins
 // in place) — much cheaper per-frame than a beam re-measured between two
 // moving endpoints every frame.
+// Tube/spark size used to be a flat "4"/"3.2" regardless of the ring's own
+// radius — fine back when STAR_SIZE_SCALE was small, but as that scale grew
+// (2.5 -> 12.5 -> 37.5) the ring's radius grew right along with it while the
+// tube didn't, so the ring got proportionally thinner each time — eventually
+// a near-invisible hairline (the same class of bug detailForRadius fixed for
+// planet/star surface faceting above). Sizing both off the ring's own radius
+// keeps the ring's thickness readable at any scale.
 function buildEnergyRing(radius, rng) {
-  const geometry = new THREE.TorusGeometry(radius, 4, 12, 64)
+  const tubeRadius = Math.max(4, radius * 0.035)
+  const geometry = new THREE.TorusGeometry(radius, tubeRadius, 12, 64)
   const pos = geometry.attributes.position
   const v = new THREE.Vector3()
   const colors = []
@@ -182,7 +210,7 @@ function buildEnergyRing(radius, rng) {
   const sparkCount = 5
   for (let i = 0; i < sparkCount; i++) {
     const color = new THREE.Color().setHSL(0.05 + rng() * 0.08, 1, 0.6)
-    const spark = new THREE.Mesh(new THREE.SphereGeometry(3.2, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }))
+    const spark = new THREE.Mesh(new THREE.SphereGeometry(tubeRadius * 0.8, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }))
     group.add(spark)
     sparks.push({ mesh: spark, phase: rng() * Math.PI * 2, speed: 0.3 + rng() * 0.25 })
   }
@@ -249,6 +277,12 @@ export function buildStarMesh(system, forceType = null) {
 
 const WORLD_Y = new THREE.Vector3(0, 1, 0)
 
+// Scratch objects reused every frame in updateStarMesh's flare repositioning
+// (see below) rather than allocated per star per frame.
+const flareWorldPos = new THREE.Vector3()
+const flareWorldScale = new THREE.Vector3()
+const flareTargetWorld = new THREE.Vector3()
+
 // Slow rotation plus a gentle breathing pulse on the corona shells for every
 // star in the system (1, or 2 for a binary) — driven by gameState.simTime
 // (via the elapsed param), never wall-clock time. In a binary, only the
@@ -256,7 +290,16 @@ const WORLD_Y = new THREE.Vector3(0, 1, 0)
 // see buildStarMesh); the energy ring sits fixed at that orbit radius so the
 // smaller star always intersects it, and only needs pulsing/spinning/spark
 // motion, not repositioning.
-export function updateStarMesh(mesh, elapsed, dt) {
+// camera (optional) drives the lens flare: three.js's Lensflare occludes
+// itself via a depth-buffer test at its own anchor point, but that anchor
+// starts out at the star's exact center — behind the near (camera-facing)
+// hemisphere of the star's own opaque core, which always wins that depth
+// test and made the flare permanently invisible. Re-anchoring it every frame
+// just outside the core's near surface, facing whichever way the camera
+// currently is, keeps the flare in front of the star's own geometry (so it
+// stops self-occluding) while still correctly hiding behind anything
+// genuinely in front of the star (a planet, the ship, etc.).
+export function updateStarMesh(mesh, elapsed, dt, camera) {
   for (const star of mesh.userData.stars) {
     star.group.rotation.y += star.spinSpeed * dt
     star.corona1.scale.setScalar(1 + Math.sin(elapsed * 0.6 + star.pulsePhase) * 0.07)
@@ -265,6 +308,15 @@ export function updateStarMesh(mesh, elapsed, dt) {
       const angle = star.orbit.angle0 + elapsed * star.orbit.speed
       star.group.position.x = Math.cos(angle) * star.orbit.radius
       star.group.position.z = Math.sin(angle) * star.orbit.radius
+    }
+
+    if (camera && star.flare) {
+      star.group.getWorldPosition(flareWorldPos)
+      star.group.getWorldScale(flareWorldScale)
+      flareTargetWorld.copy(camera.position).sub(flareWorldPos).normalize()
+      flareTargetWorld.multiplyScalar(star.radius * flareWorldScale.x * 1.02).add(flareWorldPos)
+      star.group.worldToLocal(flareTargetWorld)
+      star.flare.position.copy(flareTargetWorld)
     }
   }
 

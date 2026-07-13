@@ -40,6 +40,12 @@ app.whenReady().then(() => {
   })
 })
 
+// Electron's own boilerplate skips this on darwin (macOS apps conventionally
+// stay alive in the dock after their last window closes, e.g. multi-document
+// editors). That doesn't fit a single-window arcade game with nothing useful
+// to do in the background — without this, closing the window (red button or
+// Cmd+W) left the process running indefinitely on macOS, which read as the
+// game failing to quit rather than a deliberate platform convention.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  app.quit()
 })

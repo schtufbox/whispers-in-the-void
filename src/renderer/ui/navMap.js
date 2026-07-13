@@ -1,30 +1,59 @@
 import { getSystem, canJumpTo } from '../procgen/galaxy.js'
 
 const STYLE = `
-#nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
-#nav-map .panel { width: 960px; max-height: 90vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
-#nav-map .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-#nav-map .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-#nav-map .tab { background: #10182a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 6px 12px; cursor: pointer; }
-#nav-map .tab.active { background: #2a3a55; }
-#nav-map button.close { background: #a13a3a; border: none; color: white; padding: 6px 12px; cursor: pointer; }
+#nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+#nav-map .panel {
+  width: 960px; max-height: 90vh; overflow-y: auto; padding: 18px 22px;
+  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
+  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
+  box-shadow: 0 0 26px rgba(79,195,217,0.22), inset 0 0 26px rgba(79,195,217,0.05);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+}
+#nav-map h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
+#nav-map h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 0 0 8px 0; }
+#nav-map .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+#nav-map .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid rgba(111,216,242,0.25); }
+#nav-map .tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent; color: #8fb3d9;
+  padding: 8px 16px; cursor: pointer; font-family: monospace; font-size: 11px;
+  letter-spacing: 1.5px; text-transform: uppercase; transition: color 0.15s ease, border-color 0.15s ease;
+}
+#nav-map .tab:hover { color: #cfe3ff; }
+#nav-map .tab.active { color: #7fe6ff; border-bottom-color: #6fd8f2; text-shadow: 0 0 6px rgba(79,195,217,0.6); }
+#nav-map button.close {
+  background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
+  padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#nav-map button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
 #nav-map .galaxy-body { display: flex; gap: 16px; position: relative; }
-#nav-map canvas { background: #05070d; border: 1px solid #1a2438; cursor: crosshair; border-radius: 4px; }
+#nav-map canvas { background: #05070d; border: 1px solid rgba(111,216,242,0.3); cursor: crosshair; border-radius: 4px; box-shadow: 0 0 20px rgba(79,195,217,0.15); }
 #nav-map .map-tooltip {
   position: absolute; pointer-events: none; font-size: 12px; color: #eaffff;
-  background: rgba(10,14,24,0.9); border: 1px solid rgba(94,230,255,0.5); padding: 3px 8px;
+  background: rgba(10,14,24,0.92); border: 1px solid rgba(94,230,255,0.5); padding: 4px 9px;
+  box-shadow: 0 0 10px rgba(79,195,217,0.3);
   white-space: nowrap; display: none; transform: translate(-50%, -130%);
 }
 #nav-map .info-panel { flex: 1; min-width: 220px; }
-#nav-map .info-panel h3 { margin: 0 0 8px 0; }
-#nav-map .info-panel .stat { margin-bottom: 4px; font-size: 13px; }
-#nav-map button.jump { background: #2a5a3a; border: none; color: #cfe3ff; padding: 8px 16px; cursor: pointer; margin-top: 12px; width: 100%; }
-#nav-map button.jump:disabled { opacity: 0.4; cursor: not-allowed; }
+#nav-map .info-panel .stat { margin-bottom: 4px; font-size: 13px; opacity: 0.9; }
+#nav-map button.jump {
+  background: rgba(127,224,160,0.12); border: 1px solid rgba(127,224,160,0.5); color: #bdf5cf;
+  padding: 9px 16px; cursor: pointer; margin-top: 12px; width: 100%; font-family: monospace;
+  letter-spacing: 1px; transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#nav-map button.jump:not(:disabled):hover { background: rgba(127,224,160,0.22); box-shadow: 0 0 14px rgba(127,224,160,0.35); }
+#nav-map button.jump:disabled { opacity: 0.35; cursor: not-allowed; }
 #nav-map table { width: 100%; border-collapse: collapse; }
-#nav-map th, #nav-map td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2438; font-size: 13px; }
+#nav-map th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); }
+#nav-map td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); font-size: 13px; }
+#nav-map tbody tr:hover td { background: rgba(111,216,242,0.05); }
 #nav-map td.body-name { display: flex; align-items: center; gap: 6px; }
-#nav-map button.waypoint { background: #2a3a55; border: none; color: #cfe3ff; padding: 3px 8px; cursor: pointer; }
-#nav-map tr.active-waypoint td { color: #7fe0a0; }
+#nav-map button.waypoint {
+  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  padding: 3px 9px; cursor: pointer; font-family: monospace; transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#nav-map button.waypoint:hover { background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35); }
+#nav-map tr.active-waypoint td { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
 `
 
 // Small per-kind glyphs (not emoji) so the system-body list reads at a

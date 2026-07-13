@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "src/renderer", "--port", "5174", "--strictPort"],
       "port": 5174
+    },
+    {
+      "name": "renderer-preview-2",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "src/renderer", "--port", "5175", "--strictPort"],
+      "port": 5175
     }
   ]
 }

@@ -19,7 +19,7 @@ import { updateSupercruise } from './game/supercruise.js'
 import { spawnEncounterNear } from './game/spawner.js'
 import { fireProjectile, updateProjectiles, updateNpcAI, updateCombatFlag, getShipCollisionRadius, truceActive } from './game/combat.js'
 import { resolveBodyCollisions, collisionRadiusFor } from './game/collision.js'
-import { mineAsteroidField } from './game/mining.js'
+import { mineRock, isRockAlive, rockDisplayName } from './game/mining.js'
 import { pruneWrecks, lootWreck } from './game/wrecks.js'
 import { markBodyVisited, markBodyProbed, updateMissionProgress } from './game/missions.js'
 import { launchProbe } from './game/probe.js'
@@ -325,11 +325,19 @@ function stopMenuBackground() {
 const MENU_ORBIT_PERIOD_S = 42
 const MENU_ORBIT_RADIUS = 48
 const MENU_ORBIT_HEIGHT = 14
+// The title text sits vertically centered on screen (#main-menu's flex
+// centering), and camera.lookAt(MENU_STAR_CENTER) always puts the star dead
+// center in frame regardless of MENU_STAR_CENTER's own world Y — so the star
+// used to sit right behind the title no matter where it was placed in world
+// space. Looking at a point above the star instead (rather than at the star
+// itself) pushes the star's on-screen position down, clear of the text.
+const MENU_LOOKAT_LIFT = 20
+const menuLookAtTarget = MENU_STAR_CENTER.clone().add(new THREE.Vector3(0, MENU_LOOKAT_LIFT, 0))
 
 function updateMenuBackground(dt) {
   if (!menuStarMesh) return
   menuAnimT += dt
-  updateStarMesh(menuStarMesh, menuAnimT, dt)
+  updateStarMesh(menuStarMesh, menuAnimT, dt, camera)
   // The star pair stays put; the camera slowly orbits around it instead of
   // a static camera watching it sweep past — reads as flying a lazy circle
   // around the binary rather than a one-shot flyby.
@@ -339,7 +347,7 @@ function updateMenuBackground(dt) {
     MENU_STAR_CENTER.y + MENU_ORBIT_HEIGHT,
     MENU_STAR_CENTER.z + Math.sin(angle) * MENU_ORBIT_RADIUS
   )
-  camera.lookAt(MENU_STAR_CENTER)
+  camera.lookAt(menuLookAtTarget)
 }
 
 function doSave() {
@@ -349,20 +357,25 @@ function doSave() {
   )
 }
 
-function onWeaponFired(weaponType) {
-  if (weaponType === 'missile') audio.playMissileLaunch()
-  else audio.playLaser()
+function onWeaponFired(weaponId) {
+  audio.playWeaponFire(weaponId)
 }
 
 function onProjectileHit({ position, destroyed, mined }) {
   const flash = buildImpactFlash(mined ? 0xc2a35c : destroyed ? 0xff8a3d : 0xffcc66)
   flash.position.fromArray(position)
+  if (mined?.destroyed) flash.scale.setScalar(1.4) // depleted rock exploding reads bigger than a regular mining ping
   scene.add(flash)
   impactFlashes.push({ mesh: flash, ttl: IMPACT_FLASH_TTL })
 
   if (mined) {
     audio.playMiningPing()
-    miningToastEl.textContent = mined.mined ? `Mined 1 ${getGood(mined.goodId).name}` : 'Mining hold full!'
+    if (mined.destroyed) audio.playExplosion()
+    miningToastEl.textContent = mined.destroyed
+      ? `${getGood(mined.goodId).name} deposit depleted!`
+      : mined.mined
+        ? `Mined 1 ${getGood(mined.goodId).name}`
+        : 'Mining hold full!'
     miningToastEl.style.display = 'block'
     miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
   } else if (destroyed) {
@@ -393,7 +406,7 @@ function isMiningHoldFull() {
 
 // While mining mode is on and the current target is an asteroid in range,
 // the laser auto-fires a continuous beam at it — no aiming, no held mouse
-// button — ticking mineAsteroidField on a timer instead of spawning
+// button — ticking mineRock on a timer instead of spawning
 // physical projectiles (there's nothing to travel or collide with; the beam
 // always "hits" while active). Stops on its own once the hold is full, by
 // simply never activating in that state (see isMiningHoldFull) rather than
@@ -427,7 +440,7 @@ function updateMiningBeam() {
   if (gameState.simTime >= nextMiningTickAt) {
     nextMiningTickAt = gameState.simTime + MINING_TICK_INTERVAL_S
     const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-    const mined = mineAsteroidField(gameState, playerShipClass, currentSystem)
+    const mined = mineRock(gameState, playerShipClass, currentSystem, currentTarget.fieldId, currentTarget.index)
     onProjectileHit({ position: target.position, weaponType: 'laser', destroyed: false, mined })
   }
 }
@@ -1137,6 +1150,7 @@ function getTargetableEntities() {
       if (dist <= TARGET_RANGE) entities.push({ kind: 'body', id: body.id, position: body.position, dist })
     } else if (body.kind === 'asteroidField') {
       getAsteroidRocks(body).forEach((rock, index) => {
+        if (!isRockAlive(gameState, body.id, index)) return
         const position = asteroidWorldPosition(body, rock)
         const dist = shipPos.distanceTo(new THREE.Vector3(...position))
         if (dist <= TARGET_RANGE) entities.push({ kind: 'asteroid', fieldId: body.id, index, position, dist })
@@ -1215,8 +1229,8 @@ function resolveTarget() {
     const field = currentSystem.bodies.find((b) => b.id === currentTarget.fieldId)
     if (!field) return null
     const rock = getAsteroidRocks(field)[currentTarget.index]
-    if (!rock) return null
-    return { position: asteroidWorldPosition(field, rock), name: `${field.name} (asteroid)`, hostile: false, hullPct: null, isAsteroid: true }
+    if (!rock || !isRockAlive(gameState, field.id, currentTarget.index)) return null
+    return { position: asteroidWorldPosition(field, rock), name: `${rockDisplayName(currentSystem)} (${field.name})`, hostile: false, hullPct: null, isAsteroid: true }
   }
   const body = currentSystem.bodies.find((b) => b.id === currentTarget.id)
   return body ? { position: body.position, name: body.name, hostile: false, hullPct: null, isAsteroid: false } : null
@@ -1493,7 +1507,7 @@ function animate() {
     liveProjectileIds.add(proj.id)
     let mesh = projectileMeshes.get(proj.id)
     if (!mesh) {
-      mesh = buildProjectileMesh(proj.weaponType)
+      mesh = buildProjectileMesh(proj.weaponId, proj.weaponType)
       projectileMeshes.set(proj.id, mesh)
       scene.add(mesh)
     }
@@ -1539,8 +1553,17 @@ function animate() {
   }
 
   syncChaseCamera(camera, gameState.player.ship)
-  if (starMesh) updateStarMesh(starMesh, gameState.simTime, dt)
+  if (starMesh) updateStarMesh(starMesh, gameState.simTime, dt, camera)
   for (const mesh of bodyMeshes.values()) updateStationMesh(mesh, gameState.simTime, dt)
+  // Depleted rocks "explode" (see onProjectileHit) and stay hidden until
+  // their own respawn delay passes — isRockAlive is the single source of
+  // truth for that, shared with targeting (getTargetableEntities/resolveTarget).
+  for (const body of getSystem(gameState.galaxy, gameState.player.currentSystemId).bodies) {
+    if (body.kind !== 'asteroidField') continue
+    const mesh = bodyMeshes.get(body.id)
+    if (!mesh) continue
+    mesh.children.forEach((child, i) => { child.visible = isRockAlive(gameState, body.id, i) })
+  }
   for (const orbit of moonOrbits.values()) {
     const angle = orbit.angle0 + gameState.simTime * orbit.speed
     const newPosition = [orbit.parentPosition[0] + orbit.radius * Math.cos(angle), orbit.parentPosition[1] + orbit.y, orbit.parentPosition[2] + orbit.radius * Math.sin(angle)]

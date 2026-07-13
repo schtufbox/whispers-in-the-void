@@ -82,19 +82,61 @@ function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0, delay =
   source.start(start)
 }
 
-// Beefed up with a low sine "punch" underneath the bright zap for body/
-// weight, plus a mid square layer for extra bite — a plain sawtooth zap read
-// as thin on anything but small speakers.
-export function playLaser() {
-  tone({ type: 'sawtooth', freq: 1300, freqEnd: 350, duration: 0.15, peak: 0.22 })
-  tone({ type: 'square', freq: 650, freqEnd: 175, duration: 0.12, peak: 0.12 })
-  tone({ type: 'sine', freq: 150, freqEnd: 60, duration: 0.12, peak: 0.2 })
+// One firing sound per weapon in data/weapons.js's catalog, keyed by weapon
+// id directly (no separate "sound theme" indirection — each weapon already
+// has exactly one sound). pulse_laser/rocket_pod reuse the original
+// playLaser/playMissileLaunch layering unchanged; the rest scale the same
+// "transient + body + sub" layering technique up or down with the weapon's
+// own power so bigger guns read as meaningfully beefier, not just louder.
+const WEAPON_SOUND_PROFILES = {
+  pulse_laser: () => {
+    tone({ type: 'sawtooth', freq: 1300, freqEnd: 350, duration: 0.15, peak: 0.22 })
+    tone({ type: 'square', freq: 650, freqEnd: 175, duration: 0.12, peak: 0.12 })
+    tone({ type: 'sine', freq: 150, freqEnd: 60, duration: 0.12, peak: 0.2 })
+  },
+  rapid_laser: () => {
+    // Higher-pitched and shorter than pulse_laser — reads as a faster,
+    // lighter-caliber weapon to match its quicker cooldown/lower damage.
+    tone({ type: 'sawtooth', freq: 1700, freqEnd: 550, duration: 0.09, peak: 0.18 })
+    tone({ type: 'square', freq: 850, freqEnd: 300, duration: 0.07, peak: 0.1 })
+  },
+  burst_laser: () => {
+    // Two closely-spaced zaps (a real delay via tone's own `delay` param)
+    // for a "burst" read instead of one shot.
+    tone({ type: 'square', freq: 1100, freqEnd: 320, duration: 0.13, peak: 0.2 })
+    tone({ type: 'sawtooth', freq: 1100, freqEnd: 320, duration: 0.13, peak: 0.16, delay: 0.05 })
+    tone({ type: 'sine', freq: 140, freqEnd: 55, duration: 0.14, peak: 0.18 })
+  },
+  beam_laser: () => {
+    tone({ type: 'sine', freq: 2000, freqEnd: 900, duration: 0.3, peak: 0.22 })
+    tone({ type: 'sawtooth', freq: 900, freqEnd: 400, duration: 0.3, peak: 0.16 })
+    noiseBurst({ duration: 0.28, filterFreq: 4200, peak: 0.12 })
+  },
+  plasma_cannon: () => {
+    tone({ type: 'sine', freq: 220, freqEnd: 70, duration: 0.42, peak: 0.34 })
+    noiseBurst({ duration: 0.38, filterFreq: 700, peak: 0.32, drive: 2.2 })
+    tone({ type: 'square', freq: 110, freqEnd: 45, duration: 0.32, peak: 0.18 })
+  },
+  rocket_pod: () => {
+    tone({ type: 'sine', freq: 90, freqEnd: 45, duration: 0.5, peak: 0.3 })
+    tone({ type: 'sawtooth', freq: 220, freqEnd: 60, duration: 0.35, peak: 0.14 })
+    noiseBurst({ duration: 0.45, filterFreq: 350, peak: 0.28, drive: 2.5 })
+  },
+  seeker_missile: () => {
+    tone({ type: 'sine', freq: 130, freqEnd: 55, duration: 0.55, peak: 0.32 })
+    tone({ type: 'triangle', freq: 900, freqEnd: 1400, duration: 0.18, peak: 0.12 }) // a targeting-lock chirp
+    noiseBurst({ duration: 0.5, filterFreq: 300, peak: 0.3, drive: 2.5 })
+  },
+  torpedo: () => {
+    tone({ type: 'sine', freq: 70, freqEnd: 30, duration: 0.7, peak: 0.4 })
+    noiseBurst({ duration: 0.6, filterFreq: 220, peak: 0.36, drive: 3 })
+    tone({ type: 'square', freq: 55, freqEnd: 22, duration: 0.55, peak: 0.2 })
+  }
 }
 
-export function playMissileLaunch() {
-  tone({ type: 'sine', freq: 90, freqEnd: 45, duration: 0.5, peak: 0.3 })
-  tone({ type: 'sawtooth', freq: 220, freqEnd: 60, duration: 0.35, peak: 0.14 })
-  noiseBurst({ duration: 0.45, filterFreq: 350, peak: 0.28, drive: 2.5 })
+export function playWeaponFire(weaponId) {
+  const play = WEAPON_SOUND_PROFILES[weaponId] ?? WEAPON_SOUND_PROFILES.pulse_laser
+  play()
 }
 
 export function playHit() {
@@ -246,9 +288,10 @@ let miningBeamOsc = null
 let miningBeamGain = null
 let miningBeamLFO = null
 
-// A steady, gently warbling triangle-wave hum — deliberately unlike
-// playLaser's bright zap, since this needs to sustain continuously for as
-// long as the mining beam is actively firing rather than play as a one-shot.
+// A steady, gently warbling triangle-wave hum — deliberately unlike any of
+// the WEAPON_SOUND_PROFILES' bright one-shot zaps, since this needs to
+// sustain continuously for as long as the mining beam is actively firing
+// rather than play as a one-shot.
 export function setMiningBeamActive(active) {
   const audio = getContext()
   if (active && !miningBeamOsc) {
