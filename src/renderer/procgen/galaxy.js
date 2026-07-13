@@ -10,13 +10,18 @@ const JITTER_ANGLE = 0.5
 const DISK_THICKNESS = 120
 // "~400% larger" solar systems per user request — one scale factor so the
 // local scatter radius and the arrival distance below stay consistent.
-const SYSTEM_SIZE_SCALE = 5
+// Bumped twice since (5 -> 7 -> 9) to give the increasingly bigger
+// planets/stars below more room to spread out without visually crowding.
+const SYSTEM_SIZE_SCALE = 9
 const SYSTEM_LOCAL_MIN_RADIUS = 300 * SYSTEM_SIZE_SCALE
 const SYSTEM_LOCAL_MAX_RADIUS = 1600 * SYSTEM_SIZE_SCALE
-// "+150%"/"+65%" per user request, applied once here since body.radius is
-// both the render and collision size (see game/collision.js).
-const PLANET_SIZE_SCALE = 2.5
-const MOON_SIZE_SCALE = 1.65
+// Planets/suns "400% bigger", then "another 200% bigger" (3x on top) per two
+// rounds of user request, moons scaled to suit both times — applied once
+// here since body.radius is both the render and collision size (see
+// game/collision.js). (Was 2.5/1.65, then 12.5/8.25 — each pass still read
+// as too small next to the ships/stations flying through it.)
+const PLANET_SIZE_SCALE = 37.5
+const MOON_SIZE_SCALE = 24.75
 // Per-system variety so systems aren't all uniformly sized — drawn once per
 // system in generateGalaxy and threaded through to every body it contains
 // (planets, moons, and anything placed into it afterward: stations/
@@ -125,7 +130,10 @@ function makeBody(rng, idCounter, kind, parent, systemScale) {
     radius,
     economyTags: randomTags(rng),
     hasMissions: missionChance(rng, kind),
-    hasShipyard: kind === 'station' ? rng() < 0.6 : false
+    hasShipyard: kind === 'station' ? rng() < 0.6 : false,
+    // Ship parts are a rare find — only a small fraction of stations and
+    // settlements happen to stock them (see data/goods.js's SHIP_PARTS_GOOD_ID).
+    hasShipParts: kind === 'station' || kind === 'settlement' ? rng() < 0.06 : false
   }
 }
 
@@ -229,6 +237,28 @@ export function canJumpTo(fromSystem, toSystemId) {
 export function coreFraction(system) {
   const dist = Math.hypot(system.galaxyPosition[0], system.galaxyPosition[2])
   return Math.min(1, dist / GALAXY_MAX_RADIUS)
+}
+
+// Every system reachable from originSystemId within maxJumps hyperspace
+// hops (via neighborIds — the same lanes canJumpTo enforces), including the
+// origin itself. Used to keep mission targets from being planted arbitrarily
+// far across the galaxy — see data/missionTemplates.js's pickTargetSystem.
+export function systemsWithinJumps(galaxy, originSystemId, maxJumps) {
+  const visited = new Set([originSystemId])
+  let frontier = [originSystemId]
+  for (let depth = 0; depth < maxJumps && frontier.length; depth++) {
+    const next = []
+    for (const systemId of frontier) {
+      const system = getSystem(galaxy, systemId)
+      for (const neighborId of system.neighborIds) {
+        if (visited.has(neighborId)) continue
+        visited.add(neighborId)
+        next.push(neighborId)
+      }
+    }
+    frontier = next
+  }
+  return [...visited].map((id) => getSystem(galaxy, id))
 }
 
 export function findBody(galaxy, bodyId) {

@@ -1,8 +1,8 @@
 const STYLE = `
-#hud { position: fixed; left: 16px; bottom: 16px; font-family: monospace; color: #cfe3ff; user-select: none; }
+#hud { font-family: monospace; color: #cfe3ff; user-select: none; }
 
-#hud .panel {
-  position: relative;
+#hud .status-panel {
+  position: fixed; top: 16px; left: 16px;
   width: 240px;
   padding: 12px 18px 10px 20px;
   background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.8));
@@ -44,7 +44,12 @@ const STYLE = `
 #hud .bar.velocity .fill { position: absolute; top: 0; background: linear-gradient(90deg, #3a8f5c, #7fe0a0); box-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #hud .bar.velocity .fill.reversing { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
 
-#hud .hint { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px 10px; max-width: 320px; }
+/* Kept at its original bottom-left spot per user request, independent of
+   the status panel's move to top-left. */
+#hud .hint {
+  position: fixed; left: 16px; bottom: 16px;
+  display: flex; flex-wrap: wrap; gap: 5px 10px; max-width: 320px;
+}
 #hud .hint .pair { display: flex; align-items: center; gap: 4px; opacity: 0.65; }
 #hud .hint .key {
   font-size: 10px; padding: 1px 5px; border: 1px solid rgba(111,216,242,0.4);
@@ -52,13 +57,24 @@ const STYLE = `
 }
 #hud .hint .label { font-size: 11px; }
 
+/* Velocity gets its own bottom-center readout, separate from the shield/
+   armor/hull status panel now up in the top-left corner. */
+#hud .velocity-panel {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  width: 260px;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.8));
+  border: 1px solid rgba(111,216,242,0.45);
+  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 22px rgba(79,195,217,0.06);
+}
+
 @keyframes hud-shine { 0% { background-position: 220% 0; } 100% { background-position: -20% 0; } }
 @keyframes hud-critical-pulse {
   0%, 100% { box-shadow: 0 0 6px rgba(194,74,74,0.5); }
   50% { box-shadow: 0 0 16px 2px rgba(255,90,90,0.95); }
 }
 
-#radar { position: fixed; right: 16px; bottom: 16px; font-family: monospace; color: #cfe3ff; user-select: none; text-align: center; }
+#radar { position: fixed; right: 16px; top: 16px; font-family: monospace; color: #cfe3ff; user-select: none; text-align: center; }
 #radar canvas {
   background: radial-gradient(circle, rgba(10,22,34,0.85) 0%, rgba(6,12,22,0.9) 100%);
   border: 1px solid #6fd8f2;
@@ -74,6 +90,7 @@ const HINTS = [
   ['Space', 'Flight Mode'],
   ['Tab', 'Target'],
   ['R', 'Mining Mode'],
+  ['I', 'Inventory'],
   ['F', 'Dock'],
   ['P', 'Probe'],
   ['M', 'Navigation'],
@@ -89,7 +106,7 @@ export function createHud(container) {
   const hud = document.createElement('div')
   hud.id = 'hud'
   hud.innerHTML = `
-    <div class="panel">
+    <div class="status-panel">
       <div class="panel-title">SHIP STATUS</div>
       <div class="row shield">
         <div class="row-label"><span>Shield</span><span class="value"></span></div>
@@ -103,10 +120,10 @@ export function createHud(container) {
         <div class="row-label"><span>Hull</span><span class="value"></span></div>
         <div class="bar"><div class="fill"></div></div>
       </div>
-      <div class="row">
-        <div class="row-label"><span>Velocity</span><span class="speed"></span></div>
-        <div class="bar velocity"><div class="zero-marker"></div><div class="fill"></div></div>
-      </div>
+    </div>
+    <div class="velocity-panel">
+      <div class="row-label"><span>Velocity</span><span class="speed"></span></div>
+      <div class="bar velocity"><div class="zero-marker"></div><div class="fill"></div></div>
     </div>
     <div class="hint">${HINTS.map(([key, label]) => `<span class="pair"><span class="key">${key}</span><span class="label">${label}</span></span>`).join('')}</div>
   `
@@ -126,7 +143,7 @@ export function createHud(container) {
   const radarSize = radarCanvas.width
   const radarCenter = radarSize / 2
 
-  const CONTACT_COLORS = { hostile: '#e05a5a', neutral: '#5ee6ff', body: '#5a7a9a', waypoint: '#7fe0a0' }
+  const CONTACT_COLORS = { hostile: '#e05a5a', neutral: '#5ee6ff', body: '#5a7a9a', waypoint: '#7fe0a0', wreck: '#ff8a3d' }
   // Below this fraction the hull bar pulses red as an urgent low-hull cue.
   const CRITICAL_HULL_FRACTION = 0.25
 

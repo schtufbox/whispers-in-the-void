@@ -18,11 +18,12 @@ export function hyperspaceJump(gameState, targetSystemId, rng) {
   // so this always looks back toward the system origin regardless of
   // whatever way the ship was facing before the jump.
   gameState.player.ship.quaternion = [0, 0, 0, 1]
-  // NPCs and projectiles belong to the system just left; encounter state is
-  // never persisted (see the save/load design), so it's simplest to drop
-  // them here too rather than track per-system entity lists.
+  // NPCs, projectiles, and wrecks all belong to the system just left;
+  // encounter state is never persisted (see the save/load design), so it's
+  // simplest to drop them here too rather than track per-system entity lists.
   gameState.npcs = []
   gameState.projectiles = []
+  gameState.wrecks = []
 
   ensureBountyNpcsForSystem(gameState, targetSystemId, rng)
 }

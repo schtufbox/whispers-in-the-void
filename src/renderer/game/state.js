@@ -30,6 +30,11 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
       credits: 1000,
       reputation: 0,
       currentSystemId: startingSystem.id,
+      // Remembered separately from currentSystemId (which changes as the
+      // player travels) so main.js's ambient spawner can tell "am I back
+      // home" apart from "am I just passing through some other system" —
+      // see the starting-system peace flag below.
+      startingSystemId: startingSystem.id,
       waypointBodyId: null,
       ship: {
         classId: shipClassId,
@@ -39,6 +44,7 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
         armor: shipClass.stats.armor,
         cargo: {},
         miningHold: {},
+        shipParts: 0,
         position: [...SYSTEM_ARRIVAL_POSITION],
         velocity: [0, 0, 0],
         quaternion: [0, 0, 0, 1]
@@ -49,10 +55,21 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
     missions: { available: availableMissions, active: [] },
     visitedBodyIds: [],
     probedBodyIds: [],
+    // Per-station storage — cargo/ore/ship-parts left behind, and ships owned
+    // but not currently active — keyed by body id (see game/economy.js's
+    // storage-related functions). Never crosses to a different station.
+    stationStorage: {},
     npcs: [],
     projectiles: [],
+    // Wrecks left behind by destroyed ships (game/wrecks.js) — ephemeral like
+    // npcs/projectiles, never persisted (see game/save.js).
+    wrecks: [],
     inCombat: false,
     simTime: 0,
-    flags: { alive: true }
+    // startingSystemPeaceBroken flips permanently true the moment the player
+    // fires on a non-hostile ship while home (see combat.js's
+    // updateProjectiles) — until then, the starting system spawns only
+    // neutral traffic, never pirates/aliens (see main.js's ambient spawner).
+    flags: { alive: true, startingSystemPeaceBroken: false }
   }
 }

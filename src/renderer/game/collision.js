@@ -2,12 +2,12 @@ import * as THREE from 'three'
 
 // Stations/settlements never vary in size, so a fixed radius per kind is
 // enough — unlike planets/moons/asteroid fields, which store their own
-// per-instance radius on the body (see procgen/galaxy.js). Scaled 1.5x to
+// per-instance radius on the body (see procgen/galaxy.js). Scaled 11.25x to
 // match main.js's STATION_SCALE render multiplier (main.js also layers a
 // small +/-15% per-body render variance on top that isn't mirrored here —
 // the DOCK_RANGE_COLLISION_MARGIN buffer comfortably absorbs that).
-const STATION_COLLISION_RADIUS = 30
-const SETTLEMENT_COLLISION_RADIUS = 16.5
+const STATION_COLLISION_RADIUS = 225
+const SETTLEMENT_COLLISION_RADIUS = 123.75
 
 export function collisionRadiusFor(body) {
   if (body.kind === 'planet' || body.kind === 'moon' || body.kind === 'asteroidField') return body.radius

@@ -1,11 +1,19 @@
-import { GOODS, MINED_ORE_GOOD_IDS, getGood } from '../data/goods.js'
-import { getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip } from '../game/economy.js'
+import { GOODS, MINED_ORE_GOOD_IDS, SHIP_PARTS_GOOD_ID, getGood } from '../data/goods.js'
+import {
+  getPrice, buyGood, sellGood, sellMinedOre, buyMinedOre, buyShipParts, purchaseShip, repairCost, repairShip,
+  activateStoredShip, sellStoredShip, storeCargo, retrieveCargo, storeOre, retrieveOre, storeShipParts, retrieveShipParts,
+  renameActiveShip, renameStoredShip
+} from '../game/economy.js'
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
 import { acceptMission, turnInMission } from '../game/missions.js'
 
 const STYLE = `
-#docking-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.35); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; }
+#docking-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.35); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+#docking-ui .docked-layout { display: flex; gap: 16px; align-items: flex-start; }
 #docking-ui .panel { width: 640px; max-height: 80vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
+#docking-ui .side-panel { width: 220px; max-height: 80vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
+#docking-ui .side-panel h3 { margin: 0 0 8px 0; font-size: 13px; }
+#docking-ui .side-panel .empty { opacity: 0.5; font-size: 12px; }
 #docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 #docking-ui .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
 #docking-ui .tab { background: #10182a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 6px 12px; cursor: pointer; }
@@ -13,11 +21,23 @@ const STYLE = `
 #docking-ui table { width: 100%; border-collapse: collapse; }
 #docking-ui th, #docking-ui td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2438; }
 #docking-ui button.close { background: #a13a3a; border: none; color: white; padding: 6px 12px; cursor: pointer; }
-#docking-ui button.buy, #docking-ui button.sell, #docking-ui button.buy-ship, #docking-ui button.accept-mission, #docking-ui button.turnin, #docking-ui button.repair-btn {
+#docking-ui button.buy, #docking-ui button.sell, #docking-ui button.buy-ore, #docking-ui button.sell-ore,
+#docking-ui button.buy-parts, #docking-ui button.buy-ship, #docking-ui button.accept-mission, #docking-ui button.turnin,
+#docking-ui button.repair-btn, #docking-ui button.store-cargo, #docking-ui button.retrieve-cargo,
+#docking-ui button.store-ore, #docking-ui button.retrieve-ore, #docking-ui button.store-parts,
+#docking-ui button.retrieve-parts, #docking-ui button.activate-ship, #docking-ui button.sell-ship,
+#docking-ui button.rename-active, #docking-ui button.rename-stored {
   background: #2a3a55; border: none; color: #cfe3ff; padding: 3px 8px; cursor: pointer; margin-right: 4px;
 }
 #docking-ui button.repair-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 #docking-ui .repair-row { margin-bottom: 10px; }
+#docking-ui .shipyard-body { display: flex; gap: 16px; align-items: flex-start; }
+#docking-ui .shipyard-body .ship-list { flex: 1.4; min-width: 0; }
+#docking-ui .shipyard-body tr[data-class] { cursor: pointer; }
+#docking-ui .shipyard-body tr[data-class].selected td { color: #7fe0a0; }
+#docking-ui .ship-stats-panel { flex: 1; min-width: 200px; background: #10182a; border: 1px solid #2a3a55; padding: 10px 14px; }
+#docking-ui .ship-stats-panel h3 { margin: 0 0 8px 0; }
+#docking-ui .ship-stats-panel .stat { font-size: 13px; margin-bottom: 4px; }
 `
 
 export function createDockingUI(container, gameState, rng) {
@@ -28,24 +48,47 @@ export function createDockingUI(container, gameState, rng) {
   const root = document.createElement('div')
   root.id = 'docking-ui'
   root.innerHTML = `
-    <div class="panel">
-      <div class="header">
-        <h2 class="body-name"></h2>
-        <button class="close">Undock</button>
+    <div class="docked-layout">
+      <div class="panel">
+        <div class="header">
+          <h2 class="body-name"></h2>
+          <button class="close">Undock</button>
+        </div>
+        <div class="tabs">
+          <button data-tab="trade" class="tab active">Trade</button>
+          <button data-tab="shipyard" class="tab">Shipyard</button>
+          <button data-tab="missions" class="tab">Missions</button>
+          <button data-tab="storage" class="tab">Storage</button>
+        </div>
+        <div class="tab-content"></div>
       </div>
-      <div class="tabs">
-        <button data-tab="trade" class="tab active">Trade</button>
-        <button data-tab="shipyard" class="tab">Shipyard</button>
-        <button data-tab="missions" class="tab">Missions</button>
-      </div>
-      <div class="tab-content"></div>
+      <div class="side-panel"></div>
     </div>
   `
   container.appendChild(root)
 
   const bodyNameEl = root.querySelector('.body-name')
   const contentEl = root.querySelector('.tab-content')
+  const sidePanelEl = root.querySelector('.side-panel')
   const tabButtons = [...root.querySelectorAll('.tab')]
+
+  // Always visible regardless of which tab is open, so the player can see
+  // what they're carrying while browsing the shipyard or mission board too,
+  // not just while actively trading.
+  function renderSidePanel() {
+    const shipClass = getShipClass(gameState.player.ship.classId)
+    const ship = gameState.player.ship
+    const cargoRows = Object.entries(ship.cargo).filter(([, qty]) => qty > 0)
+    const oreRows = Object.entries(ship.miningHold).filter(([, qty]) => qty > 0)
+    const cargoUsed = cargoRows.reduce((a, [, qty]) => a + qty, 0)
+    const oreUsed = oreRows.reduce((a, [, qty]) => a + qty, 0)
+    sidePanelEl.innerHTML = `
+      <h3>Cargo Hold (${cargoUsed}/${shipClass.stats.cargoCapacity})</h3>
+      ${cargoRows.length ? `<table><tbody>${cargoRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Empty</div>'}
+      <h3>Mining Hold (${oreUsed}/${shipClass.stats.miningCapacity})</h3>
+      ${oreRows.length ? `<table><tbody>${oreRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Empty</div>'}
+    `
+  }
 
   let currentBody = null
   let currentTab = 'trade'
@@ -57,19 +100,11 @@ export function createDockingUI(container, gameState, rng) {
     const cargoUsed = Object.values(ship.cargo).reduce((a, b) => a + b, 0)
     const miningHold = ship.miningHold
     const miningUsed = Object.values(miningHold).reduce((a, b) => a + b, 0)
-    // Repair (hull/armor only — shields already regenerate on their own,
-    // see combat.js) is a station-only service, per its own docking bay crew.
-    const cost = repairCost(gameState)
     contentEl.innerHTML = `
       <div class="credits">Credits: ${gameState.player.credits}cr | Cargo: ${cargoUsed}/${shipClass.stats.cargoCapacity}</div>
-      ${currentBody.kind === 'station' ? `
-      <div class="repair-row">
-        Hull: ${Math.round(ship.hull)}/${shipClass.stats.hull} | Armor: ${Math.round(ship.armor)}/${shipClass.stats.armor}
-        <button class="repair-btn" ${cost === 0 ? 'disabled' : ''}>${cost === 0 ? 'Fully Repaired' : `Repair Ship (${cost}cr)`}</button>
-      </div>` : ''}
       <table>
         <thead><tr><th>Good</th><th>Price</th><th>Held</th><th></th></tr></thead>
-        <tbody>${GOODS.filter((g) => !MINED_ORE_GOOD_IDS.includes(g.id)).map((g) => {
+        <tbody>${GOODS.filter((g) => !MINED_ORE_GOOD_IDS.includes(g.id) && g.id !== SHIP_PARTS_GOOD_ID).map((g) => {
           const price = getPrice(gameState, currentBody.id, g.id)
           const held = gameState.player.ship.cargo[g.id] ?? 0
           return `<tr>
@@ -78,7 +113,7 @@ export function createDockingUI(container, gameState, rng) {
           </tr>`
         }).join('')}</tbody>
       </table>
-      <h3>Mining Hold (${miningUsed}/${shipClass.stats.miningCapacity})</h3>
+      <h3>Ore Sales (${miningUsed}/${shipClass.stats.miningCapacity})</h3>
       <table>
         <thead><tr><th>Ore</th><th>Price</th><th>Held</th><th></th></tr></thead>
         <tbody>${MINED_ORE_GOOD_IDS.map((goodId) => {
@@ -87,14 +122,18 @@ export function createDockingUI(container, gameState, rng) {
           const held = miningHold[goodId] ?? 0
           return `<tr>
             <td>${good.name}</td><td>${price}cr</td><td>${held}</td>
-            <td><button class="sell-ore" data-good="${goodId}">Sell 1</button></td>
+            <td><button class="buy-ore" data-good="${goodId}">Buy 1</button><button class="sell-ore" data-good="${goodId}">Sell 1</button></td>
           </tr>`
         }).join('')}</tbody>
       </table>
+      ${currentBody.hasShipParts ? `
+      <h3>Ship Parts</h3>
+      <p>Carried: ${ship.shipParts ?? 0} — repairs 10% of hull/armor damage each when used from the Inventory (I) screen.</p>
+      <button class="buy-parts">Buy 1 (${getPrice(gameState, currentBody.id, SHIP_PARTS_GOOD_ID)}cr)</button>` : ''}
     `
-    contentEl.querySelector('.repair-btn')?.addEventListener('click', () => {
+    contentEl.querySelector('.buy-parts')?.addEventListener('click', () => {
       try {
-        repairShip(gameState)
+        buyShipParts(gameState, currentBody.id, 1)
       } catch (err) {
         alert(err.message)
       }
@@ -120,6 +159,16 @@ export function createDockingUI(container, gameState, rng) {
         renderTrade()
       })
     )
+    contentEl.querySelectorAll('.buy-ore').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        try {
+          buyMinedOre(gameState, currentBody.id, btn.dataset.good, 1)
+        } catch (err) {
+          alert(err.message)
+        }
+        renderTrade()
+      })
+    )
     contentEl.querySelectorAll('.sell-ore').forEach((btn) =>
       btn.addEventListener('click', () => {
         try {
@@ -130,36 +179,197 @@ export function createDockingUI(container, gameState, rng) {
         renderTrade()
       })
     )
+    renderSidePanel()
   }
 
-  function renderShipyard() {
-    if (!currentBody.hasShipyard) {
-      contentEl.innerHTML = '<p>No shipyard at this location.</p>'
-      return
-    }
-    contentEl.innerHTML = `
-      <div class="credits">Credits: ${gameState.player.credits}cr | Current: ${getShipClass(gameState.player.ship.classId).name}</div>
-      <table>
-        <thead><tr><th>Ship</th><th>Role</th><th>Price</th><th></th></tr></thead>
-        <tbody>${purchasableShipClasses().map((c) => `
-          <tr>
-            <td>${c.name}</td><td>${c.role}</td><td>${c.price}cr</td>
-            <td><button class="buy-ship" data-class="${c.id}">Buy</button></td>
-          </tr>`).join('')}</tbody>
-      </table>
+  // [key, label, formatter] rows shown in the Shipyard's stats panel — shared
+  // between "browsing a ship for sale" and "the ship you currently fly" so
+  // both read identically.
+  const SHIP_STAT_ROWS = [
+    ['hull', 'Hull'], ['shields', 'Shields'], ['armor', 'Armor'],
+    ['cargoCapacity', 'Cargo Capacity'], ['miningCapacity', 'Mining Capacity'],
+    ['speed', 'Speed'], ['turnRate', 'Turn Rate'], ['accel', 'Acceleration']
+  ]
+
+  function renderShipStatsPanel(shipClass) {
+    return `
+      <div class="ship-stats-panel">
+        <h3>${shipClass.name}</h3>
+        <div class="stat">Role: ${shipClass.role}</div>
+        <div class="stat">Price: ${shipClass.price}cr</div>
+        ${SHIP_STAT_ROWS.map(([key, label]) => `<div class="stat">${label}: ${shipClass.stats[key]}</div>`).join('')}
+      </div>
     `
+  }
+
+  // Which ship class's stats the info panel shows — defaults to the
+  // player's own current ship, and resets to that every time the Shipyard
+  // tab (re)opens (see show() below), rather than persisting a stale
+  // selection from a previous docking.
+  let selectedShipClassId = null
+
+  function renderShipyard() {
+    const shipClass = getShipClass(gameState.player.ship.classId)
+    const ship = gameState.player.ship
+    selectedShipClassId ??= ship.classId
+    // Repair (hull/armor only — shields already regenerate on their own, see
+    // combat.js) is offered at both stations and settlements, unlike buying/
+    // selling ships which stays station-only (settlements never generate
+    // hasShipyard: true — see procgen/galaxy.js).
+    const canRepairHere = currentBody.kind === 'station' || currentBody.kind === 'settlement'
+    const repairCostHere = canRepairHere ? repairCost(gameState, currentBody) : 0
+    const repairSection = canRepairHere
+      ? `<div class="repair-row">
+          Hull: ${Math.round(ship.hull)}/${shipClass.stats.hull} | Armor: ${Math.round(ship.armor)}/${shipClass.stats.armor}
+          <button class="repair-btn" ${repairCostHere === 0 ? 'disabled' : ''}>${repairCostHere === 0 ? 'Fully Repaired' : `Repair Ship (${repairCostHere}cr)`}</button>
+        </div>`
+      : ''
+
+    if (!currentBody.hasShipyard) {
+      contentEl.innerHTML = `${repairSection}<p>No shipyard at this location.</p>`
+    } else {
+      const selectedClass = getShipClass(selectedShipClassId)
+      contentEl.innerHTML = `
+        ${repairSection}
+        <div class="credits">Credits: ${gameState.player.credits}cr | Current: ${ship.instanceName} (${shipClass.name}) <button class="rename-active">Rename</button></div>
+        <div class="shipyard-body">
+          <div class="ship-list">
+            <table>
+              <thead><tr><th>Ship</th><th>Role</th><th>Price</th><th></th></tr></thead>
+              <tbody>${purchasableShipClasses().map((c) => `
+                <tr data-class="${c.id}" class="${c.id === selectedShipClassId ? 'selected' : ''}">
+                  <td>${c.name}</td><td>${c.role}</td><td>${c.price}cr</td>
+                  <td><button class="buy-ship" data-class="${c.id}">Buy</button></td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>
+          ${renderShipStatsPanel(selectedClass)}
+        </div>
+      `
+    }
+    contentEl.querySelector('.repair-btn')?.addEventListener('click', () => {
+      try {
+        repairShip(gameState, currentBody)
+      } catch (err) {
+        alert(err.message)
+      }
+      renderShipyard()
+    })
+    contentEl.querySelector('.rename-active')?.addEventListener('click', () => {
+      const name = window.prompt('Rename your ship:', ship.instanceName)
+      if (name == null) return
+      try {
+        renameActiveShip(gameState, name)
+      } catch (err) {
+        alert(err.message)
+      }
+      renderShipyard()
+    })
+    contentEl.querySelectorAll('tr[data-class]').forEach((row) =>
+      row.addEventListener('click', () => {
+        selectedShipClassId = row.dataset.class
+        renderShipyard()
+      })
+    )
     contentEl.querySelectorAll('.buy-ship').forEach((btn) =>
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation()
         const classId = btn.dataset.class
-        const name = window.prompt('Name your new ship:', getShipClass(classId).name) ?? getShipClass(classId).name
+        const shipClassBought = getShipClass(classId)
         try {
-          purchaseShip(gameState, classId, name)
+          purchaseShip(gameState, currentBody.id, classId, shipClassBought.name)
+          alert(`${shipClassBought.name} purchased and placed into storage here — visit the Storage tab to rename, activate, or sell it.`)
         } catch (err) {
           alert(err.message)
         }
         renderShipyard()
       })
     )
+    renderSidePanel()
+  }
+
+  function renderStorage() {
+    const storage = gameState.stationStorage[currentBody.id] ?? { cargo: {}, miningHold: {}, shipParts: 0, ships: [] }
+    const ship = gameState.player.ship
+    const shipClass = getShipClass(ship.classId)
+    const cargoRows = Object.entries(storage.cargo).filter(([, qty]) => qty > 0)
+    const oreRows = Object.entries(storage.miningHold).filter(([, qty]) => qty > 0)
+
+    contentEl.innerHTML = `
+      <p style="opacity:0.7;font-size:12px;">Storage is per-station — anything left here can only be picked up again at ${currentBody.name}.</p>
+      <h3>Cargo</h3>
+      <div class="credits">In ship: ${Object.values(ship.cargo).reduce((a, b) => a + b, 0)}/${shipClass.stats.cargoCapacity} | In storage: ${cargoRows.reduce((a, [, qty]) => a + qty, 0)}</div>
+      ${cargoRows.length ? `<table><tbody>${cargoRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : ''}
+      <button class="store-cargo">Store All Cargo</button><button class="retrieve-cargo">Retrieve All Cargo</button>
+      <h3>Mining Hold</h3>
+      <div class="credits">In ship: ${Object.values(ship.miningHold).reduce((a, b) => a + b, 0)}/${shipClass.stats.miningCapacity} | In storage: ${oreRows.reduce((a, [, qty]) => a + qty, 0)}</div>
+      ${oreRows.length ? `<table><tbody>${oreRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : ''}
+      <button class="store-ore">Store All Ore</button><button class="retrieve-ore">Retrieve All Ore</button>
+      <h3>Ship Parts</h3>
+      <div class="credits">Carried: ${ship.shipParts ?? 0} | In storage: ${storage.shipParts ?? 0}</div>
+      <button class="store-parts">Store All</button><button class="retrieve-parts">Retrieve All</button>
+      <h3>Stored Ships</h3>
+      ${storage.ships.length ? `
+      <table>
+        <thead><tr><th>Ship</th><th></th></tr></thead>
+        <tbody>${storage.ships.map((s, i) => `
+          <tr>
+            <td>${s.instanceName} (${getShipClass(s.classId).name})</td>
+            <td>
+              <button class="rename-stored" data-index="${i}">Rename</button>
+              <button class="activate-ship" data-index="${i}">Activate</button>
+              <button class="sell-ship" data-index="${i}">Sell (${Math.round(getShipClass(s.classId).price * 0.5)}cr)</button>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>` : '<p>No ships stored here.</p>'}
+    `
+    contentEl.querySelector('.store-cargo').addEventListener('click', () => { storeCargo(gameState, currentBody.id); renderStorage() })
+    contentEl.querySelector('.retrieve-cargo').addEventListener('click', () => {
+      try { retrieveCargo(gameState, currentBody.id) } catch (err) { alert(err.message) }
+      renderStorage()
+    })
+    contentEl.querySelector('.store-ore').addEventListener('click', () => { storeOre(gameState, currentBody.id); renderStorage() })
+    contentEl.querySelector('.retrieve-ore').addEventListener('click', () => {
+      try { retrieveOre(gameState, currentBody.id) } catch (err) { alert(err.message) }
+      renderStorage()
+    })
+    contentEl.querySelector('.store-parts').addEventListener('click', () => { storeShipParts(gameState, currentBody.id); renderStorage() })
+    contentEl.querySelector('.retrieve-parts').addEventListener('click', () => { retrieveShipParts(gameState, currentBody.id); renderStorage() })
+    contentEl.querySelectorAll('.rename-stored').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const index = Number(btn.dataset.index)
+        const current = storage.ships[index]
+        const name = window.prompt('Rename ship:', current?.instanceName)
+        if (name == null) return
+        try {
+          renameStoredShip(gameState, currentBody.id, index, name)
+        } catch (err) {
+          alert(err.message)
+        }
+        renderStorage()
+      })
+    )
+    contentEl.querySelectorAll('.activate-ship').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        try {
+          activateStoredShip(gameState, currentBody.id, Number(btn.dataset.index))
+        } catch (err) {
+          alert(err.message)
+        }
+        renderStorage()
+      })
+    )
+    contentEl.querySelectorAll('.sell-ship').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        try {
+          sellStoredShip(gameState, currentBody.id, Number(btn.dataset.index))
+        } catch (err) {
+          alert(err.message)
+        }
+        renderStorage()
+      })
+    )
+    renderSidePanel()
   }
 
   function renderMissions() {
@@ -201,9 +411,10 @@ export function createDockingUI(container, gameState, rng) {
         renderMissions()
       })
     )
+    renderSidePanel()
   }
 
-  const renderers = { trade: renderTrade, shipyard: renderShipyard, missions: renderMissions }
+  const renderers = { trade: renderTrade, shipyard: renderShipyard, missions: renderMissions, storage: renderStorage }
 
   function renderCurrentTab() {
     renderers[currentTab]()
@@ -226,7 +437,13 @@ export function createDockingUI(container, gameState, rng) {
     show(body, undockCallback) {
       currentBody = body
       onUndock = undockCallback
-      bodyNameEl.textContent = `${body.name} (${body.kind})`
+      // Station/settlement names are generated already ending in "Station"/
+      // "Settlement" (see procgen/names.js) — appending "(kind)" on top of
+      // that said it twice ("Dunell Settlement (settlement)"). Only append it
+      // for kinds (planet/moon) whose name doesn't already spell it out.
+      const kindLabel = body.kind.charAt(0).toUpperCase() + body.kind.slice(1)
+      bodyNameEl.textContent = body.name.endsWith(kindLabel) ? body.name : `${body.name} (${body.kind})`
+      selectedShipClassId = null
       currentTab = 'trade'
       tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'trade'))
       renderCurrentTab()

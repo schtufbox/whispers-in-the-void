@@ -48,9 +48,23 @@ function seededOffsets(rng) {
   return [rng() * 10, rng() * 10, rng() * 10]
 }
 
+// IcosahedronGeometry's subdivision level used to be a flat "2" regardless
+// of the body's actual radius — fine at the original body-size ranges, but
+// several since-then scale-up passes (see procgen/galaxy.js's
+// PLANET_SIZE_SCALE/MOON_SIZE_SCALE) made the same handful of flat facets
+// span a much bigger sphere, reading as crudely faceted/broken rather than a
+// deliberately low-poly stylized planet. Scaling detail with radius keeps
+// facet size visually consistent regardless of how big bodies have grown.
+function detailForRadius(radius) {
+  if (radius > 400) return 5
+  if (radius > 180) return 4
+  if (radius > 70) return 3
+  return 2
+}
+
 // Cratered rock — bumpy surface, muted browns/greys, darker crater patches.
 function buildRocky(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, 2)
+  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
   jitterGeometry(geometry, radius, rng, 0.14)
   const base = new THREE.Color().setHSL(range(rng, 10, 45) / 360, 0.3, range(rng, 0.35, 0.5))
   const accent = base.clone().multiplyScalar(0.55)
@@ -60,7 +74,7 @@ function buildRocky(radius, rng) {
 
 // Gas giant — smooth surface, horizontal cloud bands by latitude.
 function buildGasGiant(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, 2)
+  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
   const hue1 = range(rng, 0, 360) / 360
   const hue2 = (hue1 + range(rng, 0.06, 0.16)) % 1
   const base = new THREE.Color().setHSL(hue1, 0.5, 0.55)
@@ -84,7 +98,7 @@ function buildGasGiant(radius, rng) {
 
 // Ice world — mostly smooth, pale base with brighter cracks and whiter poles.
 function buildIce(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, 2)
+  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
   jitterGeometry(geometry, radius, rng, 0.04)
   const hue = range(rng, 190, 215) / 360
   const base = new THREE.Color().setHSL(hue, 0.3, 0.72)
@@ -95,7 +109,7 @@ function buildIce(radius, rng) {
 
 // Lush world — ocean/continent patches.
 function buildLush(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, 2)
+  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
   const ocean = new THREE.Color().setHSL(range(rng, 200, 225) / 360, 0.55, 0.4)
   const land = new THREE.Color().setHSL(range(rng, 85, 140) / 360, 0.45, 0.38)
   paintVertexColors(geometry, ocean, land, seededOffsets(rng), (n) => (n > 0.05 ? 1 : 0))
@@ -104,7 +118,7 @@ function buildLush(radius, rng) {
 
 // Volcanic world — charred bumpy crust with glowing lava cracks.
 function buildVolcanic(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, 2)
+  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
   jitterGeometry(geometry, radius, rng, 0.16)
   const base = new THREE.Color().setHSL(range(rng, 0, 20) / 360, 0.3, 0.12)
   const lava = new THREE.Color().setHSL(range(rng, 10, 30) / 360, 0.9, 0.55)
@@ -148,7 +162,10 @@ function buildRing(radius, rng) {
 // Moons are always small barren rock — cratered, muted, no atmosphere-driven
 // variety (bands/oceans/lava wouldn't make sense at that scale).
 function buildMoon(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, 1)
+  // One step cruder than a full planet at the same radius — moons are
+  // meant to look like small barren rocks, not scaled-down planets — but
+  // still scales up with radius for the same reason detailForRadius exists.
+  const geometry = new THREE.IcosahedronGeometry(radius, Math.max(1, detailForRadius(radius) - 1))
   jitterGeometry(geometry, radius, rng, 0.18)
   const base = new THREE.Color().setHSL(range(rng, 20, 60) / 360, 0.12, 0.42)
   const accent = base.clone().multiplyScalar(0.6)

@@ -3,14 +3,16 @@ import { createScene } from './render/scene.js'
 import { createStarfield } from './render/starfield.js'
 import { createNebula, updateNebula } from './render/nebula.js'
 import { buildShipMesh } from './render/shipMesh.js'
-import { buildStationMesh, buildStationMeshForBody, updateStationMesh } from './render/stationMesh.js'
+import { buildStationMeshForBody, updateStationMesh } from './render/stationMesh.js'
 import { buildPlanetMesh } from './render/planetMesh.js'
 import { buildStarMesh, updateStarMesh } from './render/starMesh.js'
 import { buildAsteroidFieldMesh, getAsteroidRocks } from './render/asteroidFieldMesh.js'
 import { buildProjectileMesh, buildImpactFlash } from './render/projectileMesh.js'
 import { buildStationInteriorMesh } from './render/stationInterior.js'
+import { buildWreckMesh, updateWreckMesh } from './render/wreckMesh.js'
 import { syncMeshToEntity, syncChaseCamera } from './render/sceneSync.js'
 import { createThrusterEffects } from './render/thrusterParticles.js'
+import { createDamageEffects } from './render/damageEffects.js'
 import { createGameState } from './game/state.js'
 import { createInputState, createMouseAimState, updateFlight } from './game/flight.js'
 import { updateSupercruise } from './game/supercruise.js'
@@ -18,6 +20,7 @@ import { spawnEncounterNear } from './game/spawner.js'
 import { fireProjectile, updateProjectiles, updateNpcAI, updateCombatFlag, getShipCollisionRadius, truceActive } from './game/combat.js'
 import { resolveBodyCollisions, collisionRadiusFor } from './game/collision.js'
 import { mineAsteroidField } from './game/mining.js'
+import { pruneWrecks, lootWreck } from './game/wrecks.js'
 import { markBodyVisited, markBodyProbed, updateMissionProgress } from './game/missions.js'
 import { launchProbe } from './game/probe.js'
 import { saveGame as persistSaveGame, loadGame as persistLoadGame, hasSave } from './game/save.js'
@@ -28,6 +31,7 @@ import { createDockingUI } from './ui/dockingUI.js'
 import { createMenu } from './ui/menu.js'
 import { createPauseMenu } from './ui/pauseMenu.js'
 import { createNavMap } from './ui/navMap.js'
+import { createInventoryUI } from './ui/inventoryUI.js'
 import { createDeathScreen } from './ui/deathScreen.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from './data/shipClasses.js'
 import { getGood } from './data/goods.js'
@@ -37,9 +41,11 @@ window.addEventListener('error', (e) => console.error('uncaught error:', e.messa
 
 const DOCK_RANGE = 30
 const DOCK_RANGE_COLLISION_MARGIN = 12
-// "+50% larger" stations per user request; game/collision.js's fixed
-// station/settlement collision radii are scaled by the same factor.
-const STATION_SCALE = 1.5
+// Stations/settlements "200% bigger", then "another 150% bigger" (2.5x on
+// top) per two rounds of user request; game/collision.js's fixed station/
+// settlement collision radii are scaled by the same factor. (Was 1.5, then
+// 4.5 — each pass still read as too small.)
+const STATION_SCALE = 11.25
 const PROBE_RANGE = 150
 const MINING_TOAST_DURATION_S = 1.6
 const FACTION_TOAST_DURATION_S = 4
@@ -108,6 +114,21 @@ function exitFlightMode() {
   audio.setMiningBeamActive(false)
 }
 
+// The mirror of exitFlightMode — called whenever a menu/popup that forced
+// the mouse free (pause, nav map, docking, a probe result alert) closes
+// again, so the player lands back in flight controls without having to
+// press Space themselves. Same fire-and-forget pointer-lock request/catch
+// pattern as the Space keydown handler below; if the browser refuses it
+// (e.g. too long after the last user gesture), flightMode just settles back
+// to false instead of throwing.
+function reenterFlightMode() {
+  flightMode = true
+  renderer.domElement.requestPointerLock().catch((err) => {
+    console.error('Pointer lock request failed:', err)
+    flightMode = false
+  })
+}
+
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement !== renderer.domElement) flightMode = false
 })
@@ -116,12 +137,15 @@ let gameState = null
 let playerShipClass = null
 let playerMesh = null
 let thrusterEffects = null
+let damageEffects = null
 let hud = null
 let dockingUI = null
 let pauseMenu = null
 let navMap = null
+let inventoryUI = null
 let dockPromptEl = null
 let probePromptEl = null
+let wreckPromptEl = null
 let miningToastEl = null
 let miningToastUntil = 0
 let factionToastEl = null
@@ -147,6 +171,7 @@ let dockedApproach = null
 let interiorMesh = null
 const npcMeshes = new Map()
 const bodyMeshes = new Map()
+const wreckMeshes = new Map()
 // Moons visually orbit their parent planet — see loadBodiesForCurrentSystem
 // (populates this) and the per-frame update near updateStarMesh below.
 // Keyed by moon body id: { body, parentPosition, radius, angle0, y, speed }.
@@ -227,6 +252,7 @@ function swapToInterior() {
   for (const mesh of bodyMeshes.values()) scene.remove(mesh)
   for (const mesh of npcMeshes.values()) scene.remove(mesh)
   for (const mesh of projectileMeshes.values()) scene.remove(mesh)
+  for (const mesh of wreckMeshes.values()) scene.remove(mesh)
   for (const flash of impactFlashes) scene.remove(flash.mesh)
   if (starMesh) scene.remove(starMesh)
   scene.add(ensureInteriorMesh())
@@ -237,6 +263,7 @@ function swapToExterior() {
   for (const mesh of bodyMeshes.values()) scene.add(mesh)
   for (const mesh of npcMeshes.values()) scene.add(mesh)
   for (const mesh of projectileMeshes.values()) scene.add(mesh)
+  for (const mesh of wreckMeshes.values()) scene.add(mesh)
   for (const flash of impactFlashes) scene.add(flash.mesh)
   if (starMesh) scene.add(starMesh)
 }
@@ -251,40 +278,68 @@ function quatFacing(fromPos, towardPos) {
 let docked = false
 let paused = false
 let navMapOpen = false
+let inventoryOpen = false
 let cruising = false
+// Edge-detected in animate() to fire the supercruise engage/disengage voice
+// callout exactly once per transition, regardless of whether cruising flips
+// via the KeyC handler (manual) or the cruising block below (auto-arrival/
+// combat-interrupt) — one check covers every trigger source.
+let wasCruising = false
 let nextAmbientSpawnAt = 0
 
-let menuStationMesh = null
+let menuStarMesh = null
 let menuAnimT = 0
 
+// Real binary stars (see render/starMesh.js) are thousands of units across
+// post-STAR_SIZE_SCALE — far too big for this tiny fixed-camera stage. Rather
+// than a hardcoded shrink factor (which would need re-tuning every time
+// STAR_SIZE_SCALE changes, as happened once already), the built mesh is
+// measured with a bounding sphere and normalized to a fixed on-screen size —
+// self-adjusting regardless of how big the underlying game-scale stars get.
+// The scale still applies to the same pre-scale local coordinates
+// updateStarMesh already animates in (orbit radius, spark positions, etc.),
+// so nothing about that logic needs to know it's being shown shrunk down.
+const MENU_STAR_DISPLAY_RADIUS = 26
+// Fixed anchor point the binary pair sits at — the camera orbits this
+// instead of the star itself moving, so "closer" just means a tighter
+// MENU_ORBIT_RADIUS without needing to re-time any sweep.
+const MENU_STAR_CENTER = new THREE.Vector3(0, -10, 40)
+
 function startMenuBackground() {
-  if (menuStationMesh) return
-  menuStationMesh = buildStationMesh()
-  scene.add(menuStationMesh)
+  if (menuStarMesh) return
+  menuStarMesh = buildStarMesh({ id: 'menu-binary-star' }, 'binary')
+  const bounds = new THREE.Box3().setFromObject(menuStarMesh).getBoundingSphere(new THREE.Sphere())
+  menuStarMesh.scale.setScalar(MENU_STAR_DISPLAY_RADIUS / bounds.radius)
+  menuStarMesh.position.copy(MENU_STAR_CENTER)
+  scene.add(menuStarMesh)
   menuAnimT = 0
   audio.playTitleMusic()
 }
 
 function stopMenuBackground() {
-  if (menuStationMesh) scene.remove(menuStationMesh)
-  menuStationMesh = null
+  if (menuStarMesh) scene.remove(menuStarMesh)
+  menuStarMesh = null
   audio.stopTitleMusic()
 }
 
-const MENU_FLYBY_LOOP_S = 42
+const MENU_ORBIT_PERIOD_S = 42
+const MENU_ORBIT_RADIUS = 48
+const MENU_ORBIT_HEIGHT = 14
 
 function updateMenuBackground(dt) {
-  if (!menuStationMesh) return
+  if (!menuStarMesh) return
   menuAnimT += dt
-  menuStationMesh.rotation.y += dt * 0.1
-  menuStationMesh.getObjectByName('ring').rotation.z += dt * 0.3
-  // Fixed camera; the station sweeps slowly left-to-right through view and
-  // loops. A static camera makes the sweep direction/speed easy to reason
-  // about, unlike a camera that chases the station around.
-  const t = (menuAnimT % MENU_FLYBY_LOOP_S) / MENU_FLYBY_LOOP_S
-  menuStationMesh.position.set(-140 + t * 280, -10, 40)
-  camera.position.set(0, 10, 110)
-  camera.lookAt(0, -5, 40)
+  updateStarMesh(menuStarMesh, menuAnimT, dt)
+  // The star pair stays put; the camera slowly orbits around it instead of
+  // a static camera watching it sweep past — reads as flying a lazy circle
+  // around the binary rather than a one-shot flyby.
+  const angle = (menuAnimT / MENU_ORBIT_PERIOD_S) * Math.PI * 2
+  camera.position.set(
+    MENU_STAR_CENTER.x + Math.cos(angle) * MENU_ORBIT_RADIUS,
+    MENU_STAR_CENTER.y + MENU_ORBIT_HEIGHT,
+    MENU_STAR_CENTER.z + Math.sin(angle) * MENU_ORBIT_RADIUS
+  )
+  camera.lookAt(MENU_STAR_CENTER)
 }
 
 function doSave() {
@@ -386,7 +441,8 @@ const menu = createMenu(appEl, {
         shipInstanceName,
         shipClassId: STARTER_SHIP_CLASS_ID,
         seed: Math.floor(Math.random() * 1e9)
-      })
+      }),
+      { enterFlightMode: true }
     )
   },
   onLoadGame: async () => {
@@ -400,6 +456,8 @@ function clearSession() {
   if (playerMesh) scene.remove(playerMesh)
   if (thrusterEffects) scene.remove(thrusterEffects.group)
   thrusterEffects = null
+  if (damageEffects) scene.remove(damageEffects.group)
+  damageEffects = null
   if (miningBeamMesh) scene.remove(miningBeamMesh)
   miningBeamMesh = null
   miningMode = false
@@ -412,14 +470,18 @@ function clearSession() {
   starMesh = null
   for (const mesh of projectileMeshes.values()) scene.remove(mesh)
   projectileMeshes.clear()
+  for (const mesh of wreckMeshes.values()) scene.remove(mesh)
+  wreckMeshes.clear()
   for (const flash of impactFlashes) scene.remove(flash.mesh)
   impactFlashes.length = 0
   hud?.element.remove()
   dockingUI?.element.remove()
   pauseMenu?.element.remove()
   navMap?.element.remove()
+  inventoryUI?.element.remove()
   dockPromptEl?.remove()
   probePromptEl?.remove()
+  wreckPromptEl?.remove()
   miningToastEl?.remove()
   factionToastEl?.remove()
   truceWasActive = false
@@ -440,14 +502,16 @@ function clearSession() {
   docked = false
   paused = false
   navMapOpen = false
+  inventoryOpen = false
   cruising = false
+  wasCruising = false
   jumpEffect = null
   dockEffect = null
   dockedApproach = null
   exitFlightMode()
 }
 
-function startSession(newGameState) {
+function startSession(newGameState, { enterFlightMode = false } = {}) {
   clearSession()
   stopMenuBackground()
   gameState = newGameState
@@ -456,6 +520,8 @@ function startSession(newGameState) {
   scene.add(playerMesh)
   thrusterEffects = createThrusterEffects()
   scene.add(thrusterEffects.group)
+  damageEffects = createDamageEffects()
+  scene.add(damageEffects.group)
   miningBeamMesh = buildMiningBeamMesh()
   scene.add(miningBeamMesh)
 
@@ -472,6 +538,7 @@ function startSession(newGameState) {
     onResume: () => {
       paused = false
       audio.setThrustState(null)
+      reenterFlightMode()
     },
     onSave: () => doSave(),
     onRestart: () => {
@@ -483,6 +550,7 @@ function startSession(newGameState) {
     onQuit: () => window.electronAPI.quitApp()
   })
   navMap = createNavMap(appEl, gameState)
+  inventoryUI = createInventoryUI(appEl, gameState)
 
   dockPromptEl = document.createElement('div')
   dockPromptEl.id = 'dock-prompt'
@@ -495,6 +563,13 @@ function startSession(newGameState) {
   probePromptEl.style.cssText =
     'position:fixed;bottom:120px;left:50%;transform:translateX(-50%);font-family:monospace;color:#cfe3ff;background:rgba(10,14,24,0.8);padding:8px 16px;display:none;'
   appEl.appendChild(probePromptEl)
+
+  wreckPromptEl = document.createElement('div')
+  wreckPromptEl.id = 'wreck-prompt'
+  wreckPromptEl.style.cssText =
+    'position:fixed;bottom:240px;left:50%;transform:translateX(-50%);font-family:monospace;color:#ff8a3d;background:rgba(10,14,24,0.8);padding:8px 16px;display:none;'
+  wreckPromptEl.textContent = 'Press F to salvage wreck'
+  appEl.appendChild(wreckPromptEl)
 
   miningToastEl = document.createElement('div')
   miningToastEl.id = 'mining-toast'
@@ -563,6 +638,12 @@ function startSession(newGameState) {
 
   nextAmbientSpawnAt = gameState.simTime + AMBIENT_SPAWN_INTERVAL_S
   audio.startAmbientMusic()
+
+  // Only a brand new game defaults into flight mode — per user request, not
+  // a loaded save, which resumes however the player last left it (paused,
+  // docked, etc. are all reset to the flying state regardless, but there's
+  // no reason to force the mouse captured the instant a load finishes).
+  if (enterFlightMode) reenterFlightMode()
 }
 
 function returnToMenu() {
@@ -607,6 +688,32 @@ function findNearbyDockableBody() {
   return nearest
 }
 
+const LOOT_RANGE = 50
+
+function findNearbyWreck() {
+  const playerPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
+  let nearest = null
+  let nearestDist = Infinity
+  for (const wreck of gameState.wrecks) {
+    const dist = playerPos.distanceTo(new THREE.Vector3().fromArray(wreck.position))
+    if (dist < LOOT_RANGE && dist < nearestDist) {
+      nearest = wreck
+      nearestDist = dist
+    }
+  }
+  return nearest
+}
+
+function lootNearbyWreck(wreck) {
+  const loot = lootWreck(gameState, playerShipClass, wreck.id)
+  audio.playClick()
+  const parts = loot.cargo ? Object.entries(loot.cargo).map(([id, qty]) => `${qty} ${getGood(id).name}`).join(', ') : ''
+  const partsMsg = loot.shipParts ? `${parts ? ' and ' : ''}${loot.shipParts} Ship Part${loot.shipParts > 1 ? 's' : ''}` : ''
+  miningToastEl.textContent = `Salvaged ${parts}${partsMsg} from the wreck`
+  miningToastEl.style.display = 'block'
+  miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
+}
+
 function isProbeable(body) {
   return body.kind === 'planet' || body.kind === 'moon' || body.kind === 'asteroidField'
 }
@@ -645,7 +752,13 @@ function probeBody(body) {
   if (result.found && result.stored) messages.push(`Probe found valuable survey data at ${body.name}! Added to cargo — sell it at any station.`)
   else if (result.found) messages.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
   else if (!missionHere) messages.push(`Probe found nothing of interest at ${body.name}.`)
+  const wasFlying = flightMode
   alert(messages.join('\n'))
+  // The native alert() dialog itself releases pointer lock (the existing
+  // pointerlockchange listener already flips flightMode off when that
+  // happens) — restore it once the dialog closes, same as every other
+  // menu/popup that forces the mouse free.
+  if (wasFlying) reenterFlightMode()
 }
 
 // The chase camera sits behind+above the ship via lookAt() with a world-up
@@ -677,6 +790,13 @@ function computeRadarContacts() {
     contacts.push({ x: -rel.x, z: rel.z, kind: body.id === gameState.player.waypointBodyId ? 'waypoint' : 'body' })
   }
 
+  for (const wreck of gameState.wrecks) {
+    const rel = new THREE.Vector3().fromArray(wreck.position).sub(shipPos)
+    if (rel.length() > RADAR_RANGE) continue
+    rel.applyQuaternion(shipQuatInverse)
+    contacts.push({ x: -rel.x, z: rel.z, kind: 'wreck' })
+  }
+
   return contacts
 }
 
@@ -702,6 +822,7 @@ function handleJump(targetSystemId) {
   jumpFlashEl.style.background = HYPERSPACE_FLASH_COLOR
   jumpFlashEl.style.display = 'block'
   audio.playHyperspace()
+  audio.announce('Hyperdrive engaged')
 }
 
 function updateJumpEffect(dt) {
@@ -725,6 +846,8 @@ function updateJumpEffect(dt) {
       starMesh = null
       for (const mesh of projectileMeshes.values()) scene.remove(mesh)
       projectileMeshes.clear()
+      for (const mesh of wreckMeshes.values()) scene.remove(mesh)
+      wreckMeshes.clear()
       for (const flash of impactFlashes) scene.remove(flash.mesh)
       impactFlashes.length = 0
       for (const npc of gameState.npcs) {
@@ -747,6 +870,7 @@ function updateJumpEffect(dt) {
     jumpEffect = null
     jumpFlashEl.style.display = 'none'
     audio.playHyperspaceArrival()
+    audio.announce('Hyperdrive disengaged')
     camera.fov = BASE_FOV
     camera.updateProjectionMatrix()
   }
@@ -756,6 +880,10 @@ function dock(body) {
   docked = true
   audio.setThrustState(null)
   markBodyVisited(gameState, body.id)
+  // Shields regenerate on their own anyway (see combat.js's regenShields) —
+  // docking just tops them off instantly and for free, since only hull/armor
+  // repair costs credits in the shipyard.
+  gameState.player.ship.shields = playerShipClass.stats.shields
   dockPromptEl.style.display = 'none'
   dockingUI.show(body, () => beginUndocking())
 }
@@ -812,6 +940,13 @@ function beginUndocking() {
   jumpFlashEl.style.opacity = '0'
   jumpFlashEl.style.display = 'block'
   audio.playUndock()
+  // Requested here (immediately, as a direct continuation of the Undock
+  // button click) rather than when the animation finishes a couple seconds
+  // later — flightMode is harmless while dockEffect is active (updateFlight
+  // never runs during it), and Chromium's pointer-lock grant needs a live
+  // user gesture, which a requestAnimationFrame callback well after the
+  // click no longer has.
+  reenterFlightMode()
 }
 
 function updateDockEffect(dt) {
@@ -889,16 +1024,21 @@ function handlePlayerDeath() {
 
 window.addEventListener('keydown', (e) => {
   if (!gameState) return
-  if (e.code === 'KeyF' && !docked && !dockEffect && !navMapOpen && !paused) {
+  if (e.code === 'KeyF' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen) {
     const body = findNearbyDockableBody()
-    if (body) beginDocking(body)
-  } else if (e.code === 'KeyP' && !docked && !navMapOpen && !paused) {
+    if (body) {
+      beginDocking(body)
+    } else {
+      const wreck = findNearbyWreck()
+      if (wreck) lootNearbyWreck(wreck)
+    }
+  } else if (e.code === 'KeyP' && !docked && !navMapOpen && !paused && !inventoryOpen) {
     const body = findNearbyProbeableBody()
     if (body) probeBody(body)
   } else if (e.code === 'F5') {
     e.preventDefault()
     doSave()
-  } else if (e.code === 'Escape' && !docked && !navMapOpen) {
+  } else if (e.code === 'Escape' && !docked && !navMapOpen && !inventoryOpen) {
     paused = !paused
     audio.setThrustState(null)
     if (paused) {
@@ -906,17 +1046,19 @@ window.addEventListener('keydown', (e) => {
       pauseMenu.show()
     } else {
       pauseMenu.hide()
+      reenterFlightMode()
     }
-  } else if (e.code === 'KeyM' && !docked && !paused) {
+  } else if (e.code === 'KeyM' && !docked && !paused && !inventoryOpen) {
     navMapOpen = !navMapOpen
     audio.setThrustState(null)
     if (navMapOpen) {
       exitFlightMode()
-      navMap.show({ onJump: handleJump, onClose: () => { navMapOpen = false } })
+      navMap.show({ onJump: handleJump, onClose: () => { navMapOpen = false; reenterFlightMode() } })
     } else {
       navMap.hide()
+      reenterFlightMode()
     }
-  } else if (e.code === 'KeyC' && !docked && !navMapOpen && !paused) {
+  } else if (e.code === 'KeyC' && !docked && !navMapOpen && !paused && !inventoryOpen) {
     if (cruising) {
       cruising = false
     } else if (!gameState.player.waypointBodyId) {
@@ -926,7 +1068,7 @@ window.addEventListener('keydown', (e) => {
     } else {
       cruising = true
     }
-  } else if (e.code === 'Space' && !docked && !dockEffect && !navMapOpen && !paused) {
+  } else if (e.code === 'Space' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen) {
     flightMode = !flightMode
     if (flightMode) {
       // If the lock request fails, resolve flightMode immediately rather
@@ -938,11 +1080,21 @@ window.addEventListener('keydown', (e) => {
     } else {
       document.exitPointerLock()
     }
-  } else if (e.code === 'Tab' && !docked && !navMapOpen && !paused) {
+  } else if (e.code === 'Tab' && !docked && !navMapOpen && !paused && !inventoryOpen) {
     e.preventDefault()
     cycleTarget()
-  } else if (e.code === 'KeyR' && !docked && !navMapOpen && !paused) {
+  } else if (e.code === 'KeyR' && !docked && !navMapOpen && !paused && !inventoryOpen) {
     miningMode = !miningMode
+  } else if (e.code === 'KeyI' && !docked && !navMapOpen && !paused) {
+    inventoryOpen = !inventoryOpen
+    audio.setThrustState(null)
+    if (inventoryOpen) {
+      exitFlightMode()
+      inventoryUI.show(() => { inventoryOpen = false; reenterFlightMode() })
+    } else {
+      inventoryUI.hide()
+      reenterFlightMode()
+    }
   }
 })
 
@@ -971,6 +1123,11 @@ function getTargetableEntities() {
     if (npc.destroyed) continue
     const dist = shipPos.distanceTo(new THREE.Vector3().fromArray(npc.position))
     if (dist <= TARGET_RANGE) entities.push({ kind: 'npc', id: npc.id, position: npc.position, dist })
+  }
+
+  for (const wreck of gameState.wrecks) {
+    const dist = shipPos.distanceTo(new THREE.Vector3().fromArray(wreck.position))
+    if (dist <= TARGET_RANGE) entities.push({ kind: 'wreck', id: wreck.id, position: wreck.position, dist })
   }
 
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
@@ -1049,6 +1206,10 @@ function resolveTarget() {
     if (!npc) return null
     const shipClass = getShipClass(npc.shipClassId)
     return { position: npc.position, name: shipClass.name, hostile: isHostileToPlayer(npc), hullPct: Math.max(0, npc.hull / shipClass.stats.hull), isAsteroid: false }
+  }
+  if (currentTarget.kind === 'wreck') {
+    const wreck = gameState.wrecks.find((w) => w.id === currentTarget.id)
+    return wreck ? { position: wreck.position, name: 'Wreck', hostile: false, hullPct: null, isAsteroid: false } : null
   }
   if (currentTarget.kind === 'asteroid') {
     const field = currentSystem.bodies.find((b) => b.id === currentTarget.fieldId)
@@ -1183,7 +1344,7 @@ function animate() {
     return
   }
 
-  if (docked || paused || navMapOpen) {
+  if (docked || paused || navMapOpen || inventoryOpen) {
     renderer.render(scene, camera)
     return
   }
@@ -1206,6 +1367,10 @@ function animate() {
     audio.setThrustState(thrustState)
   }
   audio.setSupercruiseActive(cruising)
+  if (cruising !== wasCruising) {
+    audio.announce(cruising ? 'Supercruise engaged' : 'Supercruise disengaged')
+    wasCruising = cruising
+  }
 
   resolveBodyCollisions(
     gameState.player.ship,
@@ -1228,6 +1393,13 @@ function animate() {
     accelActive: thrustState === 'accel',
     brakeActive: thrustState === 'brake',
     cruiseActive: cruising,
+    shipPos: new THREE.Vector3().fromArray(gameState.player.ship.position),
+    shipQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
+    hullLength: playerShipClass.hull.length
+  })
+  damageEffects.update(dt, {
+    armorFraction: gameState.player.ship.armor / playerShipClass.stats.armor,
+    hullFraction: gameState.player.ship.hull / playerShipClass.stats.hull,
     shipPos: new THREE.Vector3().fromArray(gameState.player.ship.position),
     shipQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
     hullLength: playerShipClass.hull.length
@@ -1291,8 +1463,12 @@ function animate() {
   const spawnSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
   const core = coreFraction(spawnSystem)
   const ambientCap = Math.max(1, Math.round(AMBIENT_NPC_CAP + 1 - core * 3))
+  // The player's own starting system stays free of hostile encounters until
+  // they break that peace themselves (see combat.js's updateProjectiles) —
+  // ambient traffic still spawns there, just neutral-only in the meantime.
+  const atPeacefulHome = gameState.player.currentSystemId === gameState.player.startingSystemId && !gameState.flags.startingSystemPeaceBroken
   if (gameState.simTime > nextAmbientSpawnAt && gameState.npcs.filter((n) => !n.destroyed).length < ambientCap) {
-    gameState.npcs.push(spawnEncounterNear(Math.random, gameState.player.ship.position, gameState.galaxy, core))
+    gameState.npcs.push(spawnEncounterNear(Math.random, gameState.player.ship.position, gameState.galaxy, core, atPeacefulHome))
     nextAmbientSpawnAt = gameState.simTime + AMBIENT_SPAWN_INTERVAL_S * (0.7 + core * 0.6)
   }
 
@@ -1327,6 +1503,26 @@ function animate() {
     if (!liveProjectileIds.has(id)) {
       scene.remove(mesh)
       projectileMeshes.delete(id)
+    }
+  }
+
+  pruneWrecks(gameState)
+  const liveWreckIds = new Set()
+  for (const wreck of gameState.wrecks) {
+    liveWreckIds.add(wreck.id)
+    let mesh = wreckMeshes.get(wreck.id)
+    if (!mesh) {
+      mesh = buildWreckMesh()
+      mesh.position.fromArray(wreck.position)
+      wreckMeshes.set(wreck.id, mesh)
+      scene.add(mesh)
+    }
+    updateWreckMesh(mesh, gameState.simTime, dt)
+  }
+  for (const [id, mesh] of wreckMeshes) {
+    if (!liveWreckIds.has(id)) {
+      scene.remove(mesh)
+      wreckMeshes.delete(id)
     }
   }
 
@@ -1366,6 +1562,10 @@ function animate() {
   const nearbyProbeBody = findNearbyProbeableBody()
   probePromptEl.style.display = nearbyProbeBody ? 'block' : 'none'
   if (nearbyProbeBody) probePromptEl.textContent = `Press P to launch a probe at ${nearbyProbeBody.name}`
+
+  // Only shown when there's no dockable body in range too, matching the
+  // KeyF handler's own dock-takes-priority-over-loot fallback.
+  wreckPromptEl.style.display = !nearbyBody && findNearbyWreck() ? 'block' : 'none'
 
   if (miningToastEl.style.display === 'block' && gameState.simTime > miningToastUntil) {
     miningToastEl.style.display = 'none'

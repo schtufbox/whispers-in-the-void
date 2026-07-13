@@ -29,8 +29,9 @@ test('moons appear on roughly 23% of planets and orbit close to their parent', (
       )
       // Threshold accounts for the scaled-up planet/moon radii (see
       // PLANET_SIZE_SCALE/MOON_SIZE_SCALE in galaxy.js): the orbit clearance
-      // clamp can push larger pairs' orbit radius well past the old ~45 cap.
-      assert.ok(dist < 100, `moon should orbit close to its parent planet, got distance ${dist}`)
+      // clamp can push larger pairs' orbit radius well past the old ~45 cap —
+      // now potentially several hundred units for the biggest planet/moon pairs.
+      assert.ok(dist < 1300, `moon should orbit close to its parent planet, got distance ${dist}`)
     })
   }
 })
@@ -69,8 +70,8 @@ test('planets, moons, and asteroid fields have a physical radius sized for their
 
   // Base ranges scaled by PLANET_SIZE_SCALE/MOON_SIZE_SCALE, times the
   // per-system SYSTEM_SCALE_VARIANCE (0.85-1.15) — see galaxy.js.
-  for (const b of byKind('planet')) assert.ok(b.radius >= 8 * 2.5 * 0.85 && b.radius <= 21 * 2.5 * 1.15)
-  for (const b of byKind('moon')) assert.ok(b.radius >= 3 * 1.65 * 0.85 && b.radius <= 8 * 1.65 * 1.15)
+  for (const b of byKind('planet')) assert.ok(b.radius >= 8 * 37.5 * 0.85 && b.radius <= 21 * 37.5 * 1.15)
+  for (const b of byKind('moon')) assert.ok(b.radius >= 3 * 24.75 * 0.85 && b.radius <= 8 * 24.75 * 1.15)
   for (const b of byKind('asteroidField')) assert.ok(b.radius >= 70 * 0.85 && b.radius <= 110 * 1.15)
   for (const b of [...byKind('station'), ...byKind('settlement')]) assert.equal(b.radius, null)
 })

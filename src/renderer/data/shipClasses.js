@@ -127,9 +127,11 @@ const HAND_CRAFTED_SHIP_CLASSES = [
 ]
 
 export const STARTER_SHIP_CLASS_ID = 'bravia_mk2'
-// Deliberately below computeMiningCapacity's own floor (10) so the starter
-// ship is guaranteed to have the smallest mining hold in the game.
-const STARTER_MINING_CAPACITY = 5
+// Tripled per user request (was 5) — still deliberately below
+// computeMiningCapacity's own floor (see MINING_HOLD_MIN in shipRoster.js,
+// scaled up to match) so the starter ship is guaranteed to have the smallest
+// mining hold in the game.
+const STARTER_MINING_CAPACITY = 15
 
 for (const c of HAND_CRAFTED_SHIP_CLASSES) {
   c.stats.miningCapacity = c.id === STARTER_SHIP_CLASS_ID ? STARTER_MINING_CAPACITY : computeMiningCapacity(c.price, c.role)

@@ -95,6 +95,57 @@ const STYLE = `
 #main-menu button.quit:hover:not(:disabled) { border-color: #d94f4f; box-shadow: 0 0 14px rgba(217,79,79,0.4); }
 #main-menu button:active:not(:disabled) { transform: translateY(9px) scale(0.99); }
 
+/* The top-level New Game/Load Game/Quit entries are plain clickable text,
+   not boxed buttons — no background/border/padding chrome — with the same
+   glitch-layer technique as the h1 title (data-text-mirrored ::before/
+   ::after clip-path bands) and a bright multi-layer glow on hover instead of
+   a hover box-shadow. transform/opacity are kept so the existing .reveal
+   entrance stagger (below) still animates these in unchanged. */
+#main-menu button.menu-link {
+  background: none; border: none; padding: 6px 0; margin: 0;
+  color: #cfe3ff; font-size: 19px; letter-spacing: 3px; text-transform: uppercase;
+  cursor: pointer; font-family: monospace;
+  opacity: 0; transform: translateY(8px);
+  transition: color 0.2s ease;
+}
+#main-menu button.menu-link:disabled { opacity: 0.35 !important; cursor: not-allowed; }
+#main-menu button.menu-link:hover:not(:disabled),
+#main-menu button.menu-link:focus-visible:not(:disabled) { color: #eaffff; }
+#main-menu button.menu-link .glitch-text { position: relative; display: inline-block; }
+#main-menu button.menu-link:hover:not(:disabled) .glitch-text,
+#main-menu button.menu-link:focus-visible:not(:disabled) .glitch-text {
+  filter: drop-shadow(0 0 6px rgba(143,179,255,0.9)) drop-shadow(0 0 16px rgba(79,195,217,0.85)) drop-shadow(0 0 32px rgba(127,224,160,0.55));
+}
+#main-menu button.menu-link.quit:hover:not(:disabled) .glitch-text,
+#main-menu button.menu-link.quit:focus-visible:not(:disabled) .glitch-text {
+  filter: drop-shadow(0 0 6px rgba(217,79,79,0.95)) drop-shadow(0 0 16px rgba(217,79,79,0.85)) drop-shadow(0 0 32px rgba(255,140,140,0.5));
+}
+#main-menu button.menu-link .glitch-text::before, #main-menu button.menu-link .glitch-text::after {
+  content: attr(data-text); position: absolute; inset: 0; color: inherit;
+  opacity: 0; mix-blend-mode: screen;
+}
+#main-menu button.menu-link .glitch-text::before { clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%); filter: hue-rotate(-50deg); animation: menuGlitchTop 7s steps(1) infinite; }
+#main-menu button.menu-link .glitch-text::after { clip-path: polygon(0 55%, 100% 55%, 100% 100%, 0 100%); filter: hue-rotate(170deg); animation: menuGlitchBottom 7s steps(1) infinite; }
+/* Staggered per item (nth-of-type) so all three don't glitch in sync. */
+#main-menu button.menu-link:nth-of-type(2) .glitch-text::before, #main-menu button.menu-link:nth-of-type(2) .glitch-text::after { animation-delay: 1.4s; }
+#main-menu button.menu-link:nth-of-type(3) .glitch-text::before, #main-menu button.menu-link:nth-of-type(3) .glitch-text::after { animation-delay: 2.8s; }
+@keyframes menuGlitchTop {
+  0%, 91%, 100% { opacity: 0; transform: translate(0, 0); }
+  92% { opacity: 0.85; transform: translate(-4px, -1px); }
+  93% { opacity: 0.85; transform: translate(3px, 1px); }
+  94% { opacity: 0; transform: translate(0, 0); }
+  96% { opacity: 0.7; transform: translate(2px, 0); }
+  97% { opacity: 0; transform: translate(0, 0); }
+}
+@keyframes menuGlitchBottom {
+  0%, 91%, 100% { opacity: 0; transform: translate(0, 0); }
+  92% { opacity: 0.85; transform: translate(4px, 1px); }
+  93% { opacity: 0.85; transform: translate(-3px, -1px); }
+  94% { opacity: 0; transform: translate(0, 0); }
+  96% { opacity: 0.7; transform: translate(-2px, 0); }
+  97% { opacity: 0; transform: translate(0, 0); }
+}
+
 #main-menu.reveal .panel > button, #main-menu.reveal .panel > label, #main-menu.reveal .panel > h2 {
   animation: riseIn 0.4s ease-out forwards; opacity: 0;
 }
@@ -118,14 +169,13 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     <div class="panel main-view">
       <h1><span class="line" data-text="Whispers In The">Whispers In The</span><span class="line" data-text="Void">Void</span></h1>
       <div class="subtitle">A PROCEDURALLY GENERATED GALAXY</div>
-      <button class="new-game">New Game</button>
-      <button class="load-game">Load Game</button>
-      <button class="quit">Quit</button>
+      <button class="new-game menu-link"><span class="glitch-text" data-text="New Game">New Game</span></button>
+      <button class="load-game menu-link"><span class="glitch-text" data-text="Load Game">Load Game</span></button>
+      <button class="quit menu-link"><span class="glitch-text" data-text="Quit">Quit</span></button>
     </div>
     <div class="panel new-game-view" style="display:none">
       <h2>Create Pilot</h2>
       <label>Character Name <input class="char-name" value="Pilot" /></label>
-      <label>Ship Model <input value="${starterShip.name}" disabled /></label>
       <label>Ship Name <input class="ship-name" value="${starterShip.name}" /></label>
       <button class="confirm-new-game">Launch</button>
       <button class="back">Back</button>

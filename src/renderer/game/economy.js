@@ -1,4 +1,4 @@
-import { GOODS, getGood } from '../data/goods.js'
+import { GOODS, getGood, SHIP_PARTS_GOOD_ID } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { findBody } from '../procgen/galaxy.js'
 
@@ -63,23 +63,47 @@ export function sellMinedOre(gameState, bodyId, goodId, quantity) {
   nudgePrice(gameState, bodyId, goodId, -quantity)
 }
 
+// The mirror of sellMinedOre — lets a player buy ore at one market to haul
+// and resell wherever it's pricier, same as regular cargo goods, just capped
+// by miningCapacity instead of cargoCapacity.
+export function buyMinedOre(gameState, bodyId, goodId, quantity) {
+  const shipClass = getShipClass(gameState.player.ship.classId)
+  const hold = gameState.player.ship.miningHold
+  const used = Object.values(hold).reduce((a, b) => a + b, 0)
+  if (used + quantity > shipClass.stats.miningCapacity) throw new Error('Not enough mining hold space')
+  const cost = getPrice(gameState, bodyId, goodId) * quantity
+  if (gameState.player.credits < cost) throw new Error('Not enough credits')
+
+  gameState.player.credits -= cost
+  hold[goodId] = (hold[goodId] ?? 0) + quantity
+  nudgePrice(gameState, bodyId, goodId, quantity)
+}
+
 // Shields already regenerate on their own over time (see combat.js's
 // regenShields) — only hull and armor persist damage indefinitely, so
-// repairing just tops those back up. A modest per-point rate rather than a
-// flat fee, so a near-death ship costs meaningfully more to fix than a
-// lightly-scratched one.
+// repairing just tops those back up. Cost scales with both how damaged the
+// ship is (missing points) and how big it is (hull.length relative to the
+// starter ship, so a Hauler costs meaningfully more per point than a Bravia
+// Mk2) — a flat per-point rate treated every ship class alike, which didn't
+// hold up once ship sizes started to vary a lot. Settlements charge a surcharge
+// on top since their parts supply is more limited than a full station's.
 const REPAIR_COST_PER_POINT = 5
+const REPAIR_SIZE_REFERENCE_LENGTH = 22 // bravia_mk2's hull.length — keeps its rate at exactly the old flat 5cr/point
+const SETTLEMENT_REPAIR_SURCHARGE = 0.05
 
-export function repairCost(gameState) {
+export function repairCost(gameState, body = null) {
   const shipClass = getShipClass(gameState.player.ship.classId)
   const ship = gameState.player.ship
   const missing = shipClass.stats.hull - ship.hull + (shipClass.stats.armor - ship.armor)
-  return Math.max(0, Math.round(missing * REPAIR_COST_PER_POINT))
+  const sizeFactor = shipClass.hull.length / REPAIR_SIZE_REFERENCE_LENGTH
+  let cost = missing * REPAIR_COST_PER_POINT * sizeFactor
+  if (body?.kind === 'settlement') cost *= 1 + SETTLEMENT_REPAIR_SURCHARGE
+  return Math.max(0, Math.round(cost))
 }
 
-export function repairShip(gameState) {
+export function repairShip(gameState, body = null) {
   const shipClass = getShipClass(gameState.player.ship.classId)
-  const cost = repairCost(gameState)
+  const cost = repairCost(gameState, body)
   if (cost === 0) throw new Error('Ship is already fully repaired')
   if (gameState.player.credits < cost) throw new Error('Not enough credits to repair')
 
@@ -88,13 +112,28 @@ export function repairShip(gameState) {
   gameState.player.ship.armor = shipClass.stats.armor
 }
 
-export function purchaseShip(gameState, newClassId, instanceName) {
+// Per-station storage — cargo/ore/ship-parts left behind, and ships owned
+// but not currently flown, all keyed by body id (never retrievable at a
+// different station, per its own design). Created lazily on first use.
+function storageFor(gameState, bodyId) {
+  gameState.stationStorage[bodyId] ??= { cargo: {}, miningHold: {}, shipParts: 0, ships: [] }
+  return gameState.stationStorage[bodyId]
+}
+
+function mergeInto(target, source) {
+  for (const [id, qty] of Object.entries(source)) target[id] = (target[id] ?? 0) + qty
+}
+
+// A newly bought ship is placed into storage at the station it was bought
+// from, not made active automatically — see activateStoredShip below for the
+// only way a stored ship (new or previously owned) actually becomes the
+// player's active ship.
+export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
   const newClass = getShipClass(newClassId)
   if (gameState.player.credits < newClass.price) throw new Error('Not enough credits')
 
   gameState.player.credits -= newClass.price
-  const oldShip = gameState.player.ship
-  gameState.player.ship = {
+  storageFor(gameState, bodyId).ships.push({
     classId: newClassId,
     instanceName,
     hull: newClass.stats.hull,
@@ -102,10 +141,140 @@ export function purchaseShip(gameState, newClassId, instanceName) {
     armor: newClass.stats.armor,
     cargo: {},
     miningHold: {},
-    position: oldShip.position,
+    shipParts: 0
+  })
+}
+
+// Renaming only happens after a ship is already owned — a fresh purchase
+// just takes the class's stock name (see ui/dockingUI.js's buy-ship
+// handler) — since asking for a name at the moment of purchase was the
+// exact thing being removed here.
+export function renameActiveShip(gameState, newName) {
+  const trimmed = newName?.trim()
+  if (!trimmed) throw new Error('Ship name cannot be empty')
+  gameState.player.ship.instanceName = trimmed
+}
+
+export function renameStoredShip(gameState, bodyId, index, newName) {
+  const trimmed = newName?.trim()
+  if (!trimmed) throw new Error('Ship name cannot be empty')
+  const stored = storageFor(gameState, bodyId).ships[index]
+  if (!stored) throw new Error('No such stored ship')
+  stored.instanceName = trimmed
+}
+
+// Swaps the player's active ship for one sitting in storage at this same
+// station — the ship that was active takes its place in that storage slot,
+// so nothing is ever lost, just parked.
+export function activateStoredShip(gameState, bodyId, index) {
+  const storage = storageFor(gameState, bodyId)
+  const stored = storage.ships[index]
+  if (!stored) throw new Error('No such stored ship')
+  const current = gameState.player.ship
+
+  storage.ships.splice(index, 1)
+  storage.ships.push({
+    classId: current.classId,
+    instanceName: current.instanceName,
+    hull: current.hull,
+    shields: current.shields,
+    armor: current.armor,
+    cargo: current.cargo,
+    miningHold: current.miningHold,
+    shipParts: current.shipParts
+  })
+  gameState.player.ship = {
+    ...stored,
+    position: [...current.position],
     velocity: [0, 0, 0],
-    quaternion: oldShip.quaternion
+    quaternion: [...current.quaternion]
   }
+}
+
+// Selling a stored ship (rather than the active one, which is never for
+// sale) removes it permanently for a fraction of its list price.
+const STORED_SHIP_RESALE_FRACTION = 0.5
+
+export function sellStoredShip(gameState, bodyId, index) {
+  const storage = storageFor(gameState, bodyId)
+  const stored = storage.ships[index]
+  if (!stored) throw new Error('No such stored ship')
+  storage.ships.splice(index, 1)
+  gameState.player.credits += Math.round(getShipClass(stored.classId).price * STORED_SHIP_RESALE_FRACTION)
+}
+
+// Whole-hold transfers (not per-good) between the active ship and this
+// station's storage — simplest useful shape for "leave stuff behind, pick it
+// up later", without needing a per-good deposit/withdraw quantity picker.
+export function storeCargo(gameState, bodyId) {
+  const storage = storageFor(gameState, bodyId)
+  mergeInto(storage.cargo, gameState.player.ship.cargo)
+  gameState.player.ship.cargo = {}
+}
+
+export function retrieveCargo(gameState, bodyId) {
+  const shipClass = getShipClass(gameState.player.ship.classId)
+  const storage = storageFor(gameState, bodyId)
+  const used = cargoLoad(gameState.player.ship.cargo)
+  const incoming = cargoLoad(storage.cargo)
+  if (used + incoming > shipClass.stats.cargoCapacity) throw new Error('Not enough cargo space to retrieve everything')
+  mergeInto(gameState.player.ship.cargo, storage.cargo)
+  storage.cargo = {}
+}
+
+export function storeOre(gameState, bodyId) {
+  const storage = storageFor(gameState, bodyId)
+  mergeInto(storage.miningHold, gameState.player.ship.miningHold)
+  gameState.player.ship.miningHold = {}
+}
+
+export function retrieveOre(gameState, bodyId) {
+  const shipClass = getShipClass(gameState.player.ship.classId)
+  const storage = storageFor(gameState, bodyId)
+  const used = cargoLoad(gameState.player.ship.miningHold)
+  const incoming = cargoLoad(storage.miningHold)
+  if (used + incoming > shipClass.stats.miningCapacity) throw new Error('Not enough mining hold space to retrieve everything')
+  mergeInto(gameState.player.ship.miningHold, storage.miningHold)
+  storage.miningHold = {}
+}
+
+export function storeShipParts(gameState, bodyId) {
+  const storage = storageFor(gameState, bodyId)
+  storage.shipParts += gameState.player.ship.shipParts
+  gameState.player.ship.shipParts = 0
+}
+
+export function retrieveShipParts(gameState, bodyId) {
+  const storage = storageFor(gameState, bodyId)
+  gameState.player.ship.shipParts += storage.shipParts
+  storage.shipParts = 0
+}
+
+// A rare consumable bought at the small fraction of stations/settlements
+// that happen to stock it (see hasShipParts in procgen/galaxy.js) — held as
+// a simple count on the ship, not a cargo slot, and used in space via
+// useShipPart to patch up hull/armor without needing to dock.
+export function buyShipParts(gameState, bodyId, quantity) {
+  const body = findBody(gameState.galaxy, bodyId)
+  if (!body?.hasShipParts) throw new Error('Ship parts are not stocked here')
+  const cost = getPrice(gameState, bodyId, SHIP_PARTS_GOOD_ID) * quantity
+  if (gameState.player.credits < cost) throw new Error('Not enough credits')
+
+  gameState.player.credits -= cost
+  gameState.player.ship.shipParts += quantity
+}
+
+// One part patches up a flat 10% of the ship's max hull and armor — usable
+// anywhere, unlike repairShip, which needs a station/settlement's crew.
+const SHIP_PART_REPAIR_FRACTION = 0.1
+
+export function useShipPart(gameState) {
+  const ship = gameState.player.ship
+  if ((ship.shipParts ?? 0) <= 0) throw new Error('No ship parts to use')
+  const shipClass = getShipClass(ship.classId)
+  ship.hull = Math.min(shipClass.stats.hull, ship.hull + shipClass.stats.hull * SHIP_PART_REPAIR_FRACTION)
+  ship.armor = Math.min(shipClass.stats.armor, ship.armor + shipClass.stats.armor * SHIP_PART_REPAIR_FRACTION)
+  ship.shipParts -= 1
 }
 
 export { GOODS }

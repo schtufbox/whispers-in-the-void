@@ -113,7 +113,11 @@ function computePrice(stats, rng) {
 }
 
 const MINING_HOLD_ROLE_MULTIPLIER = { trader: 1.3, fighter: 0.6, explorer: 0.9 }
-const MINING_HOLD_MIN = 10
+// Tripled alongside the starter ship's hard-set capacity (see
+// STARTER_MINING_CAPACITY in data/shipClasses.js, 5 -> 15) so every other
+// ship's hold keeps scaling off that same new base rather than drifting back
+// down toward the old floor.
+const MINING_HOLD_MIN = 30
 
 // Every ship has a dedicated mining hold for mined ore, sized off price and
 // role (traders lean into hauling ore, fighters carry the least) and kept

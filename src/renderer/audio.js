@@ -22,19 +22,23 @@ function resumeAudioOnGesture() {
 window.addEventListener('keydown', resumeAudioOnGesture, { once: true })
 window.addEventListener('click', resumeAudioOnGesture, { once: true })
 
-function tone({ type = 'sine', freq, freqEnd, duration, attack = 0.005, peak = 0.25 }) {
+// delay (seconds, from now) lets callers layer several tone()/noiseBurst()
+// calls with a slight offset instead of all starting simultaneously — used
+// by the dock/undock clunk-then-hiss sequencing below.
+function tone({ type = 'sine', freq, freqEnd, duration, attack = 0.005, peak = 0.25, delay = 0 }) {
   const audio = getContext()
+  const start = audio.currentTime + delay
   const osc = audio.createOscillator()
   const gain = audio.createGain()
   osc.type = type
-  osc.frequency.setValueAtTime(freq, audio.currentTime)
-  if (freqEnd) osc.frequency.exponentialRampToValueAtTime(freqEnd, audio.currentTime + duration)
-  gain.gain.setValueAtTime(0, audio.currentTime)
-  gain.gain.linearRampToValueAtTime(peak, audio.currentTime + attack)
-  gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + duration)
+  osc.frequency.setValueAtTime(freq, start)
+  if (freqEnd) osc.frequency.exponentialRampToValueAtTime(freqEnd, start + duration)
+  gain.gain.setValueAtTime(0, start)
+  gain.gain.linearRampToValueAtTime(peak, start + attack)
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration)
   osc.connect(gain).connect(audio.destination)
-  osc.start()
-  osc.stop(audio.currentTime + duration + 0.05)
+  osc.start(start)
+  osc.stop(start + duration + 0.05)
 }
 
 // A tanh soft-clip curve for WaveShaperNode — cheap analog-style saturation
@@ -49,8 +53,9 @@ function distortionCurve(amount) {
   return curve
 }
 
-function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0 }) {
+function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0, delay = 0 }) {
   const audio = getContext()
+  const start = audio.currentTime + delay
   const bufferSize = Math.floor(audio.sampleRate * duration)
   const buffer = audio.createBuffer(1, bufferSize, audio.sampleRate)
   const data = buffer.getChannelData(0)
@@ -62,8 +67,8 @@ function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0 }) {
   filter.type = 'lowpass'
   filter.frequency.value = filterFreq
   const gain = audio.createGain()
-  gain.gain.setValueAtTime(peak, audio.currentTime)
-  gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + duration)
+  gain.gain.setValueAtTime(peak, start)
+  gain.gain.exponentialRampToValueAtTime(0.001, start + duration)
 
   let tail = filter
   if (drive > 0) {
@@ -74,7 +79,7 @@ function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0 }) {
   }
   source.connect(filter)
   tail.connect(gain).connect(audio.destination)
-  source.start()
+  source.start(start)
 }
 
 // Beefed up with a low sine "punch" underneath the bright zap for body/
@@ -126,16 +131,42 @@ export function playHyperspaceArrival() {
   noiseBurst({ duration: 0.4, filterFreq: 1800, peak: 0.15 })
 }
 
+// A heavier, more mechanical clamp-and-seal sound (a hard metallic clunk as
+// the docking clamps engage, then a hydraulic hiss as the bay seals) layered
+// on top of the original rising access-granted tone, rather than that tone
+// alone reading as a soft chime.
 export function playDock() {
   tone({ type: 'sine', freq: 260, freqEnd: 480, duration: 0.7, attack: 0.1, peak: 0.16 })
+  tone({ type: 'square', freq: 90, freqEnd: 55, duration: 0.18, peak: 0.32 })
+  noiseBurst({ duration: 0.1, filterFreq: 1800, peak: 0.3, drive: 2.5 })
+  noiseBurst({ duration: 0.5, filterFreq: 3000, peak: 0.14, delay: 0.08 })
 }
 
+// The reverse sequence — hiss (clamps releasing) first, then the clunk of
+// mechanical disengagement — under the original falling departure tone.
 export function playUndock() {
   tone({ type: 'sine', freq: 480, freqEnd: 260, duration: 0.7, attack: 0.1, peak: 0.16 })
+  noiseBurst({ duration: 0.35, filterFreq: 3000, peak: 0.14 })
+  tone({ type: 'square', freq: 70, freqEnd: 105, duration: 0.16, peak: 0.3, delay: 0.3 })
+  noiseBurst({ duration: 0.1, filterFreq: 1800, peak: 0.28, drive: 2.5, delay: 0.3 })
 }
 
 export function playMiningPing() {
   tone({ type: 'triangle', freq: 900, freqEnd: 1400, duration: 0.12, peak: 0.14 })
+}
+
+// Speech-synthesized voice callouts ("Hyperdrive engaged", "Supercruise
+// disengaged", etc.) — gracefully a no-op wherever the Web Speech API isn't
+// available, rather than throwing, since this is a nice-to-have layered on
+// top of the existing synthesized SFX above, not a required system.
+export function announce(text) {
+  if (!window.speechSynthesis) return
+  window.speechSynthesis.cancel() // don't queue up stale callouts behind a new one
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.rate = 1.05
+  utterance.pitch = 0.85
+  utterance.volume = 0.8
+  window.speechSynthesis.speak(utterance)
 }
 
 let thrustOsc = null
@@ -265,8 +296,13 @@ const TITLE_VOLUME = 0.5
 const DEATH_VOLUME = 0.55
 const AMBIENT_VOLUME = 0.15 // deliberately quiet — background gameplay music, not foreground
 
+// A relative path (not "/audio/...") — the packaged app loads index.html via
+// `file://`, where a root-absolute path resolves against the filesystem root
+// instead of the app's own out/renderer directory, silently failing to find
+// any track. A relative path resolves against the document's own location in
+// both the dev server (served at "/") and the packaged file:// build alike.
 function playFile(name, { loop = false, volume = 0.5 } = {}) {
-  const el = new Audio(`/audio/${name}`)
+  const el = new Audio(`audio/${name}`)
   el.loop = loop
   el.volume = volume
   el.play().catch(() => {}) // blocked without a user gesture; the existing

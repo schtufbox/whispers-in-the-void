@@ -1,25 +1,45 @@
 import { getSystem, canJumpTo } from '../procgen/galaxy.js'
 
 const STYLE = `
-#nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; }
-#nav-map .panel { width: 760px; max-height: 85vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
+#nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+#nav-map .panel { width: 960px; max-height: 90vh; overflow-y: auto; background: #0b1020; border: 1px solid #2a3a55; padding: 16px; }
 #nav-map .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 #nav-map .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
 #nav-map .tab { background: #10182a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 6px 12px; cursor: pointer; }
 #nav-map .tab.active { background: #2a3a55; }
 #nav-map button.close { background: #a13a3a; border: none; color: white; padding: 6px 12px; cursor: pointer; }
-#nav-map .galaxy-body { display: flex; gap: 16px; }
-#nav-map canvas { background: #05070d; border: 1px solid #1a2438; cursor: crosshair; }
-#nav-map .info-panel { flex: 1; min-width: 200px; }
+#nav-map .galaxy-body { display: flex; gap: 16px; position: relative; }
+#nav-map canvas { background: #05070d; border: 1px solid #1a2438; cursor: crosshair; border-radius: 4px; }
+#nav-map .map-tooltip {
+  position: absolute; pointer-events: none; font-size: 12px; color: #eaffff;
+  background: rgba(10,14,24,0.9); border: 1px solid rgba(94,230,255,0.5); padding: 3px 8px;
+  white-space: nowrap; display: none; transform: translate(-50%, -130%);
+}
+#nav-map .info-panel { flex: 1; min-width: 220px; }
 #nav-map .info-panel h3 { margin: 0 0 8px 0; }
 #nav-map .info-panel .stat { margin-bottom: 4px; font-size: 13px; }
 #nav-map button.jump { background: #2a5a3a; border: none; color: #cfe3ff; padding: 8px 16px; cursor: pointer; margin-top: 12px; width: 100%; }
 #nav-map button.jump:disabled { opacity: 0.4; cursor: not-allowed; }
 #nav-map table { width: 100%; border-collapse: collapse; }
 #nav-map th, #nav-map td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2438; font-size: 13px; }
+#nav-map td.body-name { display: flex; align-items: center; gap: 6px; }
 #nav-map button.waypoint { background: #2a3a55; border: none; color: #cfe3ff; padding: 3px 8px; cursor: pointer; }
 #nav-map tr.active-waypoint td { color: #7fe0a0; }
 `
+
+// Small per-kind glyphs (not emoji) so the system-body list reads at a
+// glance without needing to read the "Kind" column — a filled circle for
+// planets, a smaller dim one for moons, a square for stations/settlements
+// (settlement dimmer, matching its render/collision size being smaller),
+// and a little cluster of dots for asteroid fields (echoing how they
+// actually render as scattered rocks).
+const BODY_ICONS = {
+  planet: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="#8fb3ff"/></svg>',
+  moon: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3.5" fill="#9aa8bd"/></svg>',
+  station: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" fill="#5ee6ff"/></svg>',
+  settlement: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" fill="#c2a35c"/></svg>',
+  asteroidField: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="3" cy="4" r="2" fill="#8a8172"/><circle cx="8" cy="3" r="1.4" fill="#8a8172"/><circle cx="7" cy="8" r="2.2" fill="#8a8172"/></svg>'
+}
 
 function dist3(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -51,6 +71,7 @@ export function createNavMap(container, gameState) {
   const tabButtons = [...root.querySelectorAll('.tab')]
   let currentTab = 'galaxy'
   let selectedSystemId = null
+  let hoveredSystemId = null
 
   function renderGalaxyTab() {
     const systems = gameState.galaxy.systems
@@ -59,7 +80,8 @@ export function createNavMap(container, gameState) {
 
     contentEl.innerHTML = `
       <div class="galaxy-body">
-        <canvas width="480" height="480"></canvas>
+        <canvas width="680" height="680"></canvas>
+        <div class="map-tooltip"></div>
         <div class="info-panel">
           <h3 class="sel-name">—</h3>
           <div class="stat sel-bodies"></div>
@@ -70,14 +92,26 @@ export function createNavMap(container, gameState) {
     `
     const canvas = contentEl.querySelector('canvas')
     const ctx = canvas.getContext('2d')
+    const tooltipEl = contentEl.querySelector('.map-tooltip')
     const size = canvas.width
 
     function toCanvas(pos) {
-      return [size / 2 + (pos[0] / maxRadius) * (size / 2 - 12), size / 2 + (pos[2] / maxRadius) * (size / 2 - 12)]
+      return [size / 2 + (pos[0] / maxRadius) * (size / 2 - 16), size / 2 + (pos[2] / maxRadius) * (size / 2 - 16)]
     }
 
     function draw() {
       ctx.clearRect(0, 0, size, size)
+
+      // A soft, bright glow at the galactic core fading toward the rim —
+      // gives the map an actual "galaxy" read at a glance, on top of the
+      // already spiral-arm-shaped system distribution (see procgen/galaxy.js's
+      // spiralPosition) rather than just a flat scatter of dots.
+      const glow = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
+      glow.addColorStop(0, 'rgba(143,179,255,0.16)')
+      glow.addColorStop(0.35, 'rgba(94,150,230,0.07)')
+      glow.addColorStop(1, 'rgba(94,150,230,0)')
+      ctx.fillStyle = glow
+      ctx.fillRect(0, 0, size, size)
 
       // Jump lanes: thin lines from the current system to each system it can
       // actually reach, drawn under the dots so the map reads as "here's
@@ -99,13 +133,14 @@ export function createNavMap(container, gameState) {
         const [px, py] = toCanvas(system.galaxyPosition)
         const isCurrent = system.id === currentSystem.id
         const isSelected = system.id === selectedSystemId
+        const isHovered = system.id === hoveredSystemId
         const inRange = isCurrent || canJumpTo(currentSystem, system.id)
         ctx.beginPath()
-        ctx.arc(px, py, isCurrent ? 4 : isSelected ? 3.5 : 2, 0, Math.PI * 2)
-        ctx.fillStyle = isCurrent ? '#5ee6ff' : isSelected ? '#ffcc66' : inRange ? '#7fe0a0' : '#3a5a8a'
-        if (isCurrent || isSelected || inRange) {
+        ctx.arc(px, py, isCurrent ? 5 : isSelected || isHovered ? 4.5 : 2.5, 0, Math.PI * 2)
+        ctx.fillStyle = isCurrent ? '#5ee6ff' : isSelected ? '#ffcc66' : isHovered ? '#eaffff' : inRange ? '#7fe0a0' : '#3a5a8a'
+        if (isCurrent || isSelected || isHovered || inRange) {
           ctx.shadowColor = ctx.fillStyle
-          ctx.shadowBlur = isCurrent || isSelected ? 8 : 4
+          ctx.shadowBlur = isCurrent || isSelected || isHovered ? 10 : 5
         } else {
           ctx.shadowBlur = 0
         }
@@ -139,10 +174,7 @@ export function createNavMap(container, gameState) {
       jumpBtn.textContent = !isCurrent && !inRange ? 'Out of Range' : 'Hyperspace Jump'
     }
 
-    canvas.addEventListener('click', (e) => {
-      const rect = canvas.getBoundingClientRect()
-      const mx = e.clientX - rect.left
-      const my = e.clientY - rect.top
+    function nearestSystemAt(mx, my) {
       let nearest = null
       let nearestDist = Infinity
       for (const system of systems) {
@@ -153,9 +185,43 @@ export function createNavMap(container, gameState) {
           nearest = system
         }
       }
-      if (nearest && nearestDist < 10) {
+      return nearestDist < 10 ? nearest : null
+    }
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect()
+      const nearest = nearestSystemAt(e.clientX - rect.left, e.clientY - rect.top)
+      if (nearest) {
         selectedSystemId = nearest.id
         updateInfoPanel()
+        draw()
+      }
+    })
+
+    // Hover shows the system's name as a floating tooltip near the cursor —
+    // the map otherwise has no labels at all until a system is clicked.
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect()
+      const mx = e.clientX - rect.left
+      const my = e.clientY - rect.top
+      const nearest = nearestSystemAt(mx, my)
+      if (nearest?.id !== hoveredSystemId) {
+        hoveredSystemId = nearest?.id ?? null
+        draw()
+      }
+      if (nearest) {
+        tooltipEl.textContent = nearest.name
+        tooltipEl.style.left = `${mx}px`
+        tooltipEl.style.top = `${my}px`
+        tooltipEl.style.display = 'block'
+      } else {
+        tooltipEl.style.display = 'none'
+      }
+    })
+    canvas.addEventListener('mouseleave', () => {
+      tooltipEl.style.display = 'none'
+      if (hoveredSystemId) {
+        hoveredSystemId = null
         draw()
       }
     })
@@ -184,7 +250,7 @@ export function createNavMap(container, gameState) {
           .map(
             ({ b, d }) => `
           <tr class="${gameState.player.waypointBodyId === b.id ? 'active-waypoint' : ''}">
-            <td>${b.name}</td><td>${b.kind}</td><td>${Math.round(d)}m</td>
+            <td class="body-name">${BODY_ICONS[b.kind] ?? ''}${b.name}</td><td>${b.kind}</td><td>${Math.round(d)}m</td>
             <td><button class="waypoint" data-id="${b.id}">${gameState.player.waypointBodyId === b.id ? 'Clear' : 'Set Waypoint'}</button></td>
           </tr>`
           )

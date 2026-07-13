@@ -1,5 +1,5 @@
 const STYLE = `
-#pause-menu { position: fixed; inset: 0; background: rgba(4, 6, 12, 0.85); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; }
+#pause-menu { position: fixed; inset: 0; background: rgba(4, 6, 12, 0.85); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
 #pause-menu .panel { display: flex; flex-direction: column; gap: 10px; width: 280px; }
 #pause-menu h2 { margin: 0 0 10px 0; text-align: center; }
 #pause-menu button { background: #2a3a55; border: none; color: #cfe3ff; padding: 10px; cursor: pointer; font-family: monospace; }

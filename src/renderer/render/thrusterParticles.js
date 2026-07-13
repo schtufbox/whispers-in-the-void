@@ -1,8 +1,10 @@
 import * as THREE from 'three'
 
 // The same canvas-radial-gradient sprite technique as nebula.js/asteroid
-// impact flashes — a soft glowing dot with no image asset.
-function buildGlowTexture() {
+// impact flashes — a soft glowing dot with no image asset. Exported so
+// render/damageEffects.js's smoke/flame puffs can reuse the exact same
+// texture/emitter instead of duplicating this.
+export function buildGlowTexture() {
   const size = 64
   const canvas = document.createElement('canvas')
   canvas.width = size
@@ -22,7 +24,7 @@ function buildGlowTexture() {
 // per-particle fade/lifetime tracking needed, since older particles simply
 // end up far enough behind (or ahead of) the ship that the chase camera
 // naturally leaves them out of frame before they'd need to be reused again.
-function createPuffEmitter(count, color, size, texture) {
+export function createPuffEmitter(count, color, size, texture) {
   const geometry = new THREE.BufferGeometry()
   const positions = new Float32Array(count * 3)
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))

@@ -13,8 +13,15 @@ export const GOODS = [
   { id: 'raw_ore', name: 'Raw Ore', basePrice: 60, tagMultipliers: { mining: -0.2, industrial: 0.2, tech: 0.1 } },
   { id: 'rich_ore', name: 'Rich Ore', basePrice: 200, tagMultipliers: { mining: -0.15, industrial: 0.2, tech: 0.15 } },
   { id: 'exotic_ore', name: 'Exotic Ore', basePrice: 550, tagMultipliers: { tech: 0.3, wealthy: 0.15 } },
-  { id: 'quantum_ore', name: 'Quantum Ore', basePrice: 1400, tagMultipliers: { tech: 0.5, wealthy: 0.25 } }
+  { id: 'quantum_ore', name: 'Quantum Ore', basePrice: 1400, tagMultipliers: { tech: 0.5, wealthy: 0.25 } },
+  { id: 'ship_parts', name: 'Ship Parts', basePrice: 800, tagMultipliers: { tech: -0.2, frontier: 0.3, industrial: -0.1 } }
 ]
+
+// A rare consumable, not a bulk trade good — kept out of the regular cargo
+// listing (see MINED_ORE_GOOD_IDS below) and sold at only a small fraction
+// of stations/settlements (see hasShipParts in procgen/galaxy.js). Held as a
+// simple count on the ship (game/economy.js's useShipPart), not a cargo slot.
+export const SHIP_PARTS_GOOD_ID = 'ship_parts'
 
 // Ids mined from asteroid fields (game/mining.js), kept distinct from the
 // pre-existing 'ore' good (an ordinary bulk trade commodity) so the two

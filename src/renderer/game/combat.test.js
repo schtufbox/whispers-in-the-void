@@ -97,6 +97,25 @@ test('a player laser hitting an asteroid field mines ore instead of dealing dama
   assert.equal(totalOre, 1, 'a successful mining hit should add exactly one unit of ore')
 })
 
+test('destroying an NPC with a player projectile leaves a lootable wreck at the impact point', () => {
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], lastFireAt: -Infinity }
+  const npc = { id: 'npc-9', shipClassId: 'scout', faction: 'trader', position: [0, 0, 50], hull: 1, shields: 0, armor: 0, destroyed: false }
+  const gameState = {
+    simTime: 0,
+    projectiles: [],
+    npcs: [npc],
+    wrecks: [],
+    player: { currentSystemId: 'sys-0', startingSystemId: null, ship: { position: [0, 0, 0], quaternion: [0, 0, 0, 1] } }
+  }
+  fireProjectile(gameState, shooter, shipClass, 'player')
+  step(gameState, 20, () => updateProjectiles(gameState, DT))
+
+  assert.equal(npc.destroyed, true)
+  assert.equal(gameState.wrecks.length, 1)
+  assert.ok(gameState.wrecks[0].loot.cargo, 'wreck should carry some lootable cargo')
+})
+
 test('NPC AI: a pirate close to the player transitions from patrol to attack', () => {
   const npc = {
     id: 'npc-0', shipClassId: 'raider_mk1', faction: 'pirate',

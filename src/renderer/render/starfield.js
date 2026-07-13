@@ -38,7 +38,7 @@ function buildLayer(count, radius, size) {
 // Two size tiers — many small dim pinpricks plus a sparser layer of bigger,
 // brighter stars — reads as a naturally varied field instead of one uniform
 // point cloud.
-export function createStarfield(count = 4000, radius = 4000) {
+export function createStarfield(count = 9000, radius = 4000) {
   const group = new THREE.Group()
   group.add(buildLayer(Math.round(count * 0.85), radius, 1.6))
   group.add(buildLayer(Math.round(count * 0.15), radius, 3))

@@ -1,13 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip } from './economy.js'
+import {
+  getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip,
+  activateStoredShip, sellStoredShip, storeCargo, retrieveCargo, useShipPart,
+  renameActiveShip, renameStoredShip
+} from './economy.js'
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
 
 function makeGameState() {
   return {
     player: {
       credits: 1000,
-      ship: { classId: STARTER_SHIP_CLASS_ID, cargo: {}, miningHold: {}, position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
+      ship: { classId: STARTER_SHIP_CLASS_ID, cargo: {}, miningHold: {}, shipParts: 0, position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
     },
     galaxy: {
       systems: [
@@ -20,7 +24,8 @@ function makeGameState() {
         }
       ]
     },
-    economyOverrides: {}
+    economyOverrides: {},
+    stationStorage: {}
   }
 }
 
@@ -49,14 +54,75 @@ test('buyGood rejects purchases beyond cargo capacity or available credits', () 
   assert.throws(() => buyGood(gameState, 'agri-world', 'grain', 1))
 })
 
-test('purchaseShip swaps the player ship and deducts credits', () => {
+test('purchaseShip stores the new ship at that station rather than making it active', () => {
   const gameState = makeGameState()
   gameState.player.credits = 50000
-  purchaseShip(gameState, 'scout', 'Wanderer')
-  assert.equal(gameState.player.ship.classId, 'scout')
-  assert.equal(gameState.player.ship.instanceName, 'Wanderer')
+  purchaseShip(gameState, 'agri-world', 'scout', 'Wanderer')
+  assert.equal(gameState.player.ship.classId, STARTER_SHIP_CLASS_ID, 'buying alone should not swap the active ship')
   assert.ok(gameState.player.credits < 50000)
-  assert.deepEqual(gameState.player.ship.miningHold, {}, 'the new ship should have its own empty mining hold')
+  const stored = gameState.stationStorage['agri-world'].ships
+  assert.equal(stored.length, 1)
+  assert.equal(stored[0].classId, 'scout')
+  assert.equal(stored[0].instanceName, 'Wanderer')
+})
+
+test('activateStoredShip swaps the active ship with one in storage, and sellStoredShip removes it for credits', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 50000
+  purchaseShip(gameState, 'agri-world', 'scout', 'Wanderer')
+
+  activateStoredShip(gameState, 'agri-world', 0)
+  assert.equal(gameState.player.ship.classId, 'scout', 'the stored ship should now be active')
+  const stored = gameState.stationStorage['agri-world'].ships
+  assert.equal(stored.length, 1)
+  assert.equal(stored[0].classId, STARTER_SHIP_CLASS_ID, 'the old active ship should now be the one in storage')
+
+  const creditsBeforeSale = gameState.player.credits
+  sellStoredShip(gameState, 'agri-world', 0)
+  assert.equal(gameState.stationStorage['agri-world'].ships.length, 0)
+  assert.ok(gameState.player.credits > creditsBeforeSale, 'selling a stored ship should pay out credits')
+})
+
+test('storeCargo/retrieveCargo round-trip cargo through per-station storage', () => {
+  const gameState = makeGameState()
+  gameState.player.ship.cargo = { grain: 5 }
+  storeCargo(gameState, 'agri-world')
+  assert.deepEqual(gameState.player.ship.cargo, {}, 'cargo should leave the ship once stored')
+  assert.equal(gameState.stationStorage['agri-world'].cargo.grain, 5)
+
+  retrieveCargo(gameState, 'agri-world')
+  assert.equal(gameState.player.ship.cargo.grain, 5)
+  assert.deepEqual(gameState.stationStorage['agri-world'].cargo, {}, 'storage should be emptied once retrieved')
+})
+
+test('renameActiveShip and renameStoredShip rename ships (and reject blank names)', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 50000
+  purchaseShip(gameState, 'agri-world', 'scout', 'Scout')
+
+  renameActiveShip(gameState, '  Nova Runner  ')
+  assert.equal(gameState.player.ship.instanceName, 'Nova Runner', 'should trim whitespace')
+  assert.throws(() => renameActiveShip(gameState, '   '), /cannot be empty/)
+
+  renameStoredShip(gameState, 'agri-world', 0, 'Backup Ship')
+  assert.equal(gameState.stationStorage['agri-world'].ships[0].instanceName, 'Backup Ship')
+  assert.throws(() => renameStoredShip(gameState, 'agri-world', 5, 'X'), /No such stored ship/)
+})
+
+test('useShipPart heals 10% of max hull/armor and consumes one part', () => {
+  const gameState = makeGameState()
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  gameState.player.ship.hull = 0
+  gameState.player.ship.armor = 0
+  gameState.player.ship.shipParts = 2
+
+  useShipPart(gameState)
+  assert.ok(Math.abs(gameState.player.ship.hull - shipClass.stats.hull * 0.1) < 1e-6)
+  assert.ok(Math.abs(gameState.player.ship.armor - shipClass.stats.armor * 0.1) < 1e-6)
+  assert.equal(gameState.player.ship.shipParts, 1)
+
+  gameState.player.ship.shipParts = 0
+  assert.throws(() => useShipPart(gameState), /No ship parts/)
 })
 
 test('repairCost is zero for a fully-healthy ship and positive for a damaged one', () => {

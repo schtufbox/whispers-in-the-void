@@ -22,10 +22,21 @@ function surfaceNoise(nx, ny, nz, seed) {
   return Math.sin(nx * 3.7 + seed[0]) * Math.cos(ny * 4.1 + seed[1]) * Math.sin(nz * 3.3 + seed[2])
 }
 
+// A fixed subdivision level looked fine before STAR_SIZE_SCALE grew this
+// much — the same handful of flat facets now span a much bigger sphere,
+// reading as crudely faceted rather than a roiling plasma ball (the same
+// issue and fix as render/planetMesh.js's detailForRadius).
+function detailForRadius(radius) {
+  if (radius > 3000) return 6
+  if (radius > 1200) return 5
+  if (radius > 400) return 4
+  return 3
+}
+
 // Jitters vertices radially by the noise field so the surface reads as
 // roiling plasma rather than a perfect sphere.
 function buildTurbulentSurface(radius, offsets, coreColor, hotColor) {
-  const geometry = new THREE.IcosahedronGeometry(radius, 3)
+  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
   const pos = geometry.attributes.position
   const v = new THREE.Vector3()
   const colors = []
@@ -83,10 +94,12 @@ const STAR_TYPE_PARAMS = {
   }
 }
 
-// "+150%" larger suns per user request — a single multiplier here (rather
-// than editing every STAR_TYPE_PARAMS range) since corona scales are already
-// relative to radius and grow with it automatically.
-const STAR_SIZE_SCALE = 2.5
+// Suns "400% bigger", then "another 200% bigger" (3x on top) per two rounds
+// of user request — a single multiplier here (rather than editing every
+// STAR_TYPE_PARAMS range) since corona scales are already relative to radius
+// and grow with it automatically. (Was 2.5, then 12.5 — each pass still read
+// as too small.)
+const STAR_SIZE_SCALE = 37.5
 
 // Builds one star's core + corona shells inside its own group (so a binary
 // pair can position/spin each component independently). Returns the group
@@ -184,10 +197,12 @@ function buildEnergyRing(radius, rng) {
 // a soft, pulsing halo. In a binary, the bigger star is stationary at the
 // origin and the smaller one orbits it (see updateStarMesh, called each
 // frame from main.js).
-export function buildStarMesh(system) {
+// forceType (optional) skips the hashed random pick — used by main.js's
+// main-menu flyby to always get a binary pair rather than leaving it to luck.
+export function buildStarMesh(system, forceType = null) {
   const hash = hashString(system.id)
   const rng = mulberry32(hash)
-  const type = STAR_TYPES[Math.floor(rng() * STAR_TYPES.length)]
+  const type = forceType ?? STAR_TYPES[Math.floor(rng() * STAR_TYPES.length)]
 
   const group = new THREE.Group()
   group.userData.stars = []

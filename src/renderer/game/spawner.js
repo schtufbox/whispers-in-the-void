@@ -61,7 +61,11 @@ const PIRATE_CHANCE = 0.25
 // so this stays decoupled from the galaxy/system shape.
 const ALIEN_MAX_CHANCE = 0.4
 
-export function spawnEncounterNear(rng, playerPosition, galaxy, coreFraction = 0) {
+// forceNeutral (used for the player's starting system before its peace is
+// ever broken — see main.js) skips the pirate/alien rolls entirely and
+// always spawns a trader, so ambient traffic still occurs there but never a
+// hostile encounter.
+export function spawnEncounterNear(rng, playerPosition, galaxy, coreFraction = 0, forceNeutral = false) {
   const dist = range(rng, MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE)
   const theta = rng() * Math.PI * 2
   const phi = Math.acos(2 * rng() - 1)
@@ -70,6 +74,7 @@ export function spawnEncounterNear(rng, playerPosition, galaxy, coreFraction = 0
     playerPosition[1] + dist * Math.cos(phi) * 0.3,
     playerPosition[2] + dist * Math.sin(phi) * Math.sin(theta)
   ]
+  if (forceNeutral) return spawnNpc(rng, { position, faction: 'trader' })
   const alienChance = coreFraction * ALIEN_MAX_CHANCE
   const roll = rng()
   if (roll < PIRATE_CHANCE) return spawnNpc(rng, { position, faction: 'pirate', coreFraction })

@@ -24,7 +24,7 @@ const NEBULA_HUES = [270, 205, 320, 190]
 // centers (rather than one uniform haze) so it reads as wispy cosmic dust
 // clouds. Not seeded off the galaxy PRNG — this is a fixed decorative
 // backdrop, same convention as starfield.js's plain Math.random().
-export function createNebula(clusterCount = 5, puffsPerCluster = 14) {
+export function createNebula(clusterCount = 9, puffsPerCluster = 20) {
   const texture = buildCloudTexture()
   const group = new THREE.Group()
 

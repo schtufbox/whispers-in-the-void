@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { getShipClass } from '../data/shipClasses.js'
 import { getSystem } from '../procgen/galaxy.js'
 import { mineAsteroidField } from './mining.js'
+import { spawnWreck } from './wrecks.js'
 
 const WEAPON_PRESETS = {
   laser: { speed: 600, damage: 6, ttl: 1.2, cooldownS: 0.25 },
@@ -142,6 +143,18 @@ export function updateProjectiles(gameState, dt, onHit) {
       const hitDistance = HIT_RADIUS + getShipCollisionRadius(targetShipClass)
       if (closestDistanceToSegment(targetPos, prevPos, newPos) < hitDistance) {
         applyDamage(target, proj.damage, gameState.simTime)
+        // Firing on a non-hostile ship (a trader) while home permanently
+        // breaks the starting system's peace — see main.js's ambient
+        // spawner, which otherwise only ever spawns neutral traffic there.
+        if (proj.ownerId === 'player' && target.faction === 'trader' && gameState.player.currentSystemId === gameState.player.startingSystemId) {
+          gameState.flags.startingSystemPeaceBroken = true
+        }
+        // Only a kill the player is directly responsible for (their own
+        // projectile) leaves a lootable wreck — an NPC-vs-NPC kill or a
+        // suicide ram don't count, per its own design.
+        if (proj.ownerId === 'player' && target.destroyed) {
+          gameState.wrecks.push(spawnWreck(newPos.toArray(), gameState.simTime, Math.random))
+        }
         onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, destroyed: !!target.destroyed })
         hit = true
         break

@@ -1,15 +1,21 @@
 import { pick, intRange } from '../procgen/prng.js'
+import { systemsWithinJumps } from '../procgen/galaxy.js'
 
 let missionCounter = 0
 
 const BOUNTY_TARGET_CLASSES = ['raider_mk1', 'interceptor', 'corvette', 'scout']
+// A mission planted in a different system than where it's picked up should
+// still be a reasonable trip, not an arbitrary trek across the galaxy.
+const MAX_MISSION_JUMP_DISTANCE = 4
 
 // Bounty targets always spawn in the giver's own system, so accepting one
 // never requires a hyperspace jump just to reach the fight. Exploration and
 // investigation missions may point at a different system, giving hyperspace
-// travel an actual reason to exist.
+// travel an actual reason to exist — but capped to a handful of jumps away.
 function pickTargetSystem(rng, galaxy, giverSystem) {
-  return rng() < 0.5 ? giverSystem : pick(rng, galaxy.systems)
+  if (rng() < 0.5) return giverSystem
+  const reachable = systemsWithinJumps(galaxy, giverSystem.id, MAX_MISSION_JUMP_DISTANCE)
+  return pick(rng, reachable)
 }
 
 export function generateBountyMission(rng, galaxy, giverSystemId, giverStationId) {
