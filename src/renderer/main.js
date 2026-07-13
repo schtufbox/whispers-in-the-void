@@ -1004,8 +1004,7 @@ function beginDocking(body) {
     fromQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
     exteriorPoint,
     // Face the body while approaching the hang, then bay-forward inside.
-    facingQuat: quatFacing(exteriorPoint, bodyPos),
-    bayFacingQuat: new THREE.Quaternion() // identity — bay local +Z into the bay
+    facingQuat: quatFacing(exteriorPoint, bodyPos)
   }
   gameState.player.ship.velocity = [0, 0, 0]
   audio.setThrustState(null)
@@ -1042,7 +1041,6 @@ function beginUndocking() {
     body,
     swapped: false,
     exteriorPoint,
-    fromBayQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
     awayQuat: quatFacing(exteriorPoint, backAwayPoint),
     backAwayPoint
   }
@@ -1075,7 +1073,7 @@ function updateDockEffect(dt) {
         dockEffect.swapped = true
         swapToInterior()
         gameState.player.ship.position = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET).toArray()
-        gameState.player.ship.quaternion = dockEffect.bayFacingQuat.toArray()
+        gameState.player.ship.quaternion = [0, 0, 0, 1] // bay local +Z into the bay
       }
       const lt = easeInOutCubic(Math.min(1, (dockEffect.elapsed - half) / half))
       const entry = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET)

@@ -502,10 +502,7 @@ let miningBeamOsc = null
 let miningBeamGain = null
 let miningBeamLFO = null
 
-// A steady, gently warbling triangle-wave hum — deliberately unlike any of
-// the WEAPON_SOUND_PROFILES' bright one-shot zaps, since this needs to
-// sustain continuously for as long as the mining beam is actively firing
-// rather than play as a one-shot.
+// Continuous warbling hum for the mining beam — not a one-shot weapon sample.
 export function setMiningBeamActive(active) {
   const audio = getContext()
   if (active && !miningBeamOsc) {
