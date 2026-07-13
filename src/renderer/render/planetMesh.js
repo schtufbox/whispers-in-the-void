@@ -16,14 +16,45 @@ function surfaceNoise(nx, ny, nz, offsets) {
   return Math.sin(nx * 3.7 + offsets[0]) * Math.cos(ny * 4.1 + offsets[1]) * Math.sin(nz * 3.3 + offsets[2])
 }
 
-function jitterGeometry(geometry, radius, rng, amount) {
+// Multi-octave noise for displacement so bumps are continuous ridges rather
+// than each vertex flying off on its own (the old rng()-per-vertex jitter
+// is what made large bodies look like shattered glass).
+function surfaceNoiseFbm(nx, ny, nz, offsets) {
+  let n = 0
+  let amp = 1
+  let freq = 1
+  let norm = 0
+  for (let o = 0; o < 3; o++) {
+    n += amp * surfaceNoise(nx * freq, ny * freq, nz * freq, [
+      offsets[0] + o * 1.7,
+      offsets[1] + o * 2.3,
+      offsets[2] + o * 1.1
+    ])
+    norm += amp
+    amp *= 0.5
+    freq *= 2.1
+  }
+  return n / norm
+}
+
+// Sphere segment counts scale with radius so silhouette facets stay small
+// after PLANET_SIZE_SCALE. Caps keep GPU cost sane (few bodies live at once).
+function sphereGeometryForRadius(radius) {
+  const lat = Math.max(48, Math.min(96, Math.round(radius / 5)))
+  const lon = lat * 2
+  return new THREE.SphereGeometry(radius, lon, lat)
+}
+
+// Radial displacement from continuous noise (amount is peak ± fraction of
+// radius). Always recompute normals so lighting follows the new surface.
+function displaceWithNoise(geometry, radius, offsets, amount) {
   if (amount <= 0) return
   const pos = geometry.attributes.position
   const v = new THREE.Vector3()
   for (let i = 0; i < pos.count; i++) {
     v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize()
-    const bump = 1 + (rng() - 0.5) * amount
-    v.multiplyScalar(radius * bump)
+    const n = surfaceNoiseFbm(v.x, v.y, v.z, offsets)
+    v.multiplyScalar(radius * (1 + n * amount))
     pos.setXYZ(i, v.x, v.y, v.z)
   }
   pos.needsUpdate = true
@@ -49,31 +80,20 @@ function seededOffsets(rng) {
   return [rng() * 10, rng() * 10, rng() * 10]
 }
 
-// Icosahedron subdivision scales with radius so facet size stays roughly
-// constant after PLANET_SIZE_SCALE/MOON_SIZE_SCALE growth (see galaxy.js).
-// Cap at 6 — enough for the largest planets (~900 radius) without blowing
-// vertex counts (only a handful of bodies are live per system).
-function detailForRadius(radius) {
-  if (radius > 550) return 6
-  if (radius > 250) return 5
-  if (radius > 100) return 4
-  if (radius > 40) return 3
-  return 2
-}
-
-// Cratered rock — bumpy surface, muted browns/greys, darker crater patches.
+// Cratered rock — continuous noise hills, muted browns/greys.
 function buildRocky(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
-  jitterGeometry(geometry, radius, rng, 0.14)
+  const geometry = sphereGeometryForRadius(radius)
+  const offsets = seededOffsets(rng)
+  displaceWithNoise(geometry, radius, offsets, 0.045)
   const base = new THREE.Color().setHSL(range(rng, 10, 45) / 360, 0.3, range(rng, 0.35, 0.5))
   const accent = base.clone().multiplyScalar(0.55)
-  paintVertexColors(geometry, base, accent, seededOffsets(rng), (n) => (n > 0.2 ? 0.7 : 0))
+  paintVertexColors(geometry, base, accent, offsets, (n) => (n > 0.2 ? 0.7 : 0))
   return geometry
 }
 
 // Gas giant — smooth surface, horizontal cloud bands by latitude.
 function buildGasGiant(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
+  const geometry = sphereGeometryForRadius(radius)
   const hue1 = range(rng, 0, 360) / 360
   const hue2 = (hue1 + range(rng, 0.06, 0.16)) % 1
   const base = new THREE.Color().setHSL(hue1, 0.5, 0.55)
@@ -97,31 +117,33 @@ function buildGasGiant(radius, rng) {
 
 // Ice world — mostly smooth, pale base with brighter cracks and whiter poles.
 function buildIce(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
-  jitterGeometry(geometry, radius, rng, 0.04)
+  const geometry = sphereGeometryForRadius(radius)
+  const offsets = seededOffsets(rng)
+  displaceWithNoise(geometry, radius, offsets, 0.02)
   const hue = range(rng, 190, 215) / 360
   const base = new THREE.Color().setHSL(hue, 0.3, 0.72)
   const accent = new THREE.Color().setHSL(hue, 0.1, 0.94)
-  paintVertexColors(geometry, base, accent, seededOffsets(rng), (n, v) => Math.max(n, 0) * 0.7 + Math.abs(v.y) * 0.4)
+  paintVertexColors(geometry, base, accent, offsets, (n, v) => Math.max(n, 0) * 0.7 + Math.abs(v.y) * 0.4)
   return geometry
 }
 
 // Lush world — ocean/continent patches.
 function buildLush(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
+  const geometry = sphereGeometryForRadius(radius)
   const ocean = new THREE.Color().setHSL(range(rng, 200, 225) / 360, 0.55, 0.4)
   const land = new THREE.Color().setHSL(range(rng, 85, 140) / 360, 0.45, 0.38)
   paintVertexColors(geometry, ocean, land, seededOffsets(rng), (n) => (n > 0.05 ? 1 : 0))
   return geometry
 }
 
-// Volcanic world — charred bumpy crust with glowing lava cracks.
+// Volcanic world — charred crust with glowing lava cracks (gentle relief).
 function buildVolcanic(radius, rng) {
-  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
-  jitterGeometry(geometry, radius, rng, 0.16)
+  const geometry = sphereGeometryForRadius(radius)
+  const offsets = seededOffsets(rng)
+  displaceWithNoise(geometry, radius, offsets, 0.05)
   const base = new THREE.Color().setHSL(range(rng, 0, 20) / 360, 0.3, 0.12)
   const lava = new THREE.Color().setHSL(range(rng, 10, 30) / 360, 0.9, 0.55)
-  paintVertexColors(geometry, base, lava, seededOffsets(rng), (n) => (n > 0.35 ? 1 : 0))
+  paintVertexColors(geometry, base, lava, offsets, (n) => (n > 0.35 ? 1 : 0))
   return geometry
 }
 
@@ -171,20 +193,19 @@ function buildRing(radius, rng) {
 // Moons are always small barren rock — cratered, muted, no atmosphere-driven
 // variety (bands/oceans/lava wouldn't make sense at that scale).
 function buildMoon(radius, rng) {
-  // Same detail curve as planets (no -1) so large moons don't re-faceted
-  // after the size scale-up; barren look still comes from rock texture + jitter.
-  const geometry = new THREE.IcosahedronGeometry(radius, detailForRadius(radius))
-  jitterGeometry(geometry, radius, rng, 0.18)
+  const geometry = sphereGeometryForRadius(radius)
+  const offsets = seededOffsets(rng)
+  displaceWithNoise(geometry, radius, offsets, 0.055)
   const base = new THREE.Color().setHSL(range(rng, 20, 60) / 360, 0.12, 0.42)
   const accent = base.clone().multiplyScalar(0.6)
-  paintVertexColors(geometry, base, accent, seededOffsets(rng), (n) => (n > 0.15 ? 0.6 : 0))
+  paintVertexColors(geometry, base, accent, offsets, (n) => (n > 0.15 ? 0.6 : 0))
   return geometry
 }
 
-// A low-poly faceted sphere with a seeded archetype (rocky/gas/ice/lush/
-// volcanic for planets, always cratered rock for moons) so bodies read as
-// distinct worlds rather than a single reskinned sphere. Radius is the
-// body's real (generation-time, collision-relevant) size.
+// Seeded archetype (rocky/gas/ice/lush/volcanic for planets, always cratered
+// rock for moons). Radius is the body's real (generation-time, collision)
+// size. Geometry is a high-segment SphereGeometry so silhouettes stay round
+// at current PLANET_SIZE_SCALE; relief uses continuous noise, not per-vertex RNG.
 export function buildPlanetMesh(body) {
   const rng = mulberry32(hashString(body.id))
   const radius = body.radius
@@ -195,20 +216,13 @@ export function buildPlanetMesh(body) {
   const geometry = body.kind === 'moon' ? buildMoon(radius, rng) : PLANET_ARCHETYPES[archetypeName](radius, rng)
 
   // Real CC0 photo textures (see render/textures.js) layered under the
-  // existing per-body vertex-color tint/craters/bands — MeshStandardMaterial
-  // multiplies map * vertexColors * material.color, so the same handful of
-  // shared textures still reads as ~1500 visually distinct worlds. Gas
-  // giants have no texture set (cloud bands don't suit a tiled photo), so
-  // they fall back to vertex-color-only shading, same as before.
-  // Smooth shading (not flat) so high-detail icosahedra read as continuous
-  // spheres — flatShading + EdgesGeometry made large planets look shattered
-  // into crystal facets even after detailForRadius stepped up. Surface
-  // interest comes from vertex colors + PBR maps, not per-face normals.
+  // existing per-body vertex-color tint. Smooth shading only — flatShading
+  // and EdgesGeometry were what made bodies read as shattered polyhedra.
   const textures = getSurfaceTextures(archetypeName)
   const material = new THREE.MeshStandardMaterial({
     vertexColors: true,
     flatShading: false,
-    roughness: 1,
+    roughness: 0.9,
     metalness: 0,
     ...textures
   })

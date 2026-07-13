@@ -697,11 +697,12 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   `
   appEl.appendChild(targetIndicatorEl)
 
+  // Below the HUD system-name banner (top center) so the two never overlap.
   cruiseIndicatorEl = document.createElement('div')
   cruiseIndicatorEl.id = 'cruise-indicator'
   cruiseIndicatorEl.textContent = 'SUPERCRUISE ENGAGED'
   cruiseIndicatorEl.style.cssText =
-    'position:fixed;top:16px;left:50%;transform:translateX(-50%);font-family:monospace;letter-spacing:2px;color:#7fe0a0;background:rgba(10,14,24,0.7);padding:6px 16px;display:none;'
+    'position:fixed;top:62px;left:50%;transform:translateX(-50%);font-family:monospace;letter-spacing:2px;color:#7fe0a0;background:rgba(10,14,24,0.7);padding:6px 16px;display:none;'
   appEl.appendChild(cruiseIndicatorEl)
 
   // Top-left (not top-center like cruiseIndicatorEl) since mining mode is
@@ -1423,6 +1424,7 @@ function getActiveWaypoint() {
       return {
         position: body.position,
         name: body.name,
+        bodyId: body.id,
         isMission: missionBodies.has(body.id),
         arrivalRange: bodyRadius + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
       }
@@ -1432,6 +1434,7 @@ function getActiveWaypoint() {
     return {
       position: gameState.player.waypointPosition,
       name: 'Mission Target',
+      bodyId: null,
       isMission: true,
       arrivalRange: 80
     }
@@ -1533,8 +1536,23 @@ function animate() {
     const wp = getActiveWaypoint()
     if (!wp || gameState.inCombat) {
       cruising = false
-    } else if (updateSupercruise(gameState.player.ship, playerShipClass, wp.position, dt, wp.arrivalRange)) {
-      cruising = false
+    } else {
+      const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+      const shipRadius = getShipCollisionRadius(playerShipClass)
+      // Steer around other bodies on the way; destination body is not avoided
+      // so arrival still works (see supercruise.aimAroundObstacles).
+      if (updateSupercruise(
+        gameState.player.ship,
+        playerShipClass,
+        wp.position,
+        dt,
+        wp.arrivalRange,
+        currentSystem.bodies,
+        shipRadius,
+        wp.bodyId
+      )) {
+        cruising = false
+      }
     }
     audio.setThrustState(null)
   } else {
@@ -1739,7 +1757,8 @@ function animate() {
   const shipForward = new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion().fromArray(gameState.player.ship.quaternion))
   const speed = shipVelocity.length()
   const forwardSpeed = shipVelocity.dot(shipForward)
-  hud.update(gameState.player.ship, playerShipClass, speed, forwardSpeed)
+  const hudSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  hud.update(gameState.player.ship, playerShipClass, speed, forwardSpeed, hudSystem?.name ?? null)
   hud.updateRadar(computeRadarContacts(), RADAR_RANGE, gameState.simTime)
 
   const nearbyBody = findNearbyDockableBody()

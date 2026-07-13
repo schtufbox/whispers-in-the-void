@@ -27,10 +27,10 @@ function surfaceNoise(nx, ny, nz, seed) {
 // reading as crudely faceted rather than a roiling plasma ball (the same
 // issue and fix as render/planetMesh.js's detailForRadius).
 function detailForRadius(radius) {
-  if (radius > 3000) return 6
-  if (radius > 1200) return 5
-  if (radius > 400) return 4
-  return 3
+  if (radius > 2000) return 6
+  if (radius > 800) return 5
+  if (radius > 300) return 4
+  return 4
 }
 
 // Jitters vertices radially by the noise field so the surface reads as
@@ -173,18 +173,17 @@ function buildSingleStar(type, rng) {
   halo.scale.setScalar(radius * 5)
   group.add(halo)
 
-  // Detail 3 (was 1): at detail 1 the shells' handful of huge flat facets
-  // read as a crude octagonal frame around the core once the halo sprite
-  // made the star's surroundings brighter — same class of issue as
-  // detailForRadius, but the coronas are translucent so a fixed 3 is enough.
+  // Corona shells need enough subdivision that the rim doesn't read as an
+  // octagon at STAR_SIZE_SCALE (detail 3 still showed clear facets on screen).
+  const coronaDetail = Math.max(4, detailForRadius(radius))
   const corona1 = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(radius * params.corona1Scale, 3),
+    new THREE.IcosahedronGeometry(radius * params.corona1Scale, coronaDetail),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: params.corona1Opacity, blending: THREE.AdditiveBlending, depthWrite: false })
   )
   group.add(corona1)
 
   const corona2 = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(radius * params.corona2Scale, 3),
+    new THREE.IcosahedronGeometry(radius * params.corona2Scale, coronaDetail),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: params.corona2Opacity, blending: THREE.AdditiveBlending, depthWrite: false })
   )
   group.add(corona2)

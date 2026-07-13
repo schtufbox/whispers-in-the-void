@@ -51,21 +51,24 @@ function ensureSfx() {
       console.warn(`sfx load failed: ${name}`, err)
     }
   })).then(() => {
-    // If thrust/cruise started on synth before decode finished, swap to samples.
+    // If thrust started on synth before decode finished, swap to samples.
     if (thrustMode && !thrustNodes) {
       const mode = thrustMode
       thrustMode = null
       setThrustState(mode)
     }
-    if (cruiseOscs && !cruiseNodes) {
+    // Cruise: stop any synth placeholder and start the sample loop if still wanted.
+    if (cruiseWanted) {
+      if (cruiseOscs) stopCruiseAudio()
+      if (!cruiseNodes) startCruiseLoop()
+    } else {
       stopCruiseAudio()
-      setSupercruiseActive(true)
     }
   })
   return sfxLoadPromise
 }
 
-// One-shot or looping sample. Returns { source, gain } or null if not loaded.
+// One-shot or looping sample. Returns { source, gain, volume } or null if not loaded.
 function playSample(name, { volume = 0.5, rate = 1, loop = false, fadeIn = 0, delay = 0 } = {}) {
   const buf = sfxBuffers.get(name)
   if (!buf) return null
@@ -84,20 +87,32 @@ function playSample(name, { volume = 0.5, rate = 1, loop = false, fadeIn = 0, de
   }
   source.connect(gain).connect(audio.destination)
   source.start(now)
-  return { source, gain }
+  // Store target volume — AudioParam.value is unreliable after ramps, and
+  // stopSampleNodes needs a real peak to fade from (not the 0.0001 floor).
+  return { source, gain, volume }
 }
 
-function stopSampleNodes(nodes, fadeOut = 0.15) {
+function stopSampleNodes(nodes, fadeOut = 0.12) {
   if (!nodes) return
   const audio = getContext()
   const now = audio.currentTime
   try {
+    const from = Math.max(nodes.volume ?? nodes.gain.gain.value ?? 0.001, 0.0001)
     nodes.gain.gain.cancelScheduledValues(now)
-    nodes.gain.gain.setValueAtTime(Math.max(nodes.gain.gain.value, 0.0001), now)
+    nodes.gain.gain.setValueAtTime(from, now)
     nodes.gain.gain.linearRampToValueAtTime(0.0001, now + fadeOut)
-    nodes.source.stop(now + fadeOut + 0.05)
+    nodes.source.stop(now + fadeOut + 0.02)
+    // Hard-disconnect so a failed stop can't leave a loop leaking forever.
+    const src = nodes.source
+    const g = nodes.gain
+    setTimeout(() => {
+      try { src.disconnect() } catch { /* already */ }
+      try { g.disconnect() } catch { /* already */ }
+    }, (fadeOut + 0.05) * 1000)
   } catch {
-    // already stopped
+    try { nodes.source.stop() } catch { /* already */ }
+    try { nodes.source.disconnect() } catch { /* already */ }
+    try { nodes.gain.disconnect() } catch { /* already */ }
   }
 }
 
@@ -318,12 +333,13 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
   window.speechSynthesis.addEventListener('voiceschanged', refreshFemaleVoice)
 }
 
-// Quiet noise through a decaying multi-tap delay — sits under the TTS so the
-// callout reads as radio-in-a-large-space rather than a dry desktop voice.
-function playAnnounceReverbBloom(durationS = 2.2) {
+// Quiet noise through short feed-forward taps — sits under TTS for a bit of
+// space without delay feedback (feedback loops could self-oscillate into a
+// sustained synth-like buzz after callouts like "Supercruise disengaged").
+function playAnnounceReverbBloom(durationS = 0.9) {
   const audio = getContext()
   const now = audio.currentTime
-  const length = Math.ceil(audio.sampleRate * 0.08)
+  const length = Math.ceil(audio.sampleRate * 0.05)
   const buffer = audio.createBuffer(1, length, audio.sampleRate)
   const data = buffer.getChannelData(0)
   for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length)
@@ -338,24 +354,23 @@ function playAnnounceReverbBloom(durationS = 2.2) {
 
   const wet = audio.createGain()
   wet.gain.setValueAtTime(0.0001, now)
-  wet.gain.exponentialRampToValueAtTime(0.045, now + 0.05)
+  wet.gain.exponentialRampToValueAtTime(0.03, now + 0.03)
   wet.gain.exponentialRampToValueAtTime(0.0001, now + durationS)
 
-  // Multi-tap delay line (poor-man's reverb) — no IR file needed.
   src.connect(band)
-  for (const [delayS, feedback] of [[0.09, 0.45], [0.17, 0.35], [0.28, 0.25], [0.41, 0.18]]) {
+  // Feed-forward taps only — no delay→feedback→delay loops.
+  for (const delayS of [0.05, 0.1, 0.16]) {
     const delay = audio.createDelay(1)
     delay.delayTime.value = delayS
-    const fb = audio.createGain()
-    fb.gain.value = feedback
+    const tap = audio.createGain()
+    tap.gain.value = 0.35
     band.connect(delay)
-    delay.connect(fb)
-    fb.connect(delay)
-    delay.connect(wet)
+    delay.connect(tap)
+    tap.connect(wet)
   }
   wet.connect(audio.destination)
   src.start(now)
-  src.stop(now + 0.1)
+  src.stop(now + 0.08)
 }
 
 export function announce(text) {
@@ -363,7 +378,7 @@ export function announce(text) {
   window.speechSynthesis.cancel() // don't queue up stale callouts behind a new one
   if (!femaleVoice) refreshFemaleVoice()
 
-  playAnnounceReverbBloom(2.4)
+  playAnnounceReverbBloom(0.9)
 
   const utterance = new SpeechSynthesisUtterance(text)
   if (femaleVoice) utterance.voice = femaleVoice
@@ -433,68 +448,98 @@ export function setThrustState(mode) {
 }
 
 let cruiseNodes = null
-// Synth fallback for cruise
+// Synth fallback for cruise (only if sample missing after load).
 let cruiseOscs = null
 let cruiseGain = null
+// Intent flag — samples may still be loading when cruise engages; we start
+// the loop once ready, and never leave a synth hum running after disengage.
+let cruiseWanted = false
 
 function stopCruiseAudio() {
   if (cruiseNodes) {
-    stopSampleNodes(cruiseNodes, 0.35)
+    stopSampleNodes(cruiseNodes, 0.2)
     cruiseNodes = null
   }
   if (cruiseOscs) {
     const audio = getContext()
-    cruiseGain.gain.linearRampToValueAtTime(0.0001, audio.currentTime + 0.3)
-    for (const osc of cruiseOscs) {
-      try { osc.stop(audio.currentTime + 0.35) } catch { /* already stopped */ }
-    }
+    const now = audio.currentTime
+    try {
+      cruiseGain.gain.cancelScheduledValues(now)
+      cruiseGain.gain.setValueAtTime(Math.max(cruiseGain.gain.value, 0.0001), now)
+      cruiseGain.gain.linearRampToValueAtTime(0.0001, now + 0.08)
+      for (const osc of cruiseOscs) {
+        try { osc.stop(now + 0.1) } catch { /* already stopped */ }
+        try { osc.disconnect() } catch { /* already */ }
+      }
+      try { cruiseGain.disconnect() } catch { /* already */ }
+    } catch { /* ignore */ }
     cruiseOscs = null
     cruiseGain = null
   }
 }
 
+function startCruiseLoop() {
+  if (!cruiseWanted || cruiseNodes || cruiseOscs) return
+
+  // One-shot spool-up, then a looping big-engine bed.
+  playSample('engine_engage.ogg', { volume: 0.45, rate: 1.05 })
+
+  const nodes = playSample('supercruise.ogg', {
+    volume: 0.38,
+    rate: 1.08,
+    loop: true,
+    fadeIn: 0.35
+  })
+  if (nodes) {
+    cruiseNodes = nodes
+    return
+  }
+
+  // Sample missing after load — short-lived synth only as last resort.
+  const audio = getContext()
+  cruiseGain = audio.createGain()
+  cruiseGain.gain.setValueAtTime(0, audio.currentTime)
+  cruiseGain.gain.linearRampToValueAtTime(0.04, audio.currentTime + 0.4)
+  cruiseOscs = [55, 58].map((freq) => {
+    const osc = audio.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.value = freq
+    const f = audio.createBiquadFilter()
+    f.type = 'lowpass'
+    f.frequency.value = 200
+    osc.connect(f).connect(cruiseGain)
+    osc.start()
+    return osc
+  })
+  cruiseGain.connect(audio.destination)
+}
+
 export function setSupercruiseActive(active) {
   ensureSfx()
-  const audio = getContext()
-  if (active && !cruiseNodes && !cruiseOscs) {
-    // One-shot spool-up, then a looping big-engine bed.
-    if (!playSample('engine_engage.ogg', { volume: 0.45, rate: 1.05 })) {
-      tone({ type: 'sine', freq: 45, freqEnd: 130, duration: 0.6, attack: 0.05, peak: 0.5 })
-      noiseBurst({ duration: 0.4, filterFreq: 250, peak: 0.3, drive: 2 })
-    }
-
-    const nodes = playSample('supercruise.ogg', {
-      volume: 0.38,
-      rate: 1.08,
-      loop: true,
-      fadeIn: 0.35
-    })
-    if (nodes) {
-      cruiseNodes = nodes
+  if (active) {
+    // Called every frame while cruising — only arm once, then keep the loop
+    // alive (or start it once samples finish decoding).
+    if (cruiseWanted) {
+      if (!cruiseNodes && !cruiseOscs) startCruiseLoop()
       return
     }
-
-    cruiseGain = audio.createGain()
-    cruiseGain.gain.setValueAtTime(0, audio.currentTime)
-    cruiseGain.gain.linearRampToValueAtTime(0.06, audio.currentTime + 0.4)
-    cruiseOscs = [55, 58, 110].map((freq) => {
-      const osc = audio.createOscillator()
-      osc.type = freq < 80 ? 'sawtooth' : 'sine'
-      osc.frequency.value = freq
-      const f = audio.createBiquadFilter()
-      f.type = 'lowpass'
-      f.frequency.value = 400
-      osc.connect(f).connect(cruiseGain)
-      osc.start()
-      return osc
-    })
-    cruiseGain.connect(audio.destination)
-  } else if (!active && (cruiseNodes || cruiseOscs)) {
-    if (!playSample('engine_engage.ogg', { volume: 0.35, rate: 0.75 })) {
-      tone({ type: 'sine', freq: 130, freqEnd: 35, duration: 0.6, attack: 0.02, peak: 0.45 })
-      noiseBurst({ duration: 0.35, filterFreq: 200, peak: 0.25, drive: 1.5 })
+    cruiseWanted = true
+    // Wait for sample decode so we don't start a synth hum that can leak
+    // if disengage races the load callback.
+    if (sfxBuffers.has('supercruise.ogg')) {
+      startCruiseLoop()
+    } else {
+      sfxLoadPromise?.then(() => {
+        if (cruiseWanted) startCruiseLoop()
+      })
     }
+  } else {
+    const wasOn = cruiseWanted || cruiseNodes || cruiseOscs
+    cruiseWanted = false
     stopCruiseAudio()
+    if (wasOn) {
+      playSample('engine_engage.ogg', { volume: 0.3, rate: 0.75 })
+    }
   }
 }
 

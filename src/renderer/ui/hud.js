@@ -78,6 +78,27 @@ const STYLE = `
 }
 #hud .hint .label { font-size: 11px; }
 
+/* Current system — top center, clear of status (left) and radar (right). */
+#hud .system-label {
+  position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+  pointer-events: none; z-index: 6;
+  text-align: center; padding: 6px 18px 7px;
+  background: linear-gradient(135deg, rgba(12,20,36,0.88), rgba(7,12,22,0.75));
+  border: 1px solid rgba(111,216,242,0.4);
+  box-shadow: 0 0 14px rgba(79,195,217,0.28), inset 0 0 16px rgba(79,195,217,0.05);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 8px 100%, 0 50%);
+}
+#hud .system-label .sys-tag {
+  display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
+  color: #7fe6ff; opacity: 0.7; text-shadow: 0 0 6px rgba(79,195,217,0.6);
+  margin-bottom: 2px;
+}
+#hud .system-label .sys-name {
+  display: block; font-size: 14px; letter-spacing: 1.5px; color: #eaffff;
+  text-shadow: 0 0 8px rgba(127,230,255,0.55);
+  white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
+}
+
 /* Velocity gets its own bottom-center readout, separate from the shield/
    armor/hull status panel now up in the top-left corner. */
 #hud .velocity-panel {
@@ -133,6 +154,10 @@ export function createHud(container) {
       <div class="corner tl"></div><div class="corner tr"></div>
       <div class="corner bl"></div><div class="corner br"></div>
     </div>
+    <div class="system-label">
+      <span class="sys-tag">System</span>
+      <span class="sys-name">—</span>
+    </div>
     <div class="status-panel">
       <div class="panel-title">SHIP STATUS</div>
       <div class="row shield">
@@ -182,6 +207,8 @@ export function createHud(container) {
   const hullValue = hud.querySelector('.hull .value')
   const velocityFill = hud.querySelector('.velocity .fill')
   const speedEl = hud.querySelector('.speed')
+  const systemNameEl = hud.querySelector('.system-label .sys-name')
+  let lastSystemName = null
 
   function pct(value, max) {
     return Math.max(0, Math.min(100, (value / max) * 100))
@@ -190,7 +217,7 @@ export function createHud(container) {
   return {
     // forwardSpeed is signed (negative while reversing), unlike speed which
     // is the overall (unsigned) velocity magnitude shown in the text readout.
-    update(shipState, shipClass, speed, forwardSpeed) {
+    update(shipState, shipClass, speed, forwardSpeed, systemName = null) {
       const shieldPct = pct(shipState.shields, shipClass.stats.shields)
       const armorPct = pct(shipState.armor, shipClass.stats.armor)
       const hullPct = pct(shipState.hull, shipClass.stats.hull)
@@ -208,6 +235,11 @@ export function createHud(container) {
       velocityFill.style.width = `${Math.abs(frac) * 50}%`
 
       speedEl.textContent = `${speed.toFixed(0)} m/s`
+
+      if (systemName != null && systemName !== lastSystemName) {
+        lastSystemName = systemName
+        systemNameEl.textContent = systemName || '—'
+      }
     },
     // contacts: [{ x, z, kind }], already transformed into ship-local space
     // (x = right, z = forward) and pre-filtered to radar range by the caller.
