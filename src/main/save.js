@@ -20,7 +20,12 @@ export function saveGame(data) {
 export function loadGame() {
   const path = savePath()
   if (!existsSync(path)) return null
-  return JSON.parse(readFileSync(path, 'utf-8'))
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'))
+  } catch {
+    // Corrupt / hand-edited save — treat as missing rather than crash the main process.
+    return null
+  }
 }
 
 export function deleteSave() {

@@ -1,6 +1,20 @@
 const STYLE = `
 #hud { font-family: monospace; color: #cfe3ff; user-select: none; }
 
+/* Cockpit chrome: four corner braces plus a faint full-screen scanline wash,
+   so gameplay reads as looking through a ship canopy HUD rather than a bare
+   viewport. pointer-events: none throughout — pure decoration. */
+#hud .cockpit-frame { position: fixed; inset: 10px; pointer-events: none; z-index: 5; }
+#hud .cockpit-frame .corner { position: absolute; width: 34px; height: 34px; border: 2px solid rgba(111,216,242,0.5); filter: drop-shadow(0 0 6px rgba(79,195,217,0.5)); }
+#hud .cockpit-frame .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
+#hud .cockpit-frame .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
+#hud .cockpit-frame .corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; }
+#hud .cockpit-frame .corner.br { bottom: 0; right: 0; border-left: none; border-top: none; }
+#hud .scanlines {
+  position: fixed; inset: 0; pointer-events: none; z-index: 4; opacity: 0.35;
+  background: repeating-linear-gradient(0deg, rgba(79,195,217,0.025) 0px, rgba(79,195,217,0.025) 1px, transparent 1px, transparent 4px);
+}
+
 #hud .status-panel {
   position: fixed; top: 16px; left: 16px;
   width: 240px;
@@ -28,6 +42,13 @@ const STYLE = `
   clip-path: polygon(0 0, 100% 0, 100% 100%, 6px 100%, 0 calc(100% - 6px));
 }
 #hud .bar .fill { position: relative; height: 100%; transition: width 0.15s linear; }
+/* Segment tick lines over every bar — the classic sci-fi cell-battery read
+   instead of one smooth fill. Sits above the fill, so cells appear/disappear
+   as the fill crosses each tick. */
+#hud .bar::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(90deg, transparent 0px, transparent 9px, rgba(7,12,22,0.85) 9px, rgba(7,12,22,0.85) 11px);
+}
 #hud .bar .fill::after {
   content: ''; position: absolute; inset: 0;
   background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.35) 45%, transparent 70%);
@@ -106,6 +127,11 @@ export function createHud(container) {
   const hud = document.createElement('div')
   hud.id = 'hud'
   hud.innerHTML = `
+    <div class="scanlines"></div>
+    <div class="cockpit-frame">
+      <div class="corner tl"></div><div class="corner tr"></div>
+      <div class="corner bl"></div><div class="corner br"></div>
+    </div>
     <div class="status-panel">
       <div class="panel-title">SHIP STATUS</div>
       <div class="row shield">
@@ -194,6 +220,18 @@ export function createHud(container) {
       for (const frac of [0.5, 0.95]) {
         radarCtx.beginPath()
         radarCtx.arc(radarCenter, radarCenter, radarCenter * frac, 0, Math.PI * 2)
+        radarCtx.stroke()
+      }
+
+      // Bearing tick marks around the rim, every 15deg (longer every 45) —
+      // reads as a proper sensor dial rather than a bare circle.
+      radarCtx.strokeStyle = 'rgba(127,230,255,0.45)'
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2
+        const len = i % 3 === 0 ? 6 : 3
+        radarCtx.beginPath()
+        radarCtx.moveTo(radarCenter + Math.cos(a) * (radarCenter - 1), radarCenter + Math.sin(a) * (radarCenter - 1))
+        radarCtx.lineTo(radarCenter + Math.cos(a) * (radarCenter - 1 - len), radarCenter + Math.sin(a) * (radarCenter - 1 - len))
         radarCtx.stroke()
       }
       radarCtx.beginPath()

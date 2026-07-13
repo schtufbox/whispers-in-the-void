@@ -45,11 +45,71 @@ function createDotTexture() {
   ])
 }
 
+// The anamorphic streak — the wide horizontal blue-white line a bright light
+// smears across real (especially cinema) lenses. A thin vertical gradient
+// crossed with a horizontal falloff, drawn once.
+function createStreakTexture() {
+  const w = 256
+  const h = 64
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  const horizontal = ctx.createLinearGradient(0, 0, w, 0)
+  horizontal.addColorStop(0, 'rgba(255,255,255,0)')
+  horizontal.addColorStop(0.5, 'rgba(255,255,255,1)')
+  horizontal.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = horizontal
+  ctx.fillRect(0, 0, w, h)
+  // Multiply in a vertical falloff so the streak is a thin bright line, not a bar.
+  const vertical = ctx.createLinearGradient(0, 0, 0, h)
+  vertical.addColorStop(0, 'rgba(0,0,0,1)')
+  vertical.addColorStop(0.5, 'rgba(0,0,0,0)')
+  vertical.addColorStop(1, 'rgba(0,0,0,1)')
+  ctx.globalCompositeOperation = 'multiply'
+  ctx.fillStyle = vertical
+  ctx.fillRect(0, 0, w, h)
+  return new THREE.CanvasTexture(canvas)
+}
+
+// A soft-edged hexagon — the shape of a real lens's aperture blades, which
+// is what internal-reflection ghosts actually look like (round ghosts only
+// come from lenses wide open).
+function createHexTexture() {
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const r = size * 0.42
+  ctx.beginPath()
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6
+    const x = size / 2 + Math.cos(a) * r
+    const y = size / 2 + Math.sin(a) * r
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+  }
+  ctx.closePath()
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, r)
+  g.addColorStop(0, 'rgba(255,255,255,0.35)')
+  g.addColorStop(0.75, 'rgba(255,255,255,0.5)')
+  g.addColorStop(0.98, 'rgba(255,255,255,0.9)')
+  g.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = g
+  ctx.fill()
+  return new THREE.CanvasTexture(canvas)
+}
+
 // Built once and shared across every flare instance (menu star, every
 // in-system sun, both members of a binary) rather than re-baked per star.
 let textures = null
 function getTextures() {
-  textures ??= { glow: createGlowTexture(), ring: createRingTexture(), dot: createDotTexture() }
+  textures ??= {
+    glow: createGlowTexture(),
+    ring: createRingTexture(),
+    dot: createDotTexture(),
+    streak: createStreakTexture(),
+    hex: createHexTexture()
+  }
   return textures
 }
 
@@ -61,16 +121,26 @@ function getTextures() {
 // Attach as a child of the star's own THREE.Group (see starMesh.js) rather
 // than the scene root, so it tracks that star's position for free —
 // including a binary's orbiting component, which moves every frame.
+//
+// Element layout mimics a real lens: source glow + anamorphic streak at the
+// light itself, then a chain of aperture-blade-shaped hexagonal ghosts
+// marching along the light-to-screen-center axis with the chromatic tints
+// (teal/green/purple/orange fringing) internal reflections pick up from
+// coatings, growing bigger and fainter with distance, plus one big faint
+// halo ring past center.
 export function buildLensFlare(color) {
-  const { glow, ring, dot } = getTextures()
+  const { glow, ring, dot, streak, hex } = getTextures()
   const tint = new THREE.Color(color)
-  const white = new THREE.Color(0xffffff)
   const flare = new Lensflare()
+  // At the light source itself.
   flare.addElement(new LensflareElement(glow, 700, 0, tint))
-  flare.addElement(new LensflareElement(dot, 60, 0.25, tint))
-  flare.addElement(new LensflareElement(ring, 140, 0.45, white))
-  flare.addElement(new LensflareElement(dot, 40, 0.65, tint))
-  flare.addElement(new LensflareElement(ring, 90, 0.85, tint))
-  flare.addElement(new LensflareElement(dot, 30, 1, white))
+  flare.addElement(new LensflareElement(streak, 900, 0, new THREE.Color(0.6, 0.75, 1)))
+  // Ghost chain along the lens axis.
+  flare.addElement(new LensflareElement(hex, 70, 0.3, new THREE.Color(0.4, 0.9, 0.85)))
+  flare.addElement(new LensflareElement(dot, 35, 0.45, new THREE.Color(0.5, 1, 0.6)))
+  flare.addElement(new LensflareElement(hex, 130, 0.6, new THREE.Color(0.55, 0.5, 0.9)))
+  flare.addElement(new LensflareElement(hex, 50, 0.75, tint))
+  flare.addElement(new LensflareElement(ring, 260, 0.95, new THREE.Color(0.9, 0.55, 0.35)))
+  flare.addElement(new LensflareElement(hex, 180, 1.15, new THREE.Color(0.45, 0.6, 1)))
   return flare
 }

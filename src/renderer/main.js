@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { createScene } from './render/scene.js'
-import { createStarfield } from './render/starfield.js'
+import { createStarfield, updateStarfield } from './render/starfield.js'
 import { createNebula, updateNebula } from './render/nebula.js'
 import { buildShipMesh } from './render/shipMesh.js'
 import { buildStationMeshForBody, updateStationMesh } from './render/stationMesh.js'
@@ -1336,6 +1336,7 @@ function animate() {
   starfield.position.copy(camera.position)
   nebula.position.copy(camera.position)
   updateNebula(nebula, dt)
+  updateStarfield(starfield, now / 1000)
 
   if (!gameState) {
     updateMenuBackground(dt)

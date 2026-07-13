@@ -2,6 +2,7 @@ import { getGood } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { useShipPart } from '../game/economy.js'
 import { findBody } from '../procgen/galaxy.js'
+import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
 #inventory-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
@@ -85,8 +86,8 @@ export function createInventoryUI(container, gameState) {
         if (cargoRowsHere.length) bits.push(`Cargo: ${cargoRowsHere.map(([id, q]) => `${q} ${getGood(id).name}`).join(', ')}`)
         if (oreRowsHere.length) bits.push(`Ore: ${oreRowsHere.map(([id, q]) => `${q} ${getGood(id).name}`).join(', ')}`)
         if (s.shipParts > 0) bits.push(`${s.shipParts} Ship Part(s)`)
-        if (s.ships.length) bits.push(`${s.ships.length} stored ship(s): ${s.ships.map((sh) => sh.instanceName).join(', ')}`)
-        return `<div class="remote-station"><h4>${body?.name ?? bodyId}</h4><div>${bits.join(' · ')}</div></div>`
+        if (s.ships.length) bits.push(`${s.ships.length} stored ship(s): ${s.ships.map((sh) => escapeHtml(sh.instanceName)).join(', ')}`)
+        return `<div class="remote-station"><h4>${escapeHtml(body?.name ?? bodyId)}</h4><div>${bits.join(' · ')}</div></div>`
       }).join('') : '<div class="empty">Nothing stored anywhere yet — visit a station or settlement\'s Storage tab to leave items behind.</div>'}
     `
     contentEl.querySelector('.use-part')?.addEventListener('click', () => {

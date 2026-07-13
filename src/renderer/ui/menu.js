@@ -10,19 +10,45 @@ const STYLE = `
 @keyframes scan { from { transform: translateY(0); } to { transform: translateY(60px); } }
 
 #main-menu .panel {
-  display: flex; flex-direction: column; gap: 10px; width: 420px; position: relative; z-index: 1;
+  display: flex; flex-direction: column; gap: 10px; width: 560px; position: relative; z-index: 1;
   padding: 28px 32px;
 }
 #main-menu .main-view { align-items: center; text-align: center; }
 
+/* Cinematic vignette so the 3D backdrop darkens toward the edges and the
+   title pops. Corner braces match the in-game HUD's cockpit frame, so menu
+   and gameplay read as one visual system. */
+#main-menu::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(2,4,8,0.75) 100%);
+}
+#main-menu .frame { position: absolute; inset: 14px; pointer-events: none; z-index: 2; }
+#main-menu .frame .corner { position: absolute; width: 44px; height: 44px; border: 2px solid rgba(111,216,242,0.45); filter: drop-shadow(0 0 8px rgba(79,195,217,0.5)); }
+#main-menu .frame .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
+#main-menu .frame .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
+#main-menu .frame .corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; }
+#main-menu .frame .corner.br { bottom: 0; right: 0; border-left: none; border-top: none; }
+
+#main-menu .footer {
+  position: absolute; bottom: 26px; left: 0; right: 0; text-align: center; z-index: 2;
+  font-size: 10px; letter-spacing: 3px; color: #3a5a7a; pointer-events: none;
+}
+
 #main-menu h1 { margin: 0 0 4px 0; }
+/* One-shot cinematic entrance — the title resolves out of a blur — replayed
+   whenever the menu (re)shows via the same .reveal class the buttons use. */
+#main-menu.reveal h1 { animation: titleEntrance 1.1s ease-out; }
+@keyframes titleEntrance {
+  from { opacity: 0; transform: scale(1.12); filter: blur(14px); }
+  to { opacity: 1; transform: scale(1); filter: blur(0); }
+}
 /* Each line of the (now two-line) title is its own box with the gradient/
    glitch applied per-line, rather than once across the whole h1 — the
    glitch clip-path bands below are percentages of a single line's height,
    so splitting them over a taller multi-line block would slice across the
    gap between lines instead of through each line's own glyphs. */
 #main-menu h1 .line {
-  display: block; position: relative; font-size: 32px; letter-spacing: 3px;
+  display: block; position: relative; font-size: 46px; letter-spacing: 6px;
   background: linear-gradient(90deg, #4fc3d9, #8fb3ff, #7fe0a0, #4fc3d9);
   background-size: 300% auto;
   -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -67,10 +93,18 @@ const STYLE = `
   97% { opacity: 0; transform: translate(0, 0); }
 }
 
+/* Thin glowing rule lines flanking the subtitle — cheap cinematic framing. */
 #main-menu .subtitle {
-  margin: 0 0 24px 0; font-size: 11px; letter-spacing: 4px; color: #4a6a8a;
+  margin: 0 0 34px 0; font-size: 11px; letter-spacing: 5px; color: #5a7fa5;
+  display: flex; align-items: center; gap: 14px;
   animation: flicker 5s ease-in-out infinite;
 }
+#main-menu .subtitle::before, #main-menu .subtitle::after {
+  content: ''; height: 1px; width: 70px;
+  background: linear-gradient(90deg, transparent, rgba(111,216,242,0.6));
+  box-shadow: 0 0 6px rgba(79,195,217,0.5);
+}
+#main-menu .subtitle::after { background: linear-gradient(90deg, rgba(111,216,242,0.6), transparent); }
 @keyframes flicker {
   0%, 92%, 100% { opacity: 0.7; }
   93%, 95% { opacity: 0.2; }
@@ -111,7 +145,17 @@ const STYLE = `
 #main-menu button.menu-link:disabled { opacity: 0.35 !important; cursor: not-allowed; }
 #main-menu button.menu-link:hover:not(:disabled),
 #main-menu button.menu-link:focus-visible:not(:disabled) { color: #eaffff; }
-#main-menu button.menu-link .glitch-text { position: relative; display: inline-block; }
+#main-menu button.menu-link .glitch-text { position: relative; display: inline-block; padding-bottom: 3px; }
+/* Underline sweep: a glowing line grows out from the center on hover. Uses
+   the span's own ::marker-free box — the glitch layers live on ::before/
+   ::after of .glitch-text, so the underline borrows the button's ::after. */
+#main-menu button.menu-link::after {
+  content: ''; display: block; margin: 2px auto 0; height: 1px; width: 0%;
+  background: currentColor; box-shadow: 0 0 8px currentColor;
+  transition: width 0.25s ease;
+}
+#main-menu button.menu-link:hover:not(:disabled)::after,
+#main-menu button.menu-link:focus-visible:not(:disabled)::after { width: 60%; }
 #main-menu button.menu-link:hover:not(:disabled) .glitch-text,
 #main-menu button.menu-link:focus-visible:not(:disabled) .glitch-text {
   filter: drop-shadow(0 0 6px rgba(143,179,255,0.9)) drop-shadow(0 0 16px rgba(79,195,217,0.85)) drop-shadow(0 0 32px rgba(127,224,160,0.55));
@@ -166,6 +210,11 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
   const root = document.createElement('div')
   root.id = 'main-menu'
   root.innerHTML = `
+    <div class="frame">
+      <div class="corner tl"></div><div class="corner tr"></div>
+      <div class="corner bl"></div><div class="corner br"></div>
+    </div>
+    <div class="footer">DEEP-SPACE NAVIGATION INTERFACE // SIGNAL ACQUIRED</div>
     <div class="panel main-view">
       <h1><span class="line" data-text="Whispers In The">Whispers In The</span><span class="line" data-text="Void">Void</span></h1>
       <div class="subtitle">A PROCEDURALLY GENERATED GALAXY</div>

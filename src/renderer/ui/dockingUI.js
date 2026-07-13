@@ -7,6 +7,7 @@ import {
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
 import { WEAPONS, BASE_WEAPON_ID, getWeapon, weaponsForCategory } from '../data/weapons.js'
 import { acceptMission, turnInMission } from '../game/missions.js'
+import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
 #docking-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.55); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
@@ -312,7 +313,7 @@ export function createDockingUI(container, gameState, rng) {
       const selectedClass = getShipClass(selectedShipClassId)
       contentEl.innerHTML = `
         ${repairSection}
-        <div class="credits">Credits: ${gameState.player.credits}cr | Current: ${ship.instanceName} (${shipClass.name}) <button class="rename-active">Rename</button></div>
+        <div class="credits">Credits: ${gameState.player.credits}cr | Current: ${escapeHtml(ship.instanceName)} (${shipClass.name}) <button class="rename-active">Rename</button></div>
         <div class="shipyard-body">
           <div class="ship-list">
             <table>
@@ -427,7 +428,7 @@ export function createDockingUI(container, gameState, rng) {
         <thead><tr><th>Ship</th><th></th></tr></thead>
         <tbody>${storage.ships.map((s, i) => `
           <tr>
-            <td>${s.instanceName} (${getShipClass(s.classId).name})</td>
+            <td>${escapeHtml(s.instanceName)} (${getShipClass(s.classId).name})</td>
             <td>
               <button class="rename-stored" data-index="${i}">Rename</button>
               <button class="activate-ship" data-index="${i}">Activate</button>

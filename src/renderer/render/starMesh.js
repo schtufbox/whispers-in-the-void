@@ -103,6 +103,29 @@ const STAR_TYPE_PARAMS = {
 // as too small.)
 const STAR_SIZE_SCALE = 37.5
 
+// A big soft camera-facing glow — this, more than the corona shells, is what
+// makes a star read as blindingly bright rather than a lit ball. One shared
+// radial-gradient texture (lazy, same canvas technique as nebula.js — and
+// lazy for the same reason render/textures.js is: this module is imported
+// under plain no-DOM Node by test suites, which never build a mesh).
+let haloTexture = null
+function getHaloTexture() {
+  if (haloTexture) return haloTexture
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
+  g.addColorStop(0, 'rgba(255,255,255,0.9)')
+  g.addColorStop(0.15, 'rgba(255,255,255,0.5)')
+  g.addColorStop(0.4, 'rgba(255,255,255,0.15)')
+  g.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, size, size)
+  haloTexture = new THREE.CanvasTexture(canvas)
+  return haloTexture
+}
+
 // Builds one star's core + corona shells inside its own group (so a binary
 // pair can position/spin each component independently). Returns the group
 // plus the bits updateStarMesh needs to animate it each frame.
@@ -126,20 +149,44 @@ function buildSingleStar(type, rng) {
   // plasma" look and the lens flare's self-occlusion fix (see below), for a
   // detail that wouldn't even show through additive corona shells most of
   // the time.
+  // Cloned per star (not the shared instance from render/textures.js) so
+  // updateStarMesh can drift this star's map offset every frame for a
+  // boiling-surface look without also scrolling every volcanic planet's
+  // surface — clone() shares the underlying image, so the cost is one extra
+  // GPU upload for the 1-2 stars alive at a time, not a second decode.
+  const coreMap = getSurfaceTextures('volcanic').map.clone()
   const core = new THREE.Mesh(
     buildTurbulentSurface(radius, offsets, coreColor, hotColor),
-    new THREE.MeshBasicMaterial({ vertexColors: true, map: getSurfaceTextures('volcanic').map })
+    new THREE.MeshBasicMaterial({ vertexColors: true, map: coreMap })
   )
   group.add(core)
 
+  // Slightly tinted toward the star's own hue but mostly white-hot at the
+  // center (the sprite texture's core is near-white), sized well past the
+  // corona shells. A Sprite always faces the camera for free.
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: getHaloTexture(),
+    color,
+    transparent: true,
+    opacity: 0.85,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  }))
+  halo.scale.setScalar(radius * 5)
+  group.add(halo)
+
+  // Detail 3 (was 1): at detail 1 the shells' handful of huge flat facets
+  // read as a crude octagonal frame around the core once the halo sprite
+  // made the star's surroundings brighter — same class of issue as
+  // detailForRadius, but the coronas are translucent so a fixed 3 is enough.
   const corona1 = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(radius * params.corona1Scale, 1),
+    new THREE.IcosahedronGeometry(radius * params.corona1Scale, 3),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: params.corona1Opacity, blending: THREE.AdditiveBlending, depthWrite: false })
   )
   group.add(corona1)
 
   const corona2 = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(radius * params.corona2Scale, 1),
+    new THREE.IcosahedronGeometry(radius * params.corona2Scale, 3),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: params.corona2Opacity, blending: THREE.AdditiveBlending, depthWrite: false })
   )
   group.add(corona2)
@@ -159,7 +206,11 @@ function buildSingleStar(type, rng) {
     pulsePhase: rng() * Math.PI * 2,
     corona1,
     corona2,
-    flare
+    flare,
+    halo,
+    coreMap,
+    // Slow, slightly diagonal texture drift — see updateStarMesh.
+    mapDrift: [0.004 + rng() * 0.004, 0.002 + rng() * 0.003]
   }
 }
 
@@ -183,39 +234,85 @@ function buildSingleStar(type, rng) {
 // a near-invisible hairline (the same class of bug detailForRadius fixed for
 // planet/star surface faceting above). Sizing both off the ring's own radius
 // keeps the ring's thickness readable at any scale.
-function buildEnergyRing(radius, rng) {
-  const tubeRadius = Math.max(4, radius * 0.035)
-  const geometry = new THREE.TorusGeometry(radius, tubeRadius, 12, 64)
-  const pos = geometry.attributes.position
-  const v = new THREE.Vector3()
-  const colors = []
-  const deepColor = new THREE.Color().setHSL(0.02, 0.95, 0.3)
-  const hotColor = new THREE.Color().setHSL(0.12, 1, 0.62)
-  const c = new THREE.Color()
+// Painted with the classic fire structure — a blinding white-yellow core
+// inside a colored falloff — rather than one flat-orange tube: an inner
+// thin torus runs near-white at high opacity, the fat outer torus carries
+// the deep-red-to-orange noise.
+//
+// Geometry: the ring's radius is HALF the stars' separation and its center
+// sits at the midpoint between them, so the circle passes through both star
+// centers by construction — a plasma bridge threading the pair, not a halo
+// around the primary. updateStarMesh moves the midpoint with the smaller
+// star's orbit every frame and rolls the whole ring around the star-to-star
+// axis: both suns lie ON that roll axis, so the ring can weave and tilt out
+// of the orbital plane as much as it likes while always still intersecting
+// both of them exactly.
+//
+// Each torus lives inside its own `spinner` group whose local-Y spin flows
+// the fire pattern around the circle — a plain rotation on the torus itself
+// would compose badly with its flat-lie X rotation, and rotateOnWorldAxis
+// (the old approach) breaks once the parent ring group itself starts
+// re-orienting every frame.
+function buildEnergyRing(separation, rng) {
+  const radius = separation / 2
+  const tubeRadius = Math.max(4, radius * 0.05)
   const offsets = [rng() * 10, rng() * 10, rng() * 10]
-  for (let i = 0; i < pos.count; i++) {
-    v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize()
-    const n = surfaceNoise(v.x, v.y, v.z, offsets)
-    c.copy(deepColor).lerp(hotColor, Math.min(1, Math.max(0, n * 1.3)))
-    colors.push(c.r, c.g, c.b)
-  }
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-
-  const ring = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }))
-  ring.rotation.x = Math.PI / 2 // lie flat in the XZ plane — the same plane the smaller star orbits in
   const group = new THREE.Group()
-  group.add(ring)
+  // Yaw first (align local X with the star axis), then roll about that
+  // now-yawed X — see updateStarMesh.
+  group.rotation.order = 'YXZ'
+
+  function paintTorus(tube, deepColor, hotColor, opacity) {
+    const geometry = new THREE.TorusGeometry(radius, tube, 12, 96)
+    const pos = geometry.attributes.position
+    const v = new THREE.Vector3()
+    const colors = []
+    const c = new THREE.Color()
+    for (let i = 0; i < pos.count; i++) {
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize()
+      const n = surfaceNoise(v.x, v.y, v.z, offsets)
+      c.copy(deepColor).lerp(hotColor, Math.min(1, Math.max(0, n * 1.5)))
+      colors.push(c.r, c.g, c.b)
+    }
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false }))
+    mesh.rotation.x = Math.PI / 2 // lie flat in the ring group's local XZ plane
+    const spinner = new THREE.Group()
+    spinner.add(mesh)
+    group.add(spinner)
+    return { mesh, spinner }
+  }
+
+  const outer = paintTorus(tubeRadius, new THREE.Color().setHSL(0.01, 1, 0.35), new THREE.Color().setHSL(0.09, 1, 0.6), 0.75)
+  const core = paintTorus(tubeRadius * 0.4, new THREE.Color().setHSL(0.08, 1, 0.65), new THREE.Color().setHSL(0.13, 0.9, 0.9), 0.95)
 
   const sparks = []
-  const sparkCount = 5
+  const sparkCount = 14
   for (let i = 0; i < sparkCount; i++) {
-    const color = new THREE.Color().setHSL(0.05 + rng() * 0.08, 1, 0.6)
-    const spark = new THREE.Mesh(new THREE.SphereGeometry(tubeRadius * 0.8, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }))
+    const color = new THREE.Color().setHSL(0.03 + rng() * 0.1, 1, 0.55 + rng() * 0.3)
+    const size = tubeRadius * (0.4 + rng() * 0.9)
+    const spark = new THREE.Mesh(new THREE.SphereGeometry(size, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }))
+    // Children of the ring group, positioned on its local circle — they ride
+    // along automatically as the ring re-orients/weaves each frame.
     group.add(spark)
-    sparks.push({ mesh: spark, phase: rng() * Math.PI * 2, speed: 0.3 + rng() * 0.25 })
+    // Small radial/vertical wobble per spark (applied in updateStarMesh) so
+    // they read as embers thrown off the ring, not beads on a wire.
+    sparks.push({ mesh: spark, phase: rng() * Math.PI * 2, speed: 0.35 + rng() * 0.5, wobble: tubeRadius * (0.5 + rng() * 1.5), wobbleFreq: 2 + rng() * 3 })
   }
 
-  return { group, ring, radius, sparks, spinSpeed: 0.15 + rng() * 0.1 }
+  return {
+    group,
+    ring: outer.mesh,
+    ringCore: core.mesh,
+    outerSpinner: outer.spinner,
+    coreSpinner: core.spinner,
+    radius,
+    sparks,
+    spinSpeed: 0.3 + rng() * 0.2,
+    // Slow oscillating roll around the star-to-star axis — the "weave".
+    weaveSpeed: 0.25 + rng() * 0.15,
+    weaveAmplitude: 0.35 + rng() * 0.25
+  }
 }
 
 // A star (or, for binary systems, a pair of stars) always sits at a system's
@@ -263,6 +360,8 @@ export function buildStarMesh(system, forceType = null) {
     group.add(stars[smallerIndex].group)
     group.userData.stars.push({ ...stars[smallerIndex], orbit })
 
+    // orbit.radius doubles as the star separation — the ring is built at
+    // half of it so it threads both star centers (see buildEnergyRing).
     const energyRing = buildEnergyRing(orbit.radius, rng)
     group.add(energyRing.group)
     group.userData.energyRing = energyRing
@@ -275,8 +374,6 @@ export function buildStarMesh(system, forceType = null) {
   return group
 }
 
-const WORLD_Y = new THREE.Vector3(0, 1, 0)
-
 // Scratch objects reused every frame in updateStarMesh's flare repositioning
 // (see below) rather than allocated per star per frame.
 const flareWorldPos = new THREE.Vector3()
@@ -287,9 +384,8 @@ const flareTargetWorld = new THREE.Vector3()
 // star in the system (1, or 2 for a binary) — driven by gameState.simTime
 // (via the elapsed param), never wall-clock time. In a binary, only the
 // smaller star has an `orbit` (the bigger one is stationary at the origin —
-// see buildStarMesh); the energy ring sits fixed at that orbit radius so the
-// smaller star always intersects it, and only needs pulsing/spinning/spark
-// motion, not repositioning.
+// see buildStarMesh); the energy ring threads both suns and is re-centered
+// on their midpoint each frame (see energyRing block below).
 // camera (optional) drives the lens flare: three.js's Lensflare occludes
 // itself via a depth-buffer test at its own anchor point, but that anchor
 // starts out at the star's exact center — behind the near (camera-facing)
@@ -304,6 +400,16 @@ export function updateStarMesh(mesh, elapsed, dt, camera) {
     star.group.rotation.y += star.spinSpeed * dt
     star.corona1.scale.setScalar(1 + Math.sin(elapsed * 0.6 + star.pulsePhase) * 0.07)
     star.corona2.scale.setScalar(1 + Math.sin(elapsed * 0.4 + star.pulsePhase + 1) * 0.11)
+    // Boiling-surface motion: this star's own cloned map drifts slowly, on
+    // top of the group's spin — the two motions layered read as convecting
+    // plasma rather than a static skin rotating.
+    if (star.coreMap) {
+      star.coreMap.offset.x = elapsed * star.mapDrift[0]
+      star.coreMap.offset.y = elapsed * star.mapDrift[1]
+    }
+    // The halo breathes slightly out of phase with the coronas so the whole
+    // glow shimmers rather than pumping in lockstep.
+    if (star.halo) star.halo.material.opacity = 0.75 + 0.2 * Math.sin(elapsed * 1.3 + star.pulsePhase)
     if (star.orbit) {
       const angle = star.orbit.angle0 + elapsed * star.orbit.speed
       star.group.position.x = Math.cos(angle) * star.orbit.radius
@@ -322,16 +428,34 @@ export function updateStarMesh(mesh, elapsed, dt, camera) {
 
   const energyRing = mesh.userData.energyRing
   if (energyRing) {
-    // rotateOnWorldAxis (not rotation.y) since the ring's own local axes are
-    // already reoriented by its initial flat-lie rotation.x — this spins the
-    // fire pattern around the circle regardless of that, for a flowing look.
-    energyRing.ring.rotateOnWorldAxis(WORLD_Y, energyRing.spinSpeed * dt)
-    const pulse = 1 + Math.sin(elapsed * 3) * 0.08
-    energyRing.ring.scale.setScalar(pulse)
-    energyRing.ring.material.opacity = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(elapsed * 4))
+    // The ring threads BOTH suns: its circle has radius separation/2 and is
+    // centered on the midpoint between the stars, so both star centers lie
+    // exactly on it. Follow the smaller star's orbit each frame (primary is
+    // at the local origin, so the midpoint is simply half the orbiting
+    // star's position), yaw the group so its local X runs along the
+    // star-to-star axis, then roll around that axis — both suns sit on the
+    // roll axis, so the ring weaves and tilts out of the orbital plane
+    // while never leaving either of them.
+    const orbiter = mesh.userData.stars.find((s) => s.orbit)
+    const angle = orbiter.orbit.angle0 + elapsed * orbiter.orbit.speed
+    energyRing.group.position.set(Math.cos(angle) * energyRing.radius, 0, Math.sin(angle) * energyRing.radius)
+    energyRing.group.rotation.y = -angle
+    energyRing.group.rotation.x = Math.sin(elapsed * energyRing.weaveSpeed) * energyRing.weaveAmplitude
+
+    // Spinners flow the fire pattern around the circle (the white-hot core
+    // counter-rotates slower, so the two fire layers visibly slide).
+    energyRing.outerSpinner.rotation.y += energyRing.spinSpeed * dt
+    energyRing.coreSpinner.rotation.y -= energyRing.spinSpeed * 0.6 * dt
+    energyRing.ring.material.opacity = 0.6 + 0.3 * (0.5 + 0.5 * Math.sin(elapsed * 4))
+    energyRing.ringCore.material.opacity = 0.8 + 0.2 * (0.5 + 0.5 * Math.sin(elapsed * 5.5))
     for (const spark of energyRing.sparks) {
-      const angle = elapsed * spark.speed + spark.phase
-      spark.mesh.position.set(Math.cos(angle) * energyRing.radius, 0, Math.sin(angle) * energyRing.radius)
+      const sparkAngle = elapsed * spark.speed + spark.phase
+      const wobble = Math.sin(elapsed * spark.wobbleFreq + spark.phase) * spark.wobble
+      spark.mesh.position.set(
+        Math.cos(sparkAngle) * (energyRing.radius + wobble),
+        Math.cos(elapsed * spark.wobbleFreq * 0.7 + spark.phase) * spark.wobble,
+        Math.sin(sparkAngle) * (energyRing.radius + wobble)
+      )
     }
   }
 }

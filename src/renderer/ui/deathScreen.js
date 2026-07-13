@@ -1,3 +1,5 @@
+import { escapeHtml } from './escapeHtml.js'
+
 const STYLE = `
 #death-screen {
   position: fixed; inset: 0; background: #060102; font-family: monospace; color: #f0d0d0;
@@ -69,12 +71,13 @@ export function createDeathScreen(container, onReturnToMenu) {
 
   return {
     show({ characterName, credits, reputation, cause }) {
+      const name = escapeHtml(characterName)
       root.querySelector('.summary').innerHTML = `
-        Pilot ${characterName} was lost.<br/>
-        Cause: ${cause}<br/>
+        Pilot ${name} was lost.<br/>
+        Cause: ${escapeHtml(cause)}<br/>
         Final credits: ${credits}cr<br/>
         Reputation earned: ${reputation}<br/>
-        There is no respawn for ${characterName}. Your last save is still available to continue from.
+        There is no respawn for ${name}. Your last save is still available to continue from.
       `
       root.style.display = 'flex'
       root.classList.remove('reveal', 'shake')
