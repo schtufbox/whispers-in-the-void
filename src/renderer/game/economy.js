@@ -121,8 +121,16 @@ export function repairShip(gameState, body = null) {
 // initial default) since it was added after storage entries already existed
 // for some players — same pattern as the other per-field fallbacks below.
 function storageFor(gameState, bodyId) {
-  const storage = (gameState.stationStorage[bodyId] ??= { cargo: {}, miningHold: {}, shipParts: 0, ships: [] })
+  const storage = (gameState.stationStorage[bodyId] ??= {
+    cargo: {},
+    miningHold: {},
+    shipParts: 0,
+    ships: [],
+    weapons: {},
+    blueprints: {}
+  })
   storage.weapons ??= {}
+  storage.blueprints ??= {}
   return storage
 }
 
@@ -148,7 +156,9 @@ export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
     cargo: {},
     miningHold: {},
     shipParts: 0,
-    equippedWeapons: defaultLoadoutFor(newClass)
+    equippedWeapons: defaultLoadoutFor(newClass),
+    spareWeapons: {},
+    blueprints: {}
   })
 }
 
@@ -180,6 +190,7 @@ export function activateStoredShip(gameState, bodyId, index) {
   const current = gameState.player.ship
 
   storage.ships.splice(index, 1)
+  // Park the ship we were flying — keep loadout/cargo/BPs so nothing is lost.
   storage.ships.push({
     classId: current.classId,
     instanceName: current.instanceName,
@@ -189,13 +200,28 @@ export function activateStoredShip(gameState, bodyId, index) {
     cargo: current.cargo,
     miningHold: current.miningHold,
     shipParts: current.shipParts,
-    equippedWeapons: current.equippedWeapons
+    equippedWeapons: current.equippedWeapons ?? {},
+    spareWeapons: current.spareWeapons ?? {},
+    blueprints: current.blueprints ?? {}
   })
+  const storedClass = getShipClass(stored.classId)
   gameState.player.ship = {
-    ...stored,
+    classId: stored.classId,
+    instanceName: stored.instanceName,
+    hull: stored.hull,
+    shields: stored.shields,
+    armor: stored.armor,
+    cargo: stored.cargo ?? {},
+    miningHold: stored.miningHold ?? {},
+    shipParts: stored.shipParts ?? 0,
+    equippedWeapons: stored.equippedWeapons ?? defaultLoadoutFor(storedClass),
+    spareWeapons: stored.spareWeapons ?? {},
+    blueprints: stored.blueprints ?? {},
+    // Stay where we are in the bay; only the hull/stats change.
     position: [...current.position],
     velocity: [0, 0, 0],
-    quaternion: [...current.quaternion]
+    quaternion: [...current.quaternion],
+    throttle: current.throttle ?? 0
   }
 }
 

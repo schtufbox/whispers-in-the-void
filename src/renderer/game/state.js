@@ -49,13 +49,13 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
   const missionRng = mulberry32(seed + 1)
   const availableMissions = seedMissionsForGalaxy(missionRng, galaxy)
 
-  return {
+  const gameState = {
     version: 1,
     seed,
     createdAt: new Date().toISOString(),
     player: {
       name: characterName,
-      credits: 1000,
+      credits: 1500,
       reputation: 0,
       currentSystemId: startingSystem.id,
       // Remembered separately from currentSystemId (which changes as the
@@ -82,6 +82,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
         equippedWeapons: defaultLoadoutFor(shipClass),
         // Salvaged hardpoint weapons from wrecks — equip or sell at a shipyard.
         spareWeapons: {},
+        // Rare industry blueprints (ships/weapons) — craft at station Industry.
+        blueprints: {},
         position: [...SYSTEM_ARRIVAL_POSITION],
         velocity: [0, 0, 0],
         // Same sun-facing orientation as post-hyperspace arrival.
@@ -100,6 +102,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
     // but not currently active — keyed by body id (see game/economy.js's
     // storage-related functions). Never crosses to a different station.
     stationStorage: {},
+    // Active industry jobs (wall-clock; persist across save/load).
+    craftingJobs: [],
     npcs: [],
     projectiles: [],
     // Wrecks left behind by destroyed ships (game/wrecks.js) — ephemeral like
@@ -117,4 +121,6 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
     // neutral traffic, never pirates/aliens (see main.js's ambient spawner).
     flags: { alive: true, startingSystemPeaceBroken: false }
   }
+
+  return gameState
 }

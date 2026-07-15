@@ -42,6 +42,41 @@ test('moons appear on roughly 23% of planets and orbit close to their parent', (
   }
 })
 
+test('stations co-hosted with moons keep non-intersecting orbital radii', () => {
+  // main.js animates both on flat XZ circles around the same parent — if the
+  // two orbit radii are closer than moonR + station shell, they can meet.
+  const STATION_SHELL = 337.5
+  const MARGIN = 6
+  let checked = 0
+  for (const seed of [1, 2, 3, 42, 1337, 9001]) {
+    const galaxy = generateGalaxy(seed)
+    for (const system of galaxy.systems) {
+      for (const station of system.bodies.filter((b) => b.kind === 'station' && b.parentId)) {
+        const parent = system.bodies.find((b) => b.id === station.parentId)
+        if (!parent || parent.kind !== 'planet') continue
+        const stationR = Math.hypot(
+          station.position[0] - parent.position[0],
+          station.position[2] - parent.position[2]
+        )
+        for (const moon of system.bodies.filter((b) => b.kind === 'moon' && b.parentId === parent.id)) {
+          const moonR = Math.hypot(
+            moon.position[0] - parent.position[0],
+            moon.position[2] - parent.position[2]
+          )
+          const need = (moon.radius ?? 0) + STATION_SHELL + MARGIN
+          const gap = Math.abs(stationR - moonR)
+          assert.ok(
+            gap >= need - 1e-6,
+            `seed ${seed}: station/moon orbit gap ${gap.toFixed(1)} < required ${need.toFixed(1)} around ${parent.name}`
+          )
+          checked++
+        }
+      }
+    }
+  }
+  assert.ok(checked > 0, 'expected at least one planet with both a moon and a station')
+})
+
 test("a moon's orbit radius always clears its parent planet's collision shell", () => {
   // The orbit main.js animates is a flat circle at a constant XZ-plane
   // radius (see moonOrbits), so checking that radius against the physical
@@ -109,6 +144,15 @@ test('stations orbit a host (planet/moon/star) except a rare free-drifter fracti
       assert.ok(parent && (parent.kind === 'planet' || parent.kind === 'moon'), 'station parent is planet or moon')
     }
   }
+})
+
+test('every station has a functional shipyard; settlements do not', () => {
+  const galaxy = generateGalaxy(42)
+  const stations = allBodies(galaxy).filter((b) => b.kind === 'station')
+  const settlements = allBodies(galaxy).filter((b) => b.kind === 'settlement')
+  assert.ok(stations.length > 0)
+  assert.ok(stations.every((s) => s.hasShipyard === true))
+  assert.ok(settlements.every((s) => s.hasShipyard === false))
 })
 
 test('settlements sit on a planet/moon surface (or rarely an asteroid field)', () => {

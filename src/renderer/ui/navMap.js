@@ -228,8 +228,16 @@ export function createNavMap(container, gameState) {
       contentEl.querySelector('.sel-distance').textContent = isCurrent
         ? 'Current system'
         : `${Math.round(distance)} ly away${inRange ? '' : ' — out of hyperspace range'}`
-      jumpBtn.disabled = !inRange || isCurrent
-      jumpBtn.textContent = !isCurrent && !inRange ? 'Out of Range' : 'Hyperspace Jump'
+      if (inCombat) {
+        jumpBtn.disabled = true
+        jumpBtn.textContent = 'Cannot Jump in Combat'
+      } else if (supercruiseActive) {
+        jumpBtn.disabled = true
+        jumpBtn.textContent = 'Drop Supercruise First'
+      } else {
+        jumpBtn.disabled = !inRange || isCurrent
+        jumpBtn.textContent = !isCurrent && !inRange ? 'Out of Range' : 'Hyperspace Jump'
+      }
     }
 
     function nearestSystemAt(mx, my) {
@@ -286,7 +294,7 @@ export function createNavMap(container, gameState) {
     })
 
     contentEl.querySelector('.jump').addEventListener('click', () => {
-      if (!selectedSystemId || !onJumpCallback) return
+      if (!selectedSystemId || !onJumpCallback || supercruiseActive || inCombat) return
       onJumpCallback(selectedSystemId)
     })
 
@@ -358,15 +366,20 @@ export function createNavMap(container, gameState) {
 
   let onJumpCallback = null
   let onCloseCallback = null
+  // Set each time the map opens — hyperspace blocked in combat / supercruise.
+  let supercruiseActive = false
+  let inCombat = false
   root.querySelector('.close').addEventListener('click', () => {
     root.style.display = 'none'
     onCloseCallback?.()
   })
 
   return {
-    show({ onJump, onClose }) {
+    show({ onJump, onClose, supercruiseActive: sc = false, inCombat: combat = false }) {
       onJumpCallback = onJump
       onCloseCallback = onClose
+      supercruiseActive = !!sc
+      inCombat = !!combat
       selectedSystemId = null
       currentTab = 'system'
       tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'system'))

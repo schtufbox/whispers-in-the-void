@@ -1,11 +1,26 @@
 const STYLE = `
 #hud { font-family: monospace; color: #cfe3ff; user-select: none; }
 
+/* Soft ground shadow under every HUD chrome piece (readable over bright stars). */
+#hud .status-panel,
+#hud .velocity-panel,
+#hud .system-label,
+#hud #radar {
+  filter:
+    drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+    drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+}
+
 /* Cockpit chrome: four corner braces plus a faint full-screen scanline wash,
    so gameplay reads as looking through a ship canopy HUD rather than a bare
    viewport. pointer-events: none throughout — pure decoration. */
 #hud .cockpit-frame { position: fixed; inset: 10px; pointer-events: none; z-index: 5; }
-#hud .cockpit-frame .corner { position: absolute; width: 34px; height: 34px; border: 2px solid rgba(111,216,242,0.5); filter: drop-shadow(0 0 6px rgba(79,195,217,0.5)); }
+#hud .cockpit-frame .corner {
+  position: absolute; width: 34px; height: 34px; border: 2px solid rgba(111,216,242,0.5);
+  filter:
+    drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+    drop-shadow(0 0 6px rgba(79,195,217,0.55));
+}
 #hud .cockpit-frame .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
 #hud .cockpit-frame .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
 #hud .cockpit-frame .corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; }
@@ -27,12 +42,16 @@ const STYLE = `
 }
 #hud .panel-title {
   font-size: 10px; letter-spacing: 3px; opacity: 0.65; color: #7fe6ff;
-  text-shadow: 0 0 6px rgba(79,195,217,0.7); margin-bottom: 8px;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.85),
+    0 0 6px rgba(79,195,217,0.7);
+  margin-bottom: 8px;
 }
 #hud .row { margin-bottom: 7px; }
 #hud .row-label {
   display: flex; justify-content: space-between; font-size: 10px;
   letter-spacing: 1.5px; opacity: 0.75; margin-bottom: 2px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.75);
 }
 #hud .row-label .value { opacity: 0.95; }
 
@@ -77,12 +96,13 @@ const STYLE = `
 }
 #hud .system-label .sys-tag {
   display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
-  color: #7fe6ff; opacity: 0.7; text-shadow: 0 0 6px rgba(79,195,217,0.6);
+  color: #7fe6ff; opacity: 0.7;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(79,195,217,0.6);
   margin-bottom: 2px;
 }
 #hud .system-label .sys-name {
   display: block; font-size: 14px; letter-spacing: 1.5px; color: #eaffff;
-  text-shadow: 0 0 8px rgba(127,230,255,0.55);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 8px rgba(127,230,255,0.55);
   white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -110,7 +130,201 @@ const STYLE = `
   border-radius: 50%;
   box-shadow: 0 0 14px rgba(79,195,217,0.55), inset 0 0 18px rgba(79,195,217,0.2);
 }
-#radar .radar-label { margin-top: 5px; font-size: 11px; letter-spacing: 2px; opacity: 0.85; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.8); }
+#radar .radar-label {
+  margin-top: 5px; font-size: 11px; letter-spacing: 2px; opacity: 0.85; color: #7fe6ff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(79,195,217,0.8);
+}
+#hud .velocity-panel .row-label,
+#hud .velocity-panel .speed {
+  text-shadow: 0 1px 2px rgba(0,0,0,0.75);
+}
+
+/* Shared soft ground shadow — kept in glitch rest frames so animation doesn't wipe it. */
+/* Supercruise: stronger chromatic HUD glitch (still sparser than title ~6.5s). */
+#hud.cruise-glitch .status-panel,
+#hud.cruise-glitch #radar {
+  animation: hudCruisePanelGlitch 12s steps(1) infinite;
+}
+#hud.cruise-glitch .cockpit-frame .corner {
+  animation: hudCruiseCornerGlitch 12s steps(1) infinite;
+}
+#hud.cruise-glitch .system-label,
+#hud.cruise-glitch .velocity-panel {
+  animation: hudCruisePanelGlitchCenter 12s steps(1) infinite;
+}
+#hud.cruise-glitch .scanlines {
+  animation: hudCruiseScanGlitch 12s steps(1) infinite;
+}
+#hud.cruise-glitch .status-panel { animation-delay: 0s; }
+#hud.cruise-glitch .system-label { animation-delay: 0.05s; }
+#hud.cruise-glitch #radar { animation-delay: 0.1s; }
+#hud.cruise-glitch .velocity-panel { animation-delay: 0.07s; }
+#hud.cruise-glitch .cockpit-frame .corner.tl { animation-delay: 0s; }
+#hud.cruise-glitch .cockpit-frame .corner.tr { animation-delay: 0.03s; }
+#hud.cruise-glitch .cockpit-frame .corner.bl { animation-delay: 0.06s; }
+#hud.cruise-glitch .cockpit-frame .corner.br { animation-delay: 0.09s; }
+
+@keyframes hudCruisePanelGlitch {
+  0%, 78%, 100% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    transform: none;
+  }
+  79% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(-5px 0 0 rgba(255, 40, 90, 0.85))
+      drop-shadow(5px 0 0 rgba(40, 220, 255, 0.85))
+      hue-rotate(-35deg);
+    transform: translate(-5px, 0) skewX(-1.4deg);
+  }
+  80% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(6px 0 0 rgba(255, 40, 90, 0.75))
+      drop-shadow(-4px 0 0 rgba(40, 220, 255, 0.75))
+      hue-rotate(40deg);
+    transform: translate(6px, 2px) skewX(1.6deg);
+  }
+  81% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(-3px 1px 0 rgba(255, 80, 120, 0.7))
+      drop-shadow(4px -1px 0 rgba(80, 200, 255, 0.7))
+      hue-rotate(-20deg);
+    transform: translate(-3px, -1px) skewX(0.8deg);
+  }
+  82% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    transform: none;
+  }
+  90% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(-4px 0 0 rgba(255, 50, 100, 0.7))
+      drop-shadow(4px 0 0 rgba(50, 210, 255, 0.7))
+      hue-rotate(25deg);
+    transform: translate(4px, 0) skewX(-1deg);
+  }
+  91% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(3px 0 0 rgba(255, 50, 100, 0.55))
+      drop-shadow(-5px 0 0 rgba(50, 210, 255, 0.55));
+    transform: translate(-4px, 1px);
+  }
+  92% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    transform: none;
+  }
+}
+@keyframes hudCruisePanelGlitchCenter {
+  0%, 78%, 100% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    transform: translateX(-50%);
+  }
+  79% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(-5px 0 0 rgba(255, 40, 90, 0.85))
+      drop-shadow(5px 0 0 rgba(40, 220, 255, 0.85))
+      hue-rotate(-35deg);
+    transform: translateX(calc(-50% - 5px)) skewX(-1.4deg);
+  }
+  80% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(6px 0 0 rgba(255, 40, 90, 0.75))
+      drop-shadow(-4px 0 0 rgba(40, 220, 255, 0.75))
+      hue-rotate(40deg);
+    transform: translateX(calc(-50% + 6px)) translateY(2px) skewX(1.6deg);
+  }
+  81% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(-3px 1px 0 rgba(255, 80, 120, 0.7))
+      drop-shadow(4px -1px 0 rgba(80, 200, 255, 0.7))
+      hue-rotate(-20deg);
+    transform: translateX(calc(-50% - 3px)) translateY(-1px) skewX(0.8deg);
+  }
+  82% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    transform: translateX(-50%);
+  }
+  90% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(-4px 0 0 rgba(255, 50, 100, 0.7))
+      drop-shadow(4px 0 0 rgba(50, 210, 255, 0.7))
+      hue-rotate(25deg);
+    transform: translateX(calc(-50% + 4px)) skewX(-1deg);
+  }
+  91% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(3px 0 0 rgba(255, 50, 100, 0.55))
+      drop-shadow(-5px 0 0 rgba(50, 210, 255, 0.55));
+    transform: translateX(calc(-50% - 4px)) translateY(1px);
+  }
+  92% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    transform: translateX(-50%);
+  }
+}
+@keyframes hudCruiseCornerGlitch {
+  0%, 78%, 100% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(0 0 6px rgba(79,195,217,0.55));
+  }
+  79% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(-4px 0 0 rgba(255, 40, 90, 0.9))
+      drop-shadow(4px 0 0 rgba(40, 220, 255, 0.9))
+      drop-shadow(0 0 10px rgba(79,195,217,0.8));
+  }
+  80% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(5px 0 0 rgba(255, 40, 90, 0.75))
+      drop-shadow(-5px 0 0 rgba(40, 220, 255, 0.75));
+  }
+  81%, 82% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(0 0 6px rgba(79,195,217,0.55));
+  }
+  90% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(-3px 0 0 rgba(255, 50, 100, 0.7))
+      drop-shadow(3px 0 0 rgba(50, 210, 255, 0.7));
+  }
+  91%, 92% {
+    filter:
+      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(0 0 6px rgba(79,195,217,0.55));
+  }
+}
+@keyframes hudCruiseScanGlitch {
+  0%, 78%, 100% { opacity: 0.35; }
+  79%, 81% { opacity: 0.95; }
+  82% { opacity: 0.35; }
+  90%, 91% { opacity: 0.8; }
+  92% { opacity: 0.35; }
+}
 `
 
 export function createHud(container) {
@@ -284,6 +498,10 @@ export function createHud(container) {
         radarCtx.fill()
       }
       radarCtx.shadowBlur = 0
+    },
+    /** Sparse chromatic glitch on all HUD chrome while supercruising. */
+    setCruiseGlitch(active) {
+      hud.classList.toggle('cruise-glitch', !!active)
     },
     element: hud
   }

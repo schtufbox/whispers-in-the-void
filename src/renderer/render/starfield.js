@@ -107,3 +107,26 @@ export function updateStarfield(starfield, elapsed) {
     t.layer.material.opacity = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(elapsed * t.speed + t.phase))
   }
 }
+
+/**
+ * Subtle ambient hue from the system sun. Vertex colors stay; material.color
+ * multiplies them so the field shifts slightly toward a darkened star tint
+ * (mostly neutral — only a whisper of the local star).
+ * @param {THREE.Group} starfield
+ * @param {THREE.Color|number|null} starColor - primary star; null resets to white
+ */
+export function setStarfieldStarTint(starfield, starColor) {
+  if (!starfield) return
+  const tint = new THREE.Color(1, 1, 1)
+  if (starColor != null) {
+    const c = starColor.isColor ? starColor.clone() : new THREE.Color(starColor)
+    // Keep most of the field neutral, pull gently toward a dimmer star hue.
+    tint.lerp(c, 0.12)
+    tint.multiplyScalar(0.72)
+  }
+  starfield.traverse((obj) => {
+    if (obj.isPoints && obj.material?.isPointsMaterial) {
+      obj.material.color.copy(tint)
+    }
+  })
+}

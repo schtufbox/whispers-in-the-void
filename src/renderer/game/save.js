@@ -1,6 +1,7 @@
 import { ensureBountyNpcsForSystem } from './missions.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
+import { ensureBlueprintMaps, updateCraftingJobs } from './crafting.js'
 
 export function serializeGameState(gameState) {
   return {
@@ -15,6 +16,8 @@ export function serializeGameState(gameState) {
     probedBodyIds: gameState.probedBodyIds,
     probeCounts: gameState.probeCounts ?? {},
     stationStorage: gameState.stationStorage,
+    // Wall-clock industry jobs — must persist so crafts finish offline.
+    craftingJobs: gameState.craftingJobs ?? [],
     flags: gameState.flags
   }
 }
@@ -33,7 +36,8 @@ export function deserializeGameState(data) {
     inCombat: false,
     simTime: 0,
     probedBodyIds: data.probedBodyIds ?? [],
-    probeCounts: data.probeCounts ?? {}
+    probeCounts: data.probeCounts ?? {},
+    craftingJobs: data.craftingJobs ?? []
   }
   // miningHold falls back to {} for saves written before mining existed.
   gameState.player.ship.miningHold ??= {}
@@ -43,13 +47,26 @@ export function deserializeGameState(data) {
   // weapon, matching how it already behaved.
   gameState.player.ship.equippedWeapons ??= defaultLoadoutFor(getShipClass(gameState.player.ship.classId))
   gameState.player.ship.spareWeapons ??= {}
+  gameState.player.ship.blueprints ??= {}
   gameState.stationStorage ??= {}
+  ensureBlueprintMaps(gameState)
+  // All stations always have a full shipyard (ships + armoury). Older saves
+  // only rolled ~60% of stations with hasShipyard — force true on load.
+  for (const system of gameState.galaxy?.systems ?? []) {
+    for (const body of system.bodies ?? []) {
+      if (body.kind === 'station') body.hasShipyard = true
+    }
+  }
   // startingSystemId/startingSystemPeaceBroken fall back for saves written
   // before the starting-system peace existed — null just means that save
   // never gets the "no hostiles at home" protection, which is harmless.
   gameState.player.startingSystemId ??= null
   gameState.player.waypointPosition ??= null
   gameState.flags.startingSystemPeaceBroken ??= false
+
+  // Resolve any crafts that finished while the save was offline (wall-clock).
+  // Toasts for those completions are fired by main.js after load.
+  gameState._craftingJustCompleted = updateCraftingJobs(gameState, Date.now())
 
   // Encounter/NPC state is never persisted (see plan). Only the current
   // system's bounty target needs to exist right away; other systems'

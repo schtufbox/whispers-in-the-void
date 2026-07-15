@@ -1,6 +1,7 @@
 import { GOODS, MINED_ORE_GOOD_IDS, SHIP_PARTS_GOOD_ID, SURVEY_DATA_GOOD_ID } from '../data/goods.js'
 import { WEAPONS, BASE_WEAPON_ID } from '../data/weapons.js'
 import { getShipClass } from '../data/shipClasses.js'
+import { WRECK_BLUEPRINT_DROP_CHANCE, tryRollBlueprintDrop } from './crafting.js'
 
 let wreckCounter = 0
 
@@ -44,6 +45,9 @@ export function spawnWreck(position, simTime, rng = Math.random, shipClassId = n
   if (rng() < SHIP_PART_DROP_CHANCE) loot.shipParts = 1
   const weaponId = rollWeaponDrop(rng, shipClassId)
   if (weaponId) loot.weapons = { [weaponId]: 1 }
+  // Very rare industry blueprint (ships/weapons catalog).
+  const blueprintId = tryRollBlueprintDrop(rng, WRECK_BLUEPRINT_DROP_CHANCE)
+  if (blueprintId) loot.blueprints = { [blueprintId]: 1 }
   return { id: `wreck-${wreckCounter++}`, position: [...position], spawnedAt: simTime, loot }
 }
 
@@ -75,6 +79,11 @@ export function lootWreck(gameState, shipClass, wreckId) {
   ship.spareWeapons ??= {}
   for (const [weaponId, qty] of Object.entries(wreck.loot.weapons ?? {})) {
     ship.spareWeapons[weaponId] = (ship.spareWeapons[weaponId] ?? 0) + qty
+  }
+
+  ship.blueprints ??= {}
+  for (const [blueprintId, qty] of Object.entries(wreck.loot.blueprints ?? {})) {
+    ship.blueprints[blueprintId] = (ship.blueprints[blueprintId] ?? 0) + qty
   }
 
   gameState.wrecks = gameState.wrecks.filter((w) => w.id !== wreckId)

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { createScene } from './render/scene.js'
-import { createStarfield, updateStarfield } from './render/starfield.js'
+import { createStarfield, updateStarfield, setStarfieldStarTint } from './render/starfield.js'
 import { createMotionEffects, updateStarfieldMotion } from './render/motionFx.js'
 import { createHyperspaceTunnel } from './render/hyperspaceTunnel.js'
 import { createNebula, updateNebula } from './render/nebula.js'
@@ -13,7 +13,15 @@ import { buildProjectileMesh, buildImpactFlash } from './render/projectileMesh.j
 import { buildStationInteriorMesh, updateStationInterior } from './render/stationInterior.js'
 import { buildWreckMesh, updateWreckMesh } from './render/wreckMesh.js'
 import { buildProbeMesh, updateProbeMesh } from './render/probeMesh.js'
-import { syncMeshToEntity, syncChaseCamera, adjustChaseZoom, resetChaseZoom } from './render/sceneSync.js'
+import {
+  syncMeshToEntity,
+  syncChaseCamera,
+  adjustChaseZoom,
+  resetChaseZoom,
+  setChaseFreeLook,
+  addChaseFreeLookDelta,
+  isChaseFreeLook
+} from './render/sceneSync.js'
 import { createThrusterEffects } from './render/thrusterParticles.js'
 import { createDamageEffects } from './render/damageEffects.js'
 import { createOreScoopEffects } from './render/oreScoopParticles.js'
@@ -25,6 +33,8 @@ import { fireProjectile, updateProjectiles, updateNpcAI, updateCombatFlag, regen
 import { resolveBodyCollisions, trySupercruiseTunnel, collisionRadiusFor } from './game/collision.js'
 import { mineRock, isRockAlive, rockDisplayName } from './game/mining.js'
 import { pruneWrecks, lootWreck } from './game/wrecks.js'
+import { updateCraftingJobs, ensureBlueprintMaps } from './game/crafting.js'
+import { getBlueprint } from './data/blueprints.js'
 import { markBodyVisited, markBodyProbed, updateMissionProgress, missionMarkedBodyIds, resolveInvestigationProbe } from './game/missions.js'
 import {
   launchProbe,
@@ -68,6 +78,131 @@ const STATION_SCALE = 16.875
 const PROBE_RANGE = 150
 const MINING_TOAST_DURATION_S = 1.6
 const FACTION_TOAST_DURATION_S = 4
+// Title-screen-style chromatic glitch for floating HUD text (no soft fades).
+const HUD_GLITCH_EXIT_MS = 420
+const HUD_GLITCH_STYLE = `
+.hud-glitch-text {
+  position: relative; display: inline-block; max-width: 100%;
+}
+.hud-glitch-text::before,
+.hud-glitch-text::after {
+  content: attr(data-text);
+  position: absolute; left: 0; top: 0; width: 100%;
+  color: inherit; font: inherit; letter-spacing: inherit;
+  white-space: inherit; text-align: inherit; text-shadow: inherit;
+  opacity: 0; pointer-events: none; overflow: hidden;
+}
+.hud-glitch-text::before {
+  clip-path: polygon(0 0, 100% 0, 100% 42%, 0 42%);
+  filter: hue-rotate(-55deg);
+  animation: hudGlitchTop 5.8s steps(1) infinite;
+}
+.hud-glitch-text::after {
+  clip-path: polygon(0 58%, 100% 58%, 100% 100%, 0 100%);
+  filter: hue-rotate(160deg);
+  animation: hudGlitchBottom 5.8s steps(1) infinite;
+}
+@keyframes hudGlitchTop {
+  0%, 90%, 100% { opacity: 0; transform: translate(0, 0); }
+  91% { opacity: 0.9; transform: translate(-4px, -1px); }
+  92% { opacity: 0.85; transform: translate(5px, 1px); }
+  93% { opacity: 0; transform: translate(0, 0); }
+  96% { opacity: 0.7; transform: translate(3px, 0); }
+  97% { opacity: 0; transform: translate(0, 0); }
+}
+@keyframes hudGlitchBottom {
+  0%, 90%, 100% { opacity: 0; transform: translate(0, 0); }
+  91% { opacity: 0.9; transform: translate(5px, 1px); }
+  92% { opacity: 0.85; transform: translate(-4px, -1px); }
+  93% { opacity: 0; transform: translate(0, 0); }
+  96% { opacity: 0.7; transform: translate(-3px, 0); }
+  97% { opacity: 0; transform: translate(0, 0); }
+}
+.hud-glitch-enter {
+  animation: hudGlitchEnter 0.42s steps(2) both;
+}
+@keyframes hudGlitchEnter {
+  0% { opacity: 0; transform: skewX(12deg) translateX(-7px); filter: blur(1px); }
+  18% { opacity: 1; transform: skewX(-9deg) translateX(5px); filter: blur(0); }
+  36% { opacity: 0.25; transform: skewX(6deg) translateX(-4px); }
+  52% { opacity: 1; transform: skewX(-3deg) translateX(2px); }
+  68% { opacity: 0.55; transform: skewX(2deg) translateX(-1px); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+.hud-glitch-exit {
+  animation: hudGlitchExit 0.4s steps(2) both;
+}
+@keyframes hudGlitchExit {
+  0% { opacity: 1; transform: none; }
+  22% { opacity: 1; transform: skewX(-11deg) translateX(6px); }
+  44% { opacity: 0.15; transform: skewX(9deg) translateX(-9px); }
+  62% { opacity: 0.8; transform: skewX(-5deg) translateX(3px); }
+  100% { opacity: 0; transform: skewX(7deg) translateX(12px); filter: blur(1px); }
+}
+`
+let hudGlitchStyleInjected = false
+function ensureHudGlitchStyle() {
+  if (hudGlitchStyleInjected) return
+  const style = document.createElement('style')
+  style.textContent = HUD_GLITCH_STYLE
+  document.head.appendChild(style)
+  hudGlitchStyleInjected = true
+}
+
+const hudGlitchHideTimers = new WeakMap()
+
+function ensureHudGlitchSpan(el) {
+  if (!el) return null
+  ensureHudGlitchStyle()
+  let span = el.querySelector(':scope > .hud-glitch-text')
+  if (!span) {
+    span = document.createElement('span')
+    span.className = 'hud-glitch-text'
+    while (el.firstChild) span.appendChild(el.firstChild)
+    el.appendChild(span)
+  }
+  return span
+}
+
+function setHudGlitchText(el, text) {
+  const span = ensureHudGlitchSpan(el)
+  if (!span) return
+  span.textContent = text
+  span.dataset.text = text
+}
+
+function showHudGlitch(el) {
+  if (!el) return
+  ensureHudGlitchStyle()
+  clearTimeout(hudGlitchHideTimers.get(el))
+  el.style.display = 'block'
+  el.style.opacity = '1'
+  const span = ensureHudGlitchSpan(el)
+  if (!span) return
+  span.classList.remove('hud-glitch-exit', 'hud-glitch-enter')
+  // Restart enter animation.
+  void span.offsetWidth
+  span.classList.add('hud-glitch-enter')
+}
+
+function hideHudGlitch(el) {
+  if (!el || el.style.display === 'none') return
+  const span = ensureHudGlitchSpan(el)
+  if (!span) {
+    el.style.display = 'none'
+    return
+  }
+  span.classList.remove('hud-glitch-enter', 'hud-glitch-exit')
+  void span.offsetWidth
+  span.classList.add('hud-glitch-exit')
+  clearTimeout(hudGlitchHideTimers.get(el))
+  const t = setTimeout(() => {
+    el.style.display = 'none'
+    span.classList.remove('hud-glitch-exit')
+  }, HUD_GLITCH_EXIT_MS)
+  hudGlitchHideTimers.set(el, t)
+}
+
 const AMBIENT_SPAWN_INTERVAL_S = 90
 const AMBIENT_NPC_CAP = 3
 const RADAR_RANGE = 1500
@@ -91,7 +226,11 @@ const UNDOCK_BACKOFF_MARGIN = 70
 const DOCK_FLASH_FADE_S = 0.65
 const HYPERSPACE_FLASH_COLOR = '#eaffff'
 const DOCK_FLASH_COLOR = '#4fc3d9'
-const SUPERCRUISE_ARRIVAL_MARGIN = 45
+// Min standoff past the collision shell when the dock bubble is large enough
+// (stations/settlements have +2000m). Avoids bouncing off the body on drop-out.
+const SUPERCRUISE_ARRIVAL_MIN_CLEAR = 220
+// How far inside the dock shell to still count as "in range" after SC drop.
+const SUPERCRUISE_DOCK_INNER_SLACK = 120
 // A dedicated coordinate region for the docking-bay interior, far enough
 // from any system-local coordinates (which top out around 2200) that it can
 // never overlap real flight space.
@@ -148,6 +287,7 @@ function canUseFlightMode() {
 function exitFlightMode() {
   flightModeWanted = false
   flightMode = false
+  setChaseFreeLook(false)
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
   if (document.pointerLockElement === renderer.domElement) document.exitPointerLock()
@@ -203,10 +343,26 @@ window.addEventListener('blur', () => {
   keys.clear()
   laserFireHeld = false
   missileFireHeld = false
+  setChaseFreeLook(false)
 })
 
 window.addEventListener('focus', () => {
   tryRestoreFlightMode()
+})
+
+// Alt + mouse: orbit chase cam around the ship; release Alt snaps back to seat.
+function isAltKey(code) {
+  return code === 'AltLeft' || code === 'AltRight'
+}
+window.addEventListener('keydown', (e) => {
+  if (!isAltKey(e.code)) return
+  if (!gameState || paused || docked || jumpEffect || navMapOpen || inventoryOpen || missionsOpen) return
+  e.preventDefault()
+  setChaseFreeLook(true)
+})
+window.addEventListener('keyup', (e) => {
+  if (!isAltKey(e.code)) return
+  setChaseFreeLook(false)
 })
 
 document.addEventListener('visibilitychange', () => {
@@ -246,6 +402,8 @@ let probeResultsUntil = 0
 let wreckPromptEl = null
 let miningToastEl = null
 let miningToastUntil = 0
+let craftToastEl = null
+let craftToastHideTimer = null
 let factionToastEl = null
 let factionToastUntil = 0
 // Edge-detects "aliens just got wiped out/left while pirates were truced" —
@@ -303,6 +461,8 @@ function loadBodiesForCurrentSystem() {
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
   starMesh = buildStarMesh(currentSystem)
   scene.add(starMesh)
+  // Whisper of local-sun hue on the starfield (and a dimmer scene backdrop).
+  applySystemStarAmbient()
   for (const body of currentSystem.bodies) {
     const mesh = buildBodyMesh(body)
     mesh.position.fromArray(body.position)
@@ -312,14 +472,13 @@ function loadBodiesForCurrentSystem() {
     if (body.kind === 'planet') {
       const hash = hashStringForOrbit(body.id)
       const r = Math.hypot(body.position[0], body.position[2])
-      // Very slow solar orbit — full lap on the order of hours of simTime.
+      // Solar orbit (20% of prior — slowed 80% with planet/moon spin pass).
       planetOrbits.set(body.id, {
         body,
         radius: Math.max(r, 1),
         angle0: Math.atan2(body.position[2], body.position[0]),
         y: body.position[1],
-        // Halved from 0.0012–0.0030 for a slower solar year.
-        speed: 0.0006 + ((hash % 1000) / 1000) * 0.0009
+        speed: 0.00012 + ((hash % 1000) / 1000) * 0.00018
       })
     }
 
@@ -349,8 +508,9 @@ function loadBodiesForCurrentSystem() {
           radius: Math.hypot(dx, dz),
           angle0: Math.atan2(dz, dx),
           y: body.position[1] - parent.position[1],
+          // Moons: 20% of prior orbit rate (slowed 80%). Stations unchanged.
           speed: body.kind === 'moon'
-            ? 0.008 + ((hash % 1000) / 1000) * 0.012
+            ? 0.0016 + ((hash % 1000) / 1000) * 0.0024
             : 0.004 + ((hash % 1000) / 1000) * 0.006
         })
       }
@@ -460,6 +620,9 @@ const MENU_STAR_CENTER = new THREE.Vector3(0, 0, 0)
 
 function startMenuBackground() {
   if (menuStarMesh) return
+  // Neutral starfield on the title; in-system sun hue is applied on loadBodies.
+  setStarfieldStarTint(starfield, null)
+  scene.background = new THREE.Color(0x05070d)
   // Same trinary path as Whispers (forceType + starType so components/rings match).
   menuStarMesh = buildStarMesh({ id: 'menu-whispers-trinary', starType: 'trinary' }, 'trinary')
   const bounds = new THREE.Box3().setFromObject(menuStarMesh).getBoundingSphere(new THREE.Sphere())
@@ -519,14 +682,17 @@ function onProjectileHit({ position, rockPosition, destroyed, mined }) {
     if (mined.scooped) {
       const from = rockPosition ?? position
       oreScoopEffects?.burst(new THREE.Vector3(...from), 5 + Math.floor(Math.random() * 4))
-      miningToastEl.textContent = mined.destroyed
-        ? `${getGood(mined.goodId).name} deposit depleted!`
-        : `Mined 1 ${getGood(mined.goodId).name}`
-      miningToastEl.style.display = 'block'
+      setHudGlitchText(
+        miningToastEl,
+        mined.destroyed
+          ? `${getGood(mined.goodId).name} deposit depleted!`
+          : `Mined 1 ${getGood(mined.goodId).name}`
+      )
+      showHudGlitch(miningToastEl)
       miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
     } else if (mined.destroyed) {
-      miningToastEl.textContent = `${getGood(mined.goodId).name} deposit depleted!`
-      miningToastEl.style.display = 'block'
+      setHudGlitchText(miningToastEl, `${getGood(mined.goodId).name} deposit depleted!`)
+      showHudGlitch(miningToastEl)
       miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
     }
     // Full hold + not destroyed: silent strip (no toast spam).
@@ -592,6 +758,10 @@ function clearSession() {
   probeResultsUntil = 0
   wreckPromptEl?.remove()
   miningToastEl?.remove()
+  craftToastEl?.remove()
+  craftToastEl = null
+  clearTimeout(craftToastHideTimer)
+  craftToastHideTimer = null
   factionToastEl?.remove()
   truceWasActive = false
   waypointEl?.remove()
@@ -629,13 +799,28 @@ function clearProbeEffect() {
   audio.setProbeScanActive(false)
 }
 
+/** Swap the visible player hull when classId changes (shipyard Activate). */
+function rebuildPlayerShipMesh() {
+  if (!gameState) return
+  playerShipClass = getShipClass(gameState.player.ship.classId)
+  if (playerMesh) {
+    scene.remove(playerMesh)
+    playerMesh = null
+  }
+  playerMesh = buildShipMesh(playerShipClass)
+  scene.add(playerMesh)
+  syncMeshToEntity(playerMesh, gameState.player.ship)
+}
+
 function startSession(newGameState, { enterFlightMode = false } = {}) {
   clearSession()
   stopMenuBackground()
   gameState = newGameState
-  playerShipClass = getShipClass(gameState.player.ship.classId)
-  playerMesh = buildShipMesh(playerShipClass)
-  scene.add(playerMesh)
+  ensureBlueprintMaps(gameState)
+  // Offline craft completions from deserialize (wall-clock) — toast after HUD exists.
+  const offlineCraftDone = gameState._craftingJustCompleted ?? []
+  delete gameState._craftingJustCompleted
+  rebuildPlayerShipMesh()
   thrusterEffects = createThrusterEffects()
   scene.add(thrusterEffects.group)
   damageEffects = createDamageEffects()
@@ -651,7 +836,15 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   loadBodiesForCurrentSystem()
 
   hud = createHud(appEl)
-  dockingUI = createDockingUI(appEl, gameState, Math.random)
+  dockingUI = createDockingUI(appEl, gameState, Math.random, {
+    onCraftStarted: (msg) => {
+      showCraftToast(msg, 5000)
+      audio.playCraftStart()
+    },
+    // Bought ships only become active via Storage activate — rebuild the
+    // visual hull so a Corsair doesn't keep looking like a Bravia.
+    onPlayerShipChanged: () => rebuildPlayerShipMesh()
+  })
   pauseMenu = createPauseMenu(appEl, {
     onResume: () => {
       paused = false
@@ -671,16 +864,22 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   inventoryUI = createInventoryUI(appEl, gameState)
   missionsUI = createMissionsUI(appEl, gameState)
 
+  // Floating HUD copy: readable drop-shadow text, no dark pill/box behind it.
+  const FLOAT_TEXT_SHADOW =
+    '0 0 4px rgba(0,0,0,0.95),0 1px 3px rgba(0,0,0,0.95),0 0 14px rgba(0,0,0,0.75),0 0 8px rgba(0,0,0,0.6)'
+  const floatText = (extra = '') =>
+    `font-family:monospace;background:transparent;border:none;box-shadow:none;padding:0;text-shadow:${FLOAT_TEXT_SHADOW};filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));${extra}`
+
   dockPromptEl = document.createElement('div')
   dockPromptEl.id = 'dock-prompt'
   dockPromptEl.style.cssText =
-    'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);font-family:monospace;color:#cfe3ff;background:rgba(10,14,24,0.8);padding:8px 16px;display:none;'
+    `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);color:#cfe3ff;display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
   appEl.appendChild(dockPromptEl)
 
   probePromptEl = document.createElement('div')
   probePromptEl.id = 'probe-prompt'
   probePromptEl.style.cssText =
-    'position:fixed;bottom:120px;left:50%;transform:translateX(-50%);font-family:monospace;color:#cfe3ff;background:rgba(10,14,24,0.8);padding:8px 16px;display:none;'
+    `position:fixed;bottom:120px;left:50%;transform:translateX(-50%);color:#cfe3ff;display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
   appEl.appendChild(probePromptEl)
 
   // Floating multi-line probe return readout (not a blocking alert dialog).
@@ -692,49 +891,51 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
     'left:50%',
     'transform:translateX(-50%)',
     'max-width:min(520px,90vw)',
-    'font-family:monospace',
+    'text-align:center',
     'font-size:13px',
-    'line-height:1.45',
+    'line-height:1.5',
     'letter-spacing:0.4px',
     'color:#cfe3ff',
-    'text-shadow:0 0 8px rgba(79,195,217,0.55)',
-    'background:linear-gradient(180deg,rgba(8,14,28,0.82),rgba(6,10,20,0.72))',
-    'border:1px solid rgba(111,216,242,0.45)',
-    'border-left:3px solid #6fd8f2',
-    'box-shadow:0 0 22px rgba(79,195,217,0.2)',
-    'padding:14px 18px',
     'display:none',
     'pointer-events:none',
     'z-index:40',
-    'transition:opacity 0.6s ease'
+    floatText()
   ].join(';')
   appEl.appendChild(probeResultsEl)
 
   wreckPromptEl = document.createElement('div')
   wreckPromptEl.id = 'wreck-prompt'
   wreckPromptEl.style.cssText =
-    'position:fixed;bottom:240px;left:50%;transform:translateX(-50%);font-family:monospace;color:#ff8a3d;background:rgba(10,14,24,0.8);padding:8px 16px;display:none;'
+    `position:fixed;bottom:240px;left:50%;transform:translateX(-50%);color:#ff8a3d;display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
   wreckPromptEl.textContent = 'Press F to salvage wreck'
   appEl.appendChild(wreckPromptEl)
 
   miningToastEl = document.createElement('div')
   miningToastEl.id = 'mining-toast'
   miningToastEl.style.cssText =
-    'position:fixed;bottom:160px;left:50%;transform:translateX(-50%);font-family:monospace;color:#c2a35c;background:rgba(10,14,24,0.85);padding:8px 16px;display:none;'
+    `position:fixed;bottom:160px;left:50%;transform:translateX(-50%);color:#e0c878;display:none;${floatText('font-size:13px;letter-spacing:0.4px;text-align:center;max-width:min(640px,92vw);')}`
   appEl.appendChild(miningToastEl)
+
+  // Craft start/complete floating text — top-center, above docking UI (z-index 50).
+  // Wall-clock hide so it works while docked (simTime freezes in the bay).
+  craftToastEl = document.createElement('div')
+  craftToastEl.id = 'craft-toast'
+  craftToastEl.style.cssText =
+    `position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:none;max-width:min(720px,90vw);text-align:center;color:#a8f0c8;${floatText('font-size:13px;letter-spacing:0.4px;')}`
+  appEl.appendChild(craftToastEl)
 
   factionToastEl = document.createElement('div')
   factionToastEl.id = 'faction-toast'
   factionToastEl.style.cssText =
-    'position:fixed;bottom:200px;left:50%;transform:translateX(-50%);font-family:monospace;color:#7fe0a0;background:rgba(10,14,24,0.85);padding:8px 16px;display:none;'
+    `position:fixed;bottom:200px;left:50%;transform:translateX(-50%);color:#7fe0a0;display:none;${floatText('font-size:13px;letter-spacing:0.4px;text-align:center;max-width:min(640px,92vw);')}`
   appEl.appendChild(factionToastEl)
 
   waypointEl = document.createElement('div')
   waypointEl.id = 'waypoint-indicator'
   waypointEl.style.cssText = 'position:fixed;pointer-events:none;display:none;'
   waypointEl.innerHTML = `
-    <div class="wp-arrow" style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:16px solid #7fe0a0;margin:0 auto;"></div>
-    <div class="wp-label" style="margin-top:4px;font-family:monospace;color:#7fe0a0;font-size:11px;background:rgba(10,14,24,0.75);padding:2px 6px;white-space:nowrap;text-align:center;"></div>
+    <div class="wp-arrow" style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:16px solid #7fe0a0;margin:0 auto;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.9));"></div>
+    <div class="wp-label" style="margin-top:4px;color:#7fe0a0;font-size:11px;white-space:nowrap;text-align:center;${floatText()}"></div>
   `
   appEl.appendChild(waypointEl)
 
@@ -753,17 +954,18 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   targetIndicatorEl.style.cssText =
     'position:fixed;pointer-events:none;display:none;transform:translate(-50%,-50%);width:56px;height:56px;'
   targetIndicatorEl.innerHTML = `
-    <div class="target-box" style="position:absolute;inset:0;border:2px solid #cfe3ff;"></div>
-    <div class="target-label" style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;font-family:monospace;font-size:11px;color:#cfe3ff;background:rgba(10,14,24,0.75);padding:2px 6px;white-space:nowrap;text-align:center;"></div>
+    <div class="target-box" style="position:absolute;inset:0;border:2px solid #cfe3ff;filter:drop-shadow(0 0 3px rgba(0,0,0,0.85));"></div>
+    <div class="target-label" style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;color:#cfe3ff;font-size:11px;white-space:nowrap;text-align:center;${floatText()}"></div>
   `
   appEl.appendChild(targetIndicatorEl)
 
   // Below the HUD system-name banner (top center) so the two never overlap.
+  // Glitch enter/exit + sparse continuous chromatic slices (title-screen style).
   cruiseIndicatorEl = document.createElement('div')
   cruiseIndicatorEl.id = 'cruise-indicator'
-  cruiseIndicatorEl.textContent = 'SUPERCRUISE ENGAGED'
   cruiseIndicatorEl.style.cssText =
-    'position:fixed;top:62px;left:50%;transform:translateX(-50%);font-family:monospace;letter-spacing:2px;color:#7fe0a0;background:rgba(10,14,24,0.7);padding:6px 16px;display:none;'
+    `position:fixed;top:62px;left:50%;transform:translateX(-50%);color:#7fe0a0;display:none;${floatText('font-size:13px;letter-spacing:2.5px;font-weight:600;')}`
+  setHudGlitchText(cruiseIndicatorEl, 'SUPERCRUISE ENGAGED')
   appEl.appendChild(cruiseIndicatorEl)
 
   // Reused for both the hyperspace punch and the dock/undock transition —
@@ -775,6 +977,8 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
 
   nextAmbientSpawnAt = gameState.simTime + AMBIENT_SPAWN_INTERVAL_S
   audio.startAmbientMusic()
+
+  if (offlineCraftDone.length) toastCraftCompleted(offlineCraftDone)
 
   // Only a brand new game defaults into flight mode — per user request, not
   // a loaded save, which resumes however the player last left it (paused,
@@ -804,6 +1008,31 @@ function dockRangeFor(body) {
   const base = Math.max(DOCK_RANGE, bodyRadius + getShipCollisionRadius(playerShipClass) + DOCK_RANGE_COLLISION_MARGIN)
   if (body.kind === 'station' || body.kind === 'settlement') return base + DOCK_RANGE_STATION_EXTRA
   return base
+}
+
+/**
+ * Where supercruise should drop out around a waypoint body.
+ * Further out than the collision shell (no bounce) but still inside dockRange
+ * so F-to-dock still works; ship stays facing the objective on drop.
+ */
+function supercruiseArrivalRangeFor(body) {
+  const bodyRadius = collisionRadiusFor(body) ?? 0
+  const shipR = getShipCollisionRadius(playerShipClass)
+  const shell = bodyRadius + shipR
+  const dockR = dockRangeFor(body)
+  const span = Math.max(0, dockR - shell)
+  // Large dock bubble (stations): sit well out, ~70% of the way from shell → dock edge.
+  // Tiny bubble (planets): as far out as dock still allows.
+  let preferred
+  if (span > SUPERCRUISE_ARRIVAL_MIN_CLEAR * 2) {
+    preferred = shell + Math.max(SUPERCRUISE_ARRIVAL_MIN_CLEAR, span * 0.72)
+  } else {
+    preferred = Math.max(shell + 12, dockR - SUPERCRUISE_DOCK_INNER_SLACK)
+  }
+  // Clamp into (shell, dockR) so we never clip the body or overshoot dock range.
+  const minR = shell + Math.min(SUPERCRUISE_ARRIVAL_MIN_CLEAR, Math.max(12, span * 0.35))
+  const maxR = Math.max(minR, dockR - 25)
+  return Math.min(maxR, Math.max(minR, preferred))
 }
 
 // Special waypoint id for the system star (local origin) — not a real body.
@@ -855,16 +1084,51 @@ function lootNearbyWreck(wreck) {
         }
       }).join(', ')}`
     : ''
-  miningToastEl.textContent = `Salvaged ${parts}${partsMsg}${weaponMsg} from the wreck`
-  miningToastEl.style.display = 'block'
+  const bpMsg = loot.blueprints
+    ? `${parts || partsMsg || weaponMsg ? ' and ' : ''}${Object.entries(loot.blueprints).map(([id, qty]) => {
+        try {
+          return `${qty}× ${getBlueprint(id).name}`
+        } catch {
+          return `${qty}× blueprint`
+        }
+      }).join(', ')}`
+    : ''
+  setHudGlitchText(miningToastEl, `Salvaged ${parts}${partsMsg}${weaponMsg}${bpMsg} from the wreck`)
+  showHudGlitch(miningToastEl)
   miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
 }
 
 function flashToast(text, durationS = MINING_TOAST_DURATION_S) {
   if (!miningToastEl || !gameState) return
-  miningToastEl.textContent = text
-  miningToastEl.style.display = 'block'
+  setHudGlitchText(miningToastEl, text)
+  showHudGlitch(miningToastEl)
   miningToastUntil = gameState.simTime + durationS
+}
+
+function showCraftToast(text, durationMs = 5500) {
+  if (!craftToastEl) return
+  setHudGlitchText(craftToastEl, text)
+  showHudGlitch(craftToastEl)
+  clearTimeout(craftToastHideTimer)
+  craftToastHideTimer = setTimeout(() => {
+    hideHudGlitch(craftToastEl)
+  }, durationMs)
+}
+
+function toastCraftCompleted(jobs) {
+  if (!jobs.length) return
+  audio.playCraftComplete()
+  // One floating line — last job if several finished the same tick (rare).
+  const job = jobs[jobs.length - 1]
+  let item = job.blueprintId
+  try {
+    item = getBlueprint(job.blueprintId).itemName
+  } catch { /* */ }
+  const extra = jobs.length > 1 ? ` (+${jobs.length - 1} more)` : ''
+  showCraftToast(
+    `Assembly complete: ${item} ready at ${job.stationName} (${job.systemName})${extra}`,
+    6500
+  )
 }
 
 function isProbeable(body) {
@@ -991,17 +1255,12 @@ function probeBody(body) {
 
 function showFloatingProbeResults(messages) {
   if (!probeResultsEl || !messages.length) return
-  probeResultsEl.replaceChildren()
-  for (const line of messages) {
-    const row = document.createElement('div')
-    row.className = 'probe-result-line'
-    row.style.cssText = 'margin:0 0 6px 0;padding:0;'
-    row.textContent = line
-    probeResultsEl.appendChild(row)
-  }
-  probeResultsEl.style.display = 'block'
-  probeResultsEl.style.opacity = '1'
-  // Stay long enough to read multi-line mission results; fade via simTime.
+  // Single glitch line (joined) so enter/exit + chromatic slices match other HUD text.
+  setHudGlitchText(probeResultsEl, messages.join('\n'))
+  const span = probeResultsEl.querySelector('.hud-glitch-text')
+  if (span) span.style.whiteSpace = 'pre-line'
+  showHudGlitch(probeResultsEl)
+  // Stay long enough to read multi-line mission results; dismiss with glitch (no fade).
   const hold = Math.min(14, 5.5 + messages.length * 1.4)
   probeResultsUntil = (gameState?.simTime ?? 0) + hold
 }
@@ -1046,7 +1305,12 @@ function finishProbeResults(body, attemptNumber = null) {
   }
   if (result.found && result.stored) messages.push(`Probe found valuable survey data at ${body.name}! Added to cargo — sell it at any station.`)
   else if (result.found) messages.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
-  else if (!investigation && !probeMissionHere) messages.push(`Probe found nothing of interest at ${body.name}.`)
+  else if (!investigation && !probeMissionHere && !result.blueprint) {
+    messages.push(`Probe found nothing of interest at ${body.name}.`)
+  }
+  if (result.blueprint) {
+    messages.push(`Rare find: ${result.blueprint.name}! Stored in ship blueprints — craft at a station Industry bay.`)
+  }
 
   if (attempt >= MAX_PROBE_ATTEMPTS) {
     messages.push(PROBE_EXHAUSTED_MESSAGE)
@@ -1179,16 +1443,20 @@ function handleJump(targetSystemId) {
   // Validate up front so we don't play the animation just to fail partway
   // through; hyperspaceJump re-checks these itself as the safety net.
   if (gameState.inCombat) {
-    alert('Cannot hyperspace while in combat.')
+    flashToast('Cannot engage hyperdrive while in combat')
+    return
+  }
+  if (cruising) {
+    flashToast('Drop supercruise before engaging hyperdrive')
     return
   }
   if (targetSystemId === gameState.player.currentSystemId) {
-    alert('Already in that system.')
+    flashToast('Already in that system')
     return
   }
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
   if (!canJumpTo(currentSystem, targetSystemId)) {
-    alert('Out of hyperspace range — jump via a neighboring system first.')
+    flashToast('Out of hyperspace range — jump via a neighboring system first')
     return
   }
   navMapOpen = false
@@ -1364,6 +1632,8 @@ function beginDocking(body) {
   if (cruising || wasCruising) {
     cruising = false
     wasCruising = false
+    hideHudGlitch(cruiseIndicatorEl)
+    hud?.setCruiseGlitch(false)
     gameState.player.ship.velocity = [0, 0, 0]
     gameState.player.ship.throttle = 0
     motionFx.stopCruiseStreaks()
@@ -1580,7 +1850,12 @@ window.addEventListener('keydown', (e) => {
     audio.setThrustState(null)
     if (navMapOpen) {
       exitFlightMode()
-      navMap.show({ onJump: handleJump, onClose: () => { navMapOpen = false; reenterFlightMode() } })
+      navMap.show({
+        onJump: handleJump,
+        onClose: () => { navMapOpen = false; reenterFlightMode() },
+        supercruiseActive: cruising,
+        inCombat: !!gameState.inCombat
+      })
     } else {
       navMap.hide()
       reenterFlightMode()
@@ -1834,6 +2109,20 @@ function getCurrentStarColor() {
   return primary?.clone?.() ?? primary ?? null
 }
 
+/** Subtle starfield + scene-background tint from the system sun. */
+function applySystemStarAmbient() {
+  const starColor = getCurrentStarColor()
+  setStarfieldStarTint(starfield, starColor)
+  if (starColor) {
+    const bg = starColor.clone().lerp(new THREE.Color(0x05070d), 0.94)
+    bg.multiplyScalar(0.42)
+    scene.background = bg
+  } else {
+    scene.background = new THREE.Color(0x05070d)
+    setStarfieldStarTint(starfield, null)
+  }
+}
+
 // Host shells that contain the active waypoint (surface settlements etc.) —
 // tunnel must not fling the player to the far side of the parent planet.
 function cruiseTunnelIgnoreIds(wp, bodies) {
@@ -1917,6 +2206,20 @@ function resolveTarget() {
       kindLabel: 'star'
     }
   }
+  // Free-space nav point (e.g. after supercruise drop on a mission marker).
+  if (currentTarget.kind === 'navpoint') {
+    if (!currentTarget.position) return null
+    return {
+      position: currentTarget.position,
+      name: currentTarget.name || 'Destination',
+      hostile: false,
+      hullPct: null,
+      isAsteroid: false,
+      reticle: 'nav',
+      kindLabel: 'nav'
+    }
+  }
+  if (currentTarget.kind !== 'body') return null
   const body = currentSystem.bodies.find((b) => b.id === currentTarget.id)
   if (!body) return null
   return {
@@ -1960,7 +2263,9 @@ function updateTargetIndicator() {
             ? '#9ad0ff'
             : target.reticle === 'wreck'
               ? '#c0a070'
-              : '#cfe3ff'
+              : target.reticle === 'nav'
+                ? '#7fe0a0'
+                : '#cfe3ff'
   targetIndicatorEl.querySelector('.target-box').style.borderColor = color
   const label = targetIndicatorEl.querySelector('.target-label')
   label.style.color = color
@@ -1983,11 +2288,38 @@ function updateCrosshair() {
   const quat = new THREE.Quaternion().fromArray(gameState.player.ship.quaternion)
   const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat)
   const aimPoint = shipPos.addScaledVector(forward, CROSSHAIR_DISTANCE)
+  // Camera matrices must match the seat we just placed (see syncChaseCamera).
+  camera.updateMatrixWorld(true)
   const projected = aimPoint.project(camera)
   if (projected.z > 1) return
 
-  crosshairEl.style.left = `${(projected.x * 0.5 + 0.5) * window.innerWidth}px`
-  crosshairEl.style.top = `${(-projected.y * 0.5 + 0.5) * window.innerHeight}px`
+  // Whole pixels — subpixel left/top churn reads as a shaky reticle.
+  const x = Math.round((projected.x * 0.5 + 0.5) * window.innerWidth)
+  const y = Math.round((-projected.y * 0.5 + 0.5) * window.innerHeight)
+  crosshairEl.style.left = `${x}px`
+  crosshairEl.style.top = `${y}px`
+}
+
+/** After SC drops the waypoint, lock Tab-target on the destination for a reticle. */
+function setTargetFromSupercruiseArrival(wp) {
+  if (!wp) return
+  if (wp.bodyId === SYSTEM_STAR_WAYPOINT_ID) {
+    currentTarget = { kind: 'star', id: SYSTEM_STAR_WAYPOINT_ID }
+    return
+  }
+  if (wp.bodyId) {
+    currentTarget = { kind: 'body', id: wp.bodyId }
+    return
+  }
+  // Free-space marker (e.g. bounty hunt) — fixed point, not a body.
+  if (wp.position) {
+    currentTarget = {
+      kind: 'navpoint',
+      id: 'sc-arrival',
+      position: [...wp.position],
+      name: wp.name || 'Destination'
+    }
+  }
 }
 
 // Body waypoint, system star, or free-space mission marker (bounty location).
@@ -1999,20 +2331,20 @@ function getActiveWaypoint() {
       name: `${currentSystem?.name ?? 'System'} Star`,
       bodyId: SYSTEM_STAR_WAYPOINT_ID,
       isMission: false,
-      arrivalRange: 15000 + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
+      // Star has no dock bubble — keep a wide clear standoff from the corona.
+      arrivalRange: 15000 + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MIN_CLEAR
     }
   }
   if (gameState.player.waypointBodyId) {
     const body = currentSystem.bodies.find((b) => b.id === gameState.player.waypointBodyId)
     if (body) {
       const missionBodies = missionMarkedBodyIds(gameState, currentSystem.id)
-      const bodyRadius = collisionRadiusFor(body) ?? 0
       return {
         position: body.position,
         name: body.name,
         bodyId: body.id,
         isMission: missionBodies.has(body.id),
-        arrivalRange: bodyRadius + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
+        arrivalRange: supercruiseArrivalRangeFor(body)
       }
     }
   }
@@ -2170,6 +2502,12 @@ function animate() {
     return
   }
 
+  // Wall-clock industry jobs (run even while docked / in menus / mid-jump UI).
+  {
+    const done = updateCraftingJobs(gameState, Date.now())
+    if (done.length) toastCraftCompleted(done)
+  }
+
   if (jumpEffect) {
     motionFx.hide()
     updateJumpEffect(dt)
@@ -2236,11 +2574,15 @@ function animate() {
         wp.bodyId
       )) {
         cruising = false
+        // Kill residual cruise speed immediately so we don't coast into the shell.
+        gameState.player.ship.velocity = [0, 0, 0]
+        gameState.player.ship.throttle = 0
+        // Keep a reticle on the destination after the waypoint is cleared.
+        setTargetFromSupercruiseArrival(wp)
         // Clear nav lock on arrival — you're already there.
         gameState.player.waypointBodyId = null
         gameState.player.waypointPosition = null
-        // Snap facing onto the destination we just arrived at so the player
-        // isn't looking past the body after the autopilot coasted in.
+        // Snap facing onto the destination so you're lined up to dock/approach.
         const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
         const targetPos = new THREE.Vector3(...wp.position)
         if (shipPos.distanceToSquared(targetPos) > 1e-4) {
@@ -2250,6 +2592,12 @@ function animate() {
     }
     audio.setThrustState(null)
   } else {
+    // Alt free-look consumes mouse deltas so the ship doesn't turn with the pan.
+    if (isChaseFreeLook() && flightMode) {
+      addChaseFreeLookDelta(mouseAim.dx, mouseAim.dy)
+      mouseAim.dx = 0
+      mouseAim.dy = 0
+    }
     updateFlight(gameState.player.ship, playerShipClass, flightMode ? keys : EMPTY_KEYS, mouseAim, dt)
     thrustState = !flightMode ? null : keys.has('KeyW') ? 'accel' : keys.has('KeyS') ? 'brake' : null
     audio.setThrustState(thrustState)
@@ -2272,6 +2620,14 @@ function animate() {
       updateStarfieldMotion(starfield, 0, false)
     }
     audio.announce(cruising ? 'Supercruise engaged' : 'Supercruise disengaged')
+    if (cruising) {
+      setHudGlitchText(cruiseIndicatorEl, 'SUPERCRUISE ENGAGED')
+      showHudGlitch(cruiseIndicatorEl)
+      hud?.setCruiseGlitch(true)
+    } else {
+      hideHudGlitch(cruiseIndicatorEl)
+      hud?.setCruiseGlitch(false)
+    }
     wasCruising = cruising
   }
 
@@ -2309,18 +2665,20 @@ function animate() {
   })
   // Skybox stays unwarped; cruise uses motionFx full-screen star tunnel.
   updateStarfieldMotion(starfield, motion.intensity, cruising)
-  // Speed FOV: mild in normal flight; cruise uses a fixed +5% FOV only
-  // (camera distance is handled by snappier chase follow in syncChaseCamera).
+  // Speed FOV: mild in normal flight; cruise uses a fixed +5% FOV only.
+  // Snap when close so continuous FOV lerp doesn't jitter projected HUD reticles.
   const targetFov = cruising ? CRUISE_FOV : BASE_FOV + motion.fovBoost
-  camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4)
-  camera.updateProjectionMatrix()
-  if (cruising) {
-    const pulse = 0.6 + 0.4 * Math.sin(gameState.simTime * 6)
-    cruiseIndicatorEl.style.opacity = pulse.toFixed(2)
-    cruiseIndicatorEl.style.display = 'block'
+  if (Math.abs(camera.fov - targetFov) < 0.03) {
+    if (camera.fov !== targetFov) {
+      camera.fov = targetFov
+      camera.updateProjectionMatrix()
+    }
   } else {
-    cruiseIndicatorEl.style.display = 'none'
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4)
+    camera.updateProjectionMatrix()
   }
+  // SUPERCRUISE ENGAGED: shown/hidden with glitch enter/exit on wasCruising edge.
+  // Player mesh + chase cam are re-synced after orbital carry (see below).
   syncMeshToEntity(playerMesh, gameState.player.ship)
   const strafeX = cruising ? 0 : (gameState.player.ship.strafeX ?? 0)
   const strafeY = cruising ? 0 : (gameState.player.ship.strafeY ?? 0)
@@ -2358,9 +2716,9 @@ function animate() {
     // flag just guards against re-showing it every subsequent frame.
     if (npc.aiState === 'ram' && !npc.ramAnnounced) {
       npc.ramAnnounced = true
-      factionToastEl.textContent = npc.ramQuote
       factionToastEl.style.color = '#e05a5a'
-      factionToastEl.style.display = 'block'
+      setHudGlitchText(factionToastEl, npc.ramQuote)
+      showHudGlitch(factionToastEl)
       factionToastUntil = gameState.simTime + FACTION_TOAST_DURATION_S
     }
   }
@@ -2390,9 +2748,9 @@ function animate() {
         }
       }
       gameState.npcs = gameState.npcs.filter((n) => !departingIds.includes(n.id))
-      factionToastEl.textContent = 'The pirates thank you for the assist, and hyperspace away.'
       factionToastEl.style.color = '#7fe0a0'
-      factionToastEl.style.display = 'block'
+      setHudGlitchText(factionToastEl, 'The pirates thank you for the assist, and hyperspace away.')
+      showHudGlitch(factionToastEl)
       factionToastUntil = gameState.simTime + FACTION_TOAST_DURATION_S
     }
   }
@@ -2480,7 +2838,6 @@ function animate() {
     }
   }
 
-  syncChaseCamera(camera, gameState.player.ship, { cruising })
   if (starMesh) updateStarMesh(starMesh, gameState.simTime, dt, camera)
   for (const mesh of bodyMeshes.values()) updateStationMesh(mesh, gameState.simTime, dt)
   // Depleted rocks "explode" (see onProjectileHit) and stay hidden until
@@ -2532,6 +2889,11 @@ function animate() {
   }
   applyOrbitalCarry(sysBodies, prevBodyPositions, dt)
 
+  // Chase cam + mesh after orbital carry so crosshair projection matches the
+  // final ship pose this frame (syncing earlier left a one-frame wobble).
+  syncMeshToEntity(playerMesh, gameState.player.ship)
+  syncChaseCamera(camera, gameState.player.ship, { cruising })
+
   // Tidally locked moons face their parent; others keep spinning via updateStationMesh.
   for (const [id, mesh] of bodyMeshes) {
     if (!mesh.userData.tidallyLocked || !mesh.userData.parentId) continue
@@ -2573,20 +2935,27 @@ function animate() {
   // KeyF handler's own dock-takes-priority-over-loot fallback.
   wreckPromptEl.style.display = !nearbyBody && findNearbyWreck() ? 'block' : 'none'
 
-  if (miningToastEl.style.display === 'block' && gameState.simTime > miningToastUntil) {
-    miningToastEl.style.display = 'none'
+  if (
+    miningToastEl.style.display === 'block' &&
+    gameState.simTime > miningToastUntil &&
+    !miningToastEl.querySelector('.hud-glitch-exit')
+  ) {
+    hideHudGlitch(miningToastEl)
   }
-  if (factionToastEl.style.display === 'block' && gameState.simTime > factionToastUntil) {
-    factionToastEl.style.display = 'none'
+  if (
+    factionToastEl.style.display === 'block' &&
+    gameState.simTime > factionToastUntil &&
+    !factionToastEl.querySelector('.hud-glitch-exit')
+  ) {
+    hideHudGlitch(factionToastEl)
   }
-  if (probeResultsEl && probeResultsEl.style.display === 'block') {
-    const remain = probeResultsUntil - gameState.simTime
-    if (remain <= 0) {
-      probeResultsEl.style.display = 'none'
-      probeResultsEl.style.opacity = '1'
-    } else if (remain < 1.2) {
-      probeResultsEl.style.opacity = String(Math.max(0, remain / 1.2))
-    }
+  if (
+    probeResultsEl &&
+    probeResultsEl.style.display === 'block' &&
+    gameState.simTime > probeResultsUntil &&
+    !probeResultsEl.querySelector('.hud-glitch-exit')
+  ) {
+    hideHudGlitch(probeResultsEl)
   }
 
   updateWaypointIndicator()

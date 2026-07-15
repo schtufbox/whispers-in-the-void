@@ -353,6 +353,7 @@ export function createMotionEffects(container) {
   overlay.id = 'motion-fx-overlay'
   // Radial vignette + soft edge glow only — no vertical line streaks
   // (those read as a scanline cage, not motion). 3D speed lines handle rush.
+  // Supercruise HUD glitch lives on #hud (see ui/hud.js), not full-screen here.
   overlay.innerHTML = `
     <div class="mf-radial"></div>
     <div class="mf-chroma"></div>

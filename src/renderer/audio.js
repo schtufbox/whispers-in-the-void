@@ -258,6 +258,21 @@ export function playClick() {
   tone({ type: 'square', freq: 700, duration: 0.05, peak: 0.08 })
 }
 
+/** Soft industrial "order accepted" chime when a craft job starts. */
+export function playCraftStart() {
+  tone({ type: 'sine', freq: 392, duration: 0.12, peak: 0.11 })
+  tone({ type: 'sine', freq: 523, duration: 0.16, peak: 0.13, delay: 0.09 })
+  tone({ type: 'triangle', freq: 659, duration: 0.22, peak: 0.09, delay: 0.18 })
+}
+
+/** Brighter success chime when a craft job finishes. */
+export function playCraftComplete() {
+  tone({ type: 'sine', freq: 523, duration: 0.14, peak: 0.13 })
+  tone({ type: 'sine', freq: 659, duration: 0.16, peak: 0.15, delay: 0.11 })
+  tone({ type: 'sine', freq: 784, duration: 0.22, peak: 0.16, delay: 0.22 })
+  tone({ type: 'triangle', freq: 1047, duration: 0.32, peak: 0.1, delay: 0.34 })
+}
+
 // Shared noise buffer fillers (hyperdrive static + supercruise thunder beds).
 function fillBrownNoise(data) {
   let last = 0

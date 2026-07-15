@@ -243,8 +243,8 @@ export function buildPlanetMesh(body) {
   const tidallyLocked = body.kind === 'moon' && rng() < 0.55
   mesh.userData.tidallyLocked = tidallyLocked
   mesh.userData.parentId = body.parentId
-  // Slower than the old 0.015–0.05 so rotation reads as planetary, not a top.
-  mesh.userData.spinSpeed = tidallyLocked ? 0 : range(rng, 0.004, 0.014) * (rng() < 0.5 ? 1 : -1)
+  // Axial spin only (orbits are separate). Slowed another 80% vs prior range.
+  mesh.userData.spinSpeed = tidallyLocked ? 0 : range(rng, 0.00016, 0.00056) * (rng() < 0.5 ? 1 : -1)
 
   return mesh
 }

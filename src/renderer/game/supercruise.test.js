@@ -143,7 +143,9 @@ test('supercruise reaches a surface settlement sitting on a large host planet', 
   const planet = { id: 'planet-1', kind: 'planet', position: [0, 0, 0], radius: 1000 }
   const settlement = { id: 'settlement-1', kind: 'settlement', position: [0, 1005, 0] }
   const target = settlement.position
-  const arrivalRange = 72 + shipRadius + 45
+  // Settlement dock bubble is large (+2000); SC should stop well short of the mesh.
+  const settlementShell = 72 + shipRadius
+  const arrivalRange = settlementShell + 220
   const bodies = [planet, settlement]
 
   let arrived = false
@@ -160,6 +162,8 @@ test('supercruise reaches a surface settlement sitting on a large host planet', 
     )
   }
   assert.equal(arrived, true, 'should arrive at surface settlement without orbit-locking on the host')
+  const dist = Math.hypot(...shipState.position.map((v, i) => v - target[i]))
+  assert.ok(dist >= arrivalRange * 0.9, 'should drop out near the arrival standoff, not on the mesh')
 })
 
 test('updateSupercruise with a blocker still reaches the target and stays outside its shell', () => {
@@ -172,7 +176,7 @@ test('updateSupercruise with a blocker still reaches the target and stays outsid
   const blocker = { id: 'blocker', kind: 'planet', position: [40, 0, 8000], radius: 100 }
   const dest = { id: 'dest', kind: 'planet', position: [0, 0, 25000], radius: 30 }
   const bodies = [blocker, dest]
-  const arrivalRange = 30 + shipRadius + 45
+  const arrivalRange = 30 + shipRadius + 220
 
   let arrived = false
   let minDistToBlocker = Infinity

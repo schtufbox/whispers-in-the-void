@@ -59,10 +59,49 @@ function localPosition(rng, systemScale) {
   return [radius * Math.sin(phi) * Math.cos(theta), radius * Math.cos(phi) * 0.3, radius * Math.sin(phi) * Math.sin(theta)]
 }
 
-// Flat XZ-plane orbit around a host body (moons, orbiting stations).
-function localPositionNearBody(rng, parentPosition, parentRadius, ownClearance) {
+// XZ orbital radius of a body around its host (matches main.js moonOrbits).
+function xzOrbitRadius(position, parentPosition) {
+  const dx = position[0] - parentPosition[0]
+  const dz = position[2] - parentPosition[2]
+  return Math.hypot(dx, dz)
+}
+
+/**
+ * Flat XZ-plane orbit around a host body (moons, orbiting stations).
+ * @param {Array<{ r: number, halfWidth: number }>} [avoidBands]
+ *   Forbidden orbital-radius bands so co-hosted moons/stations don't share an
+ *   orbit shell (radial gap >= moon size + station shell at every angle).
+ */
+function localPositionNearBody(rng, parentPosition, parentRadius, ownClearance, avoidBands = []) {
   const clearance = parentRadius + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
-  const xzRadius = Math.max(clearance, range(rng, Math.max(MOON_ORBIT_MIN_RADIUS, clearance), Math.max(MOON_ORBIT_MAX_RADIUS, clearance * 1.4)))
+  const minR = Math.max(MOON_ORBIT_MIN_RADIUS, clearance)
+  // Default outer roll; expand if we must clear co-hosted orbiters further out.
+  let maxR = Math.max(MOON_ORBIT_MAX_RADIUS, clearance * 1.4)
+  for (const band of avoidBands) {
+    maxR = Math.max(maxR, band.r + band.halfWidth + ownClearance * 0.15)
+  }
+
+  function radiusOk(r) {
+    return avoidBands.every((b) => Math.abs(r - b.r) >= b.halfWidth)
+  }
+
+  let xzRadius = null
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const candidate = range(rng, minR, Math.max(minR * 1.05, maxR))
+    if (radiusOk(candidate)) {
+      xzRadius = candidate
+      break
+    }
+  }
+  // Fallback: park outside the outermost forbidden band (always clears moons).
+  if (xzRadius == null) {
+    xzRadius = minR
+    for (const band of avoidBands) {
+      xzRadius = Math.max(xzRadius, band.r + band.halfWidth)
+    }
+    xzRadius += range(rng, ownClearance * 0.05, ownClearance * 0.25)
+  }
+
   const theta = rng() * Math.PI * 2
   const y = range(rng, -xzRadius * 0.15, xzRadius * 0.15)
   return [
@@ -70,6 +109,26 @@ function localPositionNearBody(rng, parentPosition, parentRadius, ownClearance) 
     parentPosition[1] + y,
     parentPosition[2] + xzRadius * Math.sin(theta)
   ]
+}
+
+/** Orbit shells of moons / stations already bound to this host. */
+function orbitAvoidBandsForHost(system, host, ownClearance) {
+  const bands = []
+  for (const b of system.bodies) {
+    if (!b.parentId || b.parentId !== host.id) continue
+    if (b.kind !== 'moon' && b.kind !== 'station') continue
+    const r = xzOrbitRadius(b.position, host.position)
+    // Radial gap so full coplanar orbits never intersect collision shells.
+    const otherShell =
+      b.kind === 'moon'
+        ? (b.radius ?? 0)
+        : STATION_CLEARANCE_RADIUS
+    bands.push({
+      r,
+      halfWidth: otherShell + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
+    })
+  }
+  return bands
 }
 
 // Station orbiting the system star (origin).
@@ -190,7 +249,16 @@ function makeStation(rng, idCounter, system) {
     } else {
       const host = pick(rng, bodyHosts)
       const hostRadius = host.radius ?? 0
-      position = localPositionNearBody(rng, host.position, hostRadius, STATION_CLEARANCE_RADIUS)
+      // Keep station orbital radius clear of co-hosted moons (and sibling stations).
+      // A planet may have both; they must not share / cross the same orbit shell.
+      const avoidBands = orbitAvoidBandsForHost(system, host, STATION_CLEARANCE_RADIUS)
+      position = localPositionNearBody(
+        rng,
+        host.position,
+        hostRadius,
+        STATION_CLEARANCE_RADIUS,
+        avoidBands
+      )
       parentId = host.id
     }
   }
@@ -205,7 +273,8 @@ function makeStation(rng, idCounter, system) {
     radius: null,
     economyTags: randomTags(rng),
     hasMissions: true,
-    hasShipyard: rng() < 0.6,
+    // Every station stocks a full shipyard (buy/sell ships + armoury).
+    hasShipyard: true,
     hasShipParts: rng() < 0.06
   }
 }
@@ -413,6 +482,7 @@ function placeWhispersSystem(systems, bodyIdCounter) {
   }
   station.name = WHISPERS_STATION_NAME
   station.hasMissions = true
+  station.hasShipyard = true
 
   return bodyIdCounter
 }

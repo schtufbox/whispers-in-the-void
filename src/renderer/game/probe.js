@@ -1,4 +1,10 @@
 import { SURVEY_DATA_GOOD_ID } from '../data/goods.js'
+import {
+  PROBE_BLUEPRINT_DROP_CHANCE,
+  tryRollBlueprintDrop,
+  grantShipBlueprint
+} from './crafting.js'
+import { getBlueprint } from '../data/blueprints.js'
 
 export const PROBE_FIND_CHANCE = 0.08
 export const MAX_PROBE_ATTEMPTS = 3
@@ -43,12 +49,28 @@ export function isActiveMissionProbeTarget(gameState, bodyId) {
 // forceFind: used so a mission-target first probe always yields its result path
 // (caller still handles mission logic separately; this only affects survey data).
 export function launchProbe(gameState, shipClass, rng, { forceFind = false } = {}) {
-  if (!forceFind && rng() >= PROBE_FIND_CHANCE) return { found: false, stored: false }
+  // Independent ultra-rare blueprint find (does not require survey-data roll).
+  const blueprintId = tryRollBlueprintDrop(rng, PROBE_BLUEPRINT_DROP_CHANCE)
+  let blueprint = null
+  if (blueprintId) {
+    grantShipBlueprint(gameState, blueprintId)
+    try {
+      blueprint = getBlueprint(blueprintId)
+    } catch {
+      blueprint = { name: 'Unknown Blueprint' }
+    }
+  }
+
+  if (!forceFind && rng() >= PROBE_FIND_CHANCE) {
+    return { found: false, stored: false, blueprint }
+  }
 
   const cargo = gameState.player.ship.cargo
   const used = Object.values(cargo).reduce((a, b) => a + b, 0)
-  if (used >= shipClass.stats.cargoCapacity) return { found: true, stored: false }
+  if (used >= shipClass.stats.cargoCapacity) {
+    return { found: true, stored: false, blueprint }
+  }
 
   cargo[SURVEY_DATA_GOOD_ID] = (cargo[SURVEY_DATA_GOOD_ID] ?? 0) + 1
-  return { found: true, stored: true }
+  return { found: true, stored: true, blueprint }
 }

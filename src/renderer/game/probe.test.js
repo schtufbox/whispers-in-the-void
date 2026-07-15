@@ -18,24 +18,35 @@ function freshShip() {
 test('a lucky roll finds survey data and stores it in cargo', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const gameState = { player: { ship: freshShip() } }
-  const result = launchProbe(gameState, shipClass, () => 0)
-  assert.deepEqual(result, { found: true, stored: true })
+  // First rng call is blueprint chance (skip with high value); second is survey find.
+  let n = 0
+  const rng = () => (++n === 1 ? 0.99 : 0)
+  const result = launchProbe(gameState, shipClass, rng)
+  assert.equal(result.found, true)
+  assert.equal(result.stored, true)
+  assert.equal(result.blueprint, null)
   assert.equal(gameState.player.ship.cargo[SURVEY_DATA_GOOD_ID], 1)
 })
 
 test('an unlucky roll finds nothing and leaves cargo untouched', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const gameState = { player: { ship: freshShip() } }
+  // High values miss both rare blueprint and survey rolls.
   const result = launchProbe(gameState, shipClass, () => 0.5)
-  assert.deepEqual(result, { found: false, stored: false })
+  assert.equal(result.found, false)
+  assert.equal(result.stored, false)
+  assert.equal(result.blueprint, null)
   assert.deepEqual(gameState.player.ship.cargo, {})
 })
 
 test('a find is lost if the cargo hold is already full', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const gameState = { player: { ship: { cargo: { ore: shipClass.stats.cargoCapacity } } } }
-  const result = launchProbe(gameState, shipClass, () => 0)
-  assert.deepEqual(result, { found: true, stored: false })
+  let n = 0
+  const rng = () => (++n === 1 ? 0.99 : 0)
+  const result = launchProbe(gameState, shipClass, rng)
+  assert.equal(result.found, true)
+  assert.equal(result.stored, false)
   assert.equal(gameState.player.ship.cargo[SURVEY_DATA_GOOD_ID], undefined)
 })
 
@@ -54,7 +65,8 @@ test('forceFind always yields a survey-data find when cargo has room', () => {
   const gameState = { player: { ship: freshShip() } }
   // Unlucky rng would normally miss — forceFind overrides for mission first probe.
   const result = launchProbe(gameState, shipClass, () => 0.99, { forceFind: true })
-  assert.deepEqual(result, { found: true, stored: true })
+  assert.equal(result.found, true)
+  assert.equal(result.stored, true)
 })
 
 test('isActiveMissionProbeTarget detects open probe and investigation targets', () => {
