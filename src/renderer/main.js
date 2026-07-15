@@ -10,21 +10,31 @@ import { buildPlanetMesh } from './render/planetMesh.js'
 import { buildStarMesh, updateStarMesh } from './render/starMesh.js'
 import { buildAsteroidFieldMesh, getAsteroidRocks } from './render/asteroidFieldMesh.js'
 import { buildProjectileMesh, buildImpactFlash } from './render/projectileMesh.js'
-import { buildStationInteriorMesh } from './render/stationInterior.js'
+import { buildStationInteriorMesh, updateStationInterior } from './render/stationInterior.js'
 import { buildWreckMesh, updateWreckMesh } from './render/wreckMesh.js'
-import { syncMeshToEntity, syncChaseCamera } from './render/sceneSync.js'
+import { buildProbeMesh, updateProbeMesh } from './render/probeMesh.js'
+import { syncMeshToEntity, syncChaseCamera, adjustChaseZoom, resetChaseZoom } from './render/sceneSync.js'
 import { createThrusterEffects } from './render/thrusterParticles.js'
 import { createDamageEffects } from './render/damageEffects.js'
+import { createOreScoopEffects } from './render/oreScoopParticles.js'
 import { createGameState } from './game/state.js'
 import { createInputState, createMouseAimState, updateFlight } from './game/flight.js'
-import { updateSupercruise } from './game/supercruise.js'
+import { updateSupercruise, ignoreBodyAsCruiseObstacle } from './game/supercruise.js'
 import { spawnEncounterNear } from './game/spawner.js'
 import { fireProjectile, updateProjectiles, updateNpcAI, updateCombatFlag, regenShields, getShipCollisionRadius, truceActive } from './game/combat.js'
 import { resolveBodyCollisions, trySupercruiseTunnel, collisionRadiusFor } from './game/collision.js'
 import { mineRock, isRockAlive, rockDisplayName } from './game/mining.js'
 import { pruneWrecks, lootWreck } from './game/wrecks.js'
 import { markBodyVisited, markBodyProbed, updateMissionProgress, missionMarkedBodyIds, resolveInvestigationProbe } from './game/missions.js'
-import { launchProbe } from './game/probe.js'
+import {
+  launchProbe,
+  canProbeBody,
+  recordProbeAttempt,
+  isActiveMissionProbeTarget,
+  probeAttemptCount,
+  PROBE_EXHAUSTED_MESSAGE,
+  MAX_PROBE_ATTEMPTS
+} from './game/probe.js'
 import { saveGame as persistSaveGame, loadGame as persistLoadGame, hasSave } from './game/save.js'
 import { hyperspaceJump } from './game/hyperspace.js'
 import { getSystem, findBody, coreFraction, canJumpTo } from './procgen/galaxy.js'
@@ -50,18 +60,14 @@ const DOCK_RANGE_STATION_EXTRA = 2000
 // Co-move with a host's orbit when this close beyond its collision shell.
 const ORBITAL_CARRY_MARGIN = 900
 // Solar co-orbit when this close to the system origin and not bound to a body.
-const STAR_ORBITAL_CARRY_RADIUS = 28000
+// Solar co-orbit band scales with the enlarged system (was 28k).
+const STAR_ORBITAL_CARRY_RADIUS = 168000
 const STAR_ORBITAL_OMEGA = 0.0008
-// Stations/settlements "200% bigger", then "another 150% bigger" (2.5x on
-// top) per two rounds of user request; game/collision.js's fixed station/
-// settlement collision radii are scaled by the same factor. (Was 1.5, then
-// 4.5 — each pass still read as too small.)
-const STATION_SCALE = 11.25
+// Stations/settlements +50% on prior 11.25 scale; collision.js matches.
+const STATION_SCALE = 16.875
 const PROBE_RANGE = 150
 const MINING_TOAST_DURATION_S = 1.6
 const FACTION_TOAST_DURATION_S = 4
-const MINING_RANGE = 200
-const MINING_TICK_INTERVAL_S = 0.4
 const AMBIENT_SPAWN_INTERVAL_S = 90
 const AMBIENT_NPC_CAP = 3
 const RADAR_RANGE = 1500
@@ -71,17 +77,18 @@ const JUMP_WINDUP_S = 2.35
 const JUMP_STREAK_S = 1.85
 const JUMP_DURATION_S = JUMP_WINDUP_S + JUMP_STREAK_S
 const BASE_FOV = 60
-const CRUISE_FOV = 70
+// Supercruise FOV (degrees) — wider than base for speed read.
+const CRUISE_FOV = 100
 
 const CROSSHAIR_DISTANCE = 80
 
-// Approach + bay glide; long enough to read as a proper docking sequence.
-const DOCK_ANIM_DURATION_S = 3.2
+// Approach + bay glide; three-phase so approach / hang-align / park all read.
+const DOCK_ANIM_DURATION_S = 4.4
 // Extra clearance beyond the body's collision shell for the exterior hang
 // point — the old flat 18 was deep *inside* station/planet radii (~100–200+).
 const DOCK_EXTERIOR_MARGIN = 28
-const UNDOCK_BACKOFF_MARGIN = 55
-const DOCK_FLASH_FADE_S = 0.55
+const UNDOCK_BACKOFF_MARGIN = 70
+const DOCK_FLASH_FADE_S = 0.65
 const HYPERSPACE_FLASH_COLOR = '#eaffff'
 const DOCK_FLASH_COLOR = '#4fc3d9'
 const SUPERCRUISE_ARRIVAL_MARGIN = 45
@@ -91,6 +98,11 @@ const SUPERCRUISE_ARRIVAL_MARGIN = 45
 const DOCKING_BAY_ORIGIN = new THREE.Vector3(2_000_000, 0, 0)
 const BAY_ENTRY_OFFSET = new THREE.Vector3(0, 0, -55)
 const BAY_PARK_OFFSET = new THREE.Vector3(0, 0, 20)
+// Probe flight: fly out → scan 10s → return → yield results.
+const PROBE_OUTBOUND_S = 2.6
+const PROBE_SCAN_S = 10
+const PROBE_RETURN_S = 2.4
+const PROBE_SCAN_STANDOFF = 18
 
 const appEl = document.getElementById('app')
 const { scene, camera, renderer } = createScene(appEl)
@@ -114,11 +126,6 @@ let flightMode = false
 let flightModeWanted = false
 let laserFireHeld = false
 let missileFireHeld = false
-// Mining mode swaps laser control from manual/crosshair fire to an
-// auto-firing beam locked onto the current target (see updateMiningBeam) —
-// only meaningful while the target is an asteroid; toggled by KeyR.
-let miningMode = false
-
 window.addEventListener('mousedown', (e) => {
   if (e.button === 0) laserFireHeld = true
   if (e.button === 2) missileFireHeld = true
@@ -144,10 +151,6 @@ function exitFlightMode() {
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
   if (document.pointerLockElement === renderer.domElement) document.exitPointerLock()
-  // updateMiningBeam() (which would otherwise silence this itself) doesn't
-  // run at all once paused/docked/nav-map-open, so a beam active right as
-  // one of those starts would otherwise hum forever.
-  audio.setMiningBeamActive(false)
 }
 
 // The mirror of exitFlightMode — called whenever a menu/popup that forced
@@ -217,11 +220,19 @@ renderer.domElement.addEventListener('click', () => {
   }
 })
 
+// Chase-camera zoom (works with or without pointer lock). Scroll up = closer.
+window.addEventListener('wheel', (e) => {
+  if (!gameState || docked || dockEffect || jumpEffect || paused || navMapOpen || inventoryOpen || missionsOpen) return
+  e.preventDefault()
+  adjustChaseZoom(e.deltaY)
+}, { passive: false })
+
 let gameState = null
 let playerShipClass = null
 let playerMesh = null
 let thrusterEffects = null
 let damageEffects = null
+let oreScoopEffects = null
 let hud = null
 let dockingUI = null
 let pauseMenu = null
@@ -230,6 +241,8 @@ let inventoryUI = null
 let missionsUI = null
 let dockPromptEl = null
 let probePromptEl = null
+let probeResultsEl = null
+let probeResultsUntil = 0
 let wreckPromptEl = null
 let miningToastEl = null
 let miningToastUntil = 0
@@ -245,10 +258,7 @@ let targetIndicatorEl = null
 // or (fieldId, index) } — set by the Tab key (see cycleTarget); never
 // persisted, ships/bodies are looked up fresh each frame (see resolveTarget).
 let currentTarget = null
-let miningBeamMesh = null
-let nextMiningTickAt = 0
 let cruiseIndicatorEl = null
-let miningModeIndicatorEl = null
 let jumpFlashEl = null
 let jumpEffect = null
 let dockEffect = null
@@ -346,7 +356,8 @@ function loadBodiesForCurrentSystem() {
       }
     }
 
-    // Settlements ride their host planet's surface offset.
+    // Settlements ride their host planet's surface offset and stand upright
+    // on the local radial (local +Y = outward normal).
     if (body.kind === 'settlement' && body.parentId && body.surfaceOffset) {
       moonOrbits.set(body.id, {
         body,
@@ -355,8 +366,21 @@ function loadBodiesForCurrentSystem() {
         surfaceOffset: body.surfaceOffset,
         isSurface: true
       })
+      const mesh = bodyMeshes.get(body.id)
+      if (mesh) orientSettlementOnSurface(mesh, body.surfaceOffset)
     }
   }
+}
+
+// Settlement meshes are built "upright" in local +Y; rotate so that axis
+// points along the surface normal (away from the host center).
+const _settlementUp = new THREE.Vector3()
+const _worldUp = new THREE.Vector3(0, 1, 0)
+function orientSettlementOnSurface(mesh, surfaceOffset) {
+  _settlementUp.set(surfaceOffset[0], surfaceOffset[1], surfaceOffset[2])
+  if (_settlementUp.lengthSq() < 1e-8) return
+  _settlementUp.normalize()
+  mesh.quaternion.setFromUnitVectors(_worldUp, _settlementUp)
 }
 
 function hashStringForOrbit(str) {
@@ -414,12 +438,14 @@ let cruising = false
 // via the KeyC handler (manual) or the cruising block below (auto-arrival/
 // combat-interrupt) — one check covers every trigger source.
 let wasCruising = false
+// Active probe flight: { phase, elapsed, body, mesh, launchPos, scanPos, ... }
+let probeEffect = null
 let nextAmbientSpawnAt = 0
 
 let menuStarMesh = null
 let menuAnimT = 0
 
-// Real binary stars (see render/starMesh.js) are thousands of units across
+// Real multi-stars (see render/starMesh.js) are thousands of units across
 // post-STAR_SIZE_SCALE — far too big for this tiny fixed-camera stage. Rather
 // than a hardcoded shrink factor (which would need re-tuning every time
 // STAR_SIZE_SCALE changes, as happened once already), the built mesh is
@@ -429,14 +455,13 @@ let menuAnimT = 0
 // updateStarMesh already animates in (orbit radius, spark positions, etc.),
 // so nothing about that logic needs to know it's being shown shrunk down.
 const MENU_STAR_DISPLAY_RADIUS = 26
-// Fixed anchor point the binary pair sits at — the camera orbits this
-// instead of the star itself moving, so "closer" just means a tighter
-// MENU_ORBIT_RADIUS without needing to re-time any sweep.
-const MENU_STAR_CENTER = new THREE.Vector3(0, -10, 40)
+// Star at origin, dead screen-center — title sits above it, menu over it.
+const MENU_STAR_CENTER = new THREE.Vector3(0, 0, 0)
 
 function startMenuBackground() {
   if (menuStarMesh) return
-  menuStarMesh = buildStarMesh({ id: 'menu-binary-star' }, 'binary')
+  // Same trinary path as Whispers (forceType + starType so components/rings match).
+  menuStarMesh = buildStarMesh({ id: 'menu-whispers-trinary', starType: 'trinary' }, 'trinary')
   const bounds = new THREE.Box3().setFromObject(menuStarMesh).getBoundingSphere(new THREE.Sphere())
   menuStarMesh.scale.setScalar(MENU_STAR_DISPLAY_RADIUS / bounds.radius)
   menuStarMesh.position.copy(MENU_STAR_CENTER)
@@ -453,30 +478,20 @@ function stopMenuBackground() {
 
 const MENU_ORBIT_PERIOD_S = 42
 const MENU_ORBIT_RADIUS = 48
-const MENU_ORBIT_HEIGHT = 14
-// The title text sits vertically centered on screen (#main-menu's flex
-// centering), and camera.lookAt(MENU_STAR_CENTER) always puts the star dead
-// center in frame regardless of MENU_STAR_CENTER's own world Y — so the star
-// used to sit right behind the title no matter where it was placed in world
-// space. Looking at a point above the star instead (rather than at the star
-// itself) pushes the star's on-screen position down, clear of the text.
-const MENU_LOOKAT_LIFT = 20
-const menuLookAtTarget = MENU_STAR_CENTER.clone().add(new THREE.Vector3(0, MENU_LOOKAT_LIFT, 0))
+const MENU_ORBIT_HEIGHT = 10
 
 function updateMenuBackground(dt) {
   if (!menuStarMesh) return
   menuAnimT += dt
   updateStarMesh(menuStarMesh, menuAnimT, dt, camera)
-  // The star pair stays put; the camera slowly orbits around it instead of
-  // a static camera watching it sweep past — reads as flying a lazy circle
-  // around the binary rather than a one-shot flyby.
+  // Lazy orbit; lookAt keeps the trinary centered under the UI.
   const angle = (menuAnimT / MENU_ORBIT_PERIOD_S) * Math.PI * 2
   camera.position.set(
     MENU_STAR_CENTER.x + Math.cos(angle) * MENU_ORBIT_RADIUS,
     MENU_STAR_CENTER.y + MENU_ORBIT_HEIGHT,
     MENU_STAR_CENTER.z + Math.sin(angle) * MENU_ORBIT_RADIUS
   )
-  camera.lookAt(menuLookAtTarget)
+  camera.lookAt(MENU_STAR_CENTER)
 }
 
 function doSave() {
@@ -490,7 +505,7 @@ function onWeaponFired(weaponId) {
   audio.playWeaponFire(weaponId)
 }
 
-function onProjectileHit({ position, destroyed, mined }) {
+function onProjectileHit({ position, rockPosition, destroyed, mined }) {
   const flash = buildImpactFlash(mined ? 0xc2a35c : destroyed ? 0xff8a3d : 0xffcc66)
   flash.position.fromArray(position)
   if (mined?.destroyed) flash.scale.setScalar(1.4) // depleted rock exploding reads bigger than a regular mining ping
@@ -500,77 +515,25 @@ function onProjectileHit({ position, destroyed, mined }) {
   if (mined) {
     audio.playMiningPing()
     if (mined.destroyed) audio.playExplosion()
-    miningToastEl.textContent = mined.destroyed
-      ? `${getGood(mined.goodId).name} deposit depleted!`
-      : mined.mined
-        ? `Mined 1 ${getGood(mined.goodId).name}`
-        : 'Mining hold full!'
-    miningToastEl.style.display = 'block'
-    miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
+    // Scoop trail only when ore actually entered the hold.
+    if (mined.scooped) {
+      const from = rockPosition ?? position
+      oreScoopEffects?.burst(new THREE.Vector3(...from), 5 + Math.floor(Math.random() * 4))
+      miningToastEl.textContent = mined.destroyed
+        ? `${getGood(mined.goodId).name} deposit depleted!`
+        : `Mined 1 ${getGood(mined.goodId).name}`
+      miningToastEl.style.display = 'block'
+      miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
+    } else if (mined.destroyed) {
+      miningToastEl.textContent = `${getGood(mined.goodId).name} deposit depleted!`
+      miningToastEl.style.display = 'block'
+      miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
+    }
+    // Full hold + not destroyed: silent strip (no toast spam).
   } else if (destroyed) {
     audio.playExplosion()
   } else {
     audio.playHit()
-  }
-}
-
-// A constant unit-length beam (height 1, along local Y) rescaled/reoriented
-// between the ship's laser hardpoint and the current target every frame
-// while mining mode is auto-firing — same stretch-a-unit-shape technique
-// used for the binary stars' old energy trail beam.
-function buildMiningBeamMesh() {
-  const beam = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.7, 0.7, 1, 8, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
-  )
-  beam.visible = false
-  return beam
-}
-
-function isMiningHoldFull() {
-  const hold = gameState.player.ship.miningHold
-  const used = Object.values(hold).reduce((a, b) => a + b, 0)
-  return used >= playerShipClass.stats.miningCapacity
-}
-
-// While mining mode is on and the current target is an asteroid in range,
-// the laser auto-fires a continuous beam at it — no aiming, no held mouse
-// button — ticking mineRock on a timer instead of spawning
-// physical projectiles (there's nothing to travel or collide with; the beam
-// always "hits" while active). Stops on its own once the hold is full, by
-// simply never activating in that state (see isMiningHoldFull) rather than
-// firing a doomed tick and spamming the "hold full" toast every interval.
-function updateMiningBeam() {
-  const target = resolveTarget()
-  const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
-  const inRange = target ? shipPos.distanceTo(new THREE.Vector3(...target.position)) <= MINING_RANGE : false
-  const active = miningMode && flightMode && !cruising && target?.isAsteroid && inRange && !isMiningHoldFull()
-
-  if (!active) {
-    miningBeamMesh.visible = false
-    audio.setMiningBeamActive(false)
-    return
-  }
-
-  const laserHardpoint = playerShipClass.hardpoints.find((hp) => hp.type === 'laser') ?? playerShipClass.hardpoints[0]
-  const quat = new THREE.Quaternion().fromArray(gameState.player.ship.quaternion)
-  const origin = new THREE.Vector3(...laserHardpoint.position).applyQuaternion(quat).add(shipPos)
-  const targetPos = new THREE.Vector3(...target.position)
-  const delta = targetPos.clone().sub(origin)
-  const length = delta.length()
-
-  miningBeamMesh.visible = true
-  audio.setMiningBeamActive(true)
-  miningBeamMesh.position.copy(origin).addScaledVector(delta, 0.5)
-  miningBeamMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize())
-  miningBeamMesh.scale.set(1, length, 1)
-  miningBeamMesh.material.opacity = 0.6 + 0.2 * Math.sin(gameState.simTime * 20)
-
-  if (gameState.simTime >= nextMiningTickAt) {
-    nextMiningTickAt = gameState.simTime + MINING_TICK_INTERVAL_S
-    const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-    const mined = mineRock(gameState, playerShipClass, currentSystem, currentTarget.fieldId, currentTarget.index)
-    onProjectileHit({ position: target.position, weaponType: 'laser', destroyed: false, mined })
   }
 }
 
@@ -600,9 +563,8 @@ function clearSession() {
   thrusterEffects = null
   if (damageEffects) scene.remove(damageEffects.group)
   damageEffects = null
-  if (miningBeamMesh) scene.remove(miningBeamMesh)
-  miningBeamMesh = null
-  miningMode = false
+  if (oreScoopEffects) scene.remove(oreScoopEffects.group)
+  oreScoopEffects = null
   for (const mesh of npcMeshes.values()) scene.remove(mesh)
   npcMeshes.clear()
   for (const mesh of bodyMeshes.values()) scene.remove(mesh)
@@ -625,6 +587,9 @@ function clearSession() {
   missionsUI?.element.remove()
   dockPromptEl?.remove()
   probePromptEl?.remove()
+  probeResultsEl?.remove()
+  probeResultsEl = null
+  probeResultsUntil = 0
   wreckPromptEl?.remove()
   miningToastEl?.remove()
   factionToastEl?.remove()
@@ -634,15 +599,14 @@ function clearSession() {
   targetIndicatorEl?.remove()
   currentTarget = null
   cruiseIndicatorEl?.remove()
-  miningModeIndicatorEl?.remove()
   jumpFlashEl?.remove()
   if (interiorMesh) scene.remove(interiorMesh)
   audio.setThrustState(null)
   audio.setSupercruiseActive(false)
-  audio.setMiningBeamActive(false)
   audio.stopAmbientMusic()
   camera.fov = BASE_FOV
   camera.updateProjectionMatrix()
+  resetChaseZoom()
   docked = false
   paused = false
   navMapOpen = false
@@ -652,9 +616,17 @@ function clearSession() {
   wasCruising = false
   jumpEffect = null
   hyperspaceTunnel.stop()
+  audio.stopHyperspaceAudio()
   dockEffect = null
   dockedApproach = null
+  clearProbeEffect()
   exitFlightMode()
+}
+
+function clearProbeEffect() {
+  if (probeEffect?.mesh) scene.remove(probeEffect.mesh)
+  probeEffect = null
+  audio.setProbeScanActive(false)
 }
 
 function startSession(newGameState, { enterFlightMode = false } = {}) {
@@ -668,8 +640,8 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   scene.add(thrusterEffects.group)
   damageEffects = createDamageEffects()
   scene.add(damageEffects.group)
-  miningBeamMesh = buildMiningBeamMesh()
-  scene.add(miningBeamMesh)
+  oreScoopEffects = createOreScoopEffects()
+  scene.add(oreScoopEffects.group)
 
   for (const npc of gameState.npcs) {
     const mesh = buildShipMesh(getShipClass(npc.shipClassId))
@@ -710,6 +682,33 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   probePromptEl.style.cssText =
     'position:fixed;bottom:120px;left:50%;transform:translateX(-50%);font-family:monospace;color:#cfe3ff;background:rgba(10,14,24,0.8);padding:8px 16px;display:none;'
   appEl.appendChild(probePromptEl)
+
+  // Floating multi-line probe return readout (not a blocking alert dialog).
+  probeResultsEl = document.createElement('div')
+  probeResultsEl.id = 'probe-results'
+  probeResultsEl.style.cssText = [
+    'position:fixed',
+    'top:18%',
+    'left:50%',
+    'transform:translateX(-50%)',
+    'max-width:min(520px,90vw)',
+    'font-family:monospace',
+    'font-size:13px',
+    'line-height:1.45',
+    'letter-spacing:0.4px',
+    'color:#cfe3ff',
+    'text-shadow:0 0 8px rgba(79,195,217,0.55)',
+    'background:linear-gradient(180deg,rgba(8,14,28,0.82),rgba(6,10,20,0.72))',
+    'border:1px solid rgba(111,216,242,0.45)',
+    'border-left:3px solid #6fd8f2',
+    'box-shadow:0 0 22px rgba(79,195,217,0.2)',
+    'padding:14px 18px',
+    'display:none',
+    'pointer-events:none',
+    'z-index:40',
+    'transition:opacity 0.6s ease'
+  ].join(';')
+  appEl.appendChild(probeResultsEl)
 
   wreckPromptEl = document.createElement('div')
   wreckPromptEl.id = 'wreck-prompt'
@@ -766,16 +765,6 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   cruiseIndicatorEl.style.cssText =
     'position:fixed;top:62px;left:50%;transform:translateX(-50%);font-family:monospace;letter-spacing:2px;color:#7fe0a0;background:rgba(10,14,24,0.7);padding:6px 16px;display:none;'
   appEl.appendChild(cruiseIndicatorEl)
-
-  // Top-left (not top-center like cruiseIndicatorEl) since mining mode is
-  // just a standing toggle independent of supercruise — both could be on
-  // at once (the beam simply won't fire while cruising).
-  miningModeIndicatorEl = document.createElement('div')
-  miningModeIndicatorEl.id = 'mining-mode-indicator'
-  miningModeIndicatorEl.textContent = 'MINING MODE'
-  miningModeIndicatorEl.style.cssText =
-    'position:fixed;top:16px;left:16px;font-family:monospace;letter-spacing:2px;color:#ffb347;background:rgba(10,14,24,0.7);padding:6px 16px;display:none;'
-  appEl.appendChild(miningModeIndicatorEl)
 
   // Reused for both the hyperspace punch and the dock/undock transition —
   // background color is set explicitly wherever each effect triggers.
@@ -871,10 +860,52 @@ function lootNearbyWreck(wreck) {
   miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
 }
 
+function flashToast(text, durationS = MINING_TOAST_DURATION_S) {
+  if (!miningToastEl || !gameState) return
+  miningToastEl.textContent = text
+  miningToastEl.style.display = 'block'
+  miningToastUntil = gameState.simTime + durationS
+}
+
 function isProbeable(body) {
   return body.kind === 'planet' || body.kind === 'moon' || body.kind === 'asteroidField'
 }
 
+function probeScanRadius(body) {
+  if (body.kind === 'star') return STAR_TARGET_RADIUS
+  return collisionRadiusFor(body) ?? 20
+}
+
+// Same capture shell as applyOrbitalCarry (radius + margin).
+function isInOrbitOfBody(body) {
+  if (!body || (body.kind !== 'planet' && body.kind !== 'moon')) return false
+  const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
+  const bodyPos = new THREE.Vector3().fromArray(body.position)
+  const capture = (collisionRadiusFor(body) ?? 0) + ORBITAL_CARRY_MARGIN
+  return shipPos.distanceTo(bodyPos) < capture
+}
+
+// Matches solar co-orbit band in applyOrbitalCarry.
+function isInSolarOrbit() {
+  const [x, , z] = gameState.player.ship.position
+  const r = Math.hypot(x, z)
+  return r >= 3000 && r <= STAR_ORBITAL_CARRY_RADIUS
+}
+
+function makeStarProbeBody() {
+  const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  // Per-system probe key so exhausting one sun doesn't block every system star,
+  // and counts stay stable (not a shared global 'system-star' bucket).
+  const starProbeId = `${gameState.player.currentSystemId}:${SYSTEM_STAR_WAYPOINT_ID}`
+  return {
+    id: starProbeId,
+    name: `${currentSystem?.name ?? 'System'} Star`,
+    kind: 'star',
+    position: [0, 0, 0]
+  }
+}
+
+// Close-range probe (belts / flyby): surface distance for large worlds.
 function findNearbyProbeableBody() {
   const playerPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
@@ -883,26 +914,122 @@ function findNearbyProbeableBody() {
   for (const body of currentSystem.bodies) {
     if (!isProbeable(body)) continue
     const dist = playerPos.distanceTo(new THREE.Vector3().fromArray(body.position))
-    if (dist < PROBE_RANGE && dist < nearestDist) {
+    const surfaceDist = Math.max(0, dist - (collisionRadiusFor(body) ?? 0))
+    if (surfaceDist < PROBE_RANGE && surfaceDist < nearestDist) {
       nearest = body
-      nearestDist = dist
+      nearestDist = surfaceDist
     }
   }
   return nearest
 }
 
+// Prefer: Tab-target planet/moon/star while in its orbit. Else nearby belt/body.
+function getProbeLaunchTarget() {
+  if (currentTarget?.kind === 'star' && isInSolarOrbit()) {
+    return { body: makeStarProbeBody(), viaOrbit: true }
+  }
+  if (currentTarget?.kind === 'body') {
+    const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+    const body = currentSystem.bodies.find((b) => b.id === currentTarget.id)
+    if (body && (body.kind === 'planet' || body.kind === 'moon') && isInOrbitOfBody(body)) {
+      return { body, viaOrbit: true }
+    }
+  }
+  const nearby = findNearbyProbeableBody()
+  return nearby ? { body: nearby, viaOrbit: false } : null
+}
+
+// Launch a tiny probe mesh that flies to the body, scans for PROBE_SCAN_S,
+// returns, then yields results (missions / survey data). Instant results
+// felt weightless; the flight + 10s scan sells "actually surveying".
+// Cap: MAX_PROBE_ATTEMPTS per body — further launches get a floating denial.
+// Attempts are reserved at launch (not return) so aborted probes still consume a slot.
 function probeBody(body) {
-  const probeMissionHere = gameState.missions.active.find(
+  if (probeEffect) return
+
+  // Ensure the map exists even on older in-memory states / partial loads.
+  gameState.probeCounts ??= {}
+  if (!canProbeBody(gameState, body.id)) {
+    showFloatingProbeResults([PROBE_EXHAUSTED_MESSAGE])
+    return
+  }
+
+  const n = recordProbeAttempt(gameState, body.id)
+
+  const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
+  const bodyPos = new THREE.Vector3().fromArray(body.position)
+  const toShip = shipPos.clone().sub(bodyPos)
+  if (toShip.lengthSq() < 1e-6) toShip.set(0, 0, 1)
+  else toShip.normalize()
+  const bodyRadius = probeScanRadius(body)
+  const scanPos = bodyPos.clone().addScaledVector(toShip, bodyRadius + PROBE_SCAN_STANDOFF)
+
+  // Eject slightly ahead of the ship nose so the probe doesn't spawn inside hull.
+  const shipQuat = new THREE.Quaternion().fromArray(gameState.player.ship.quaternion)
+  const launchPos = shipPos.clone().add(new THREE.Vector3(0, 0, 4).applyQuaternion(shipQuat))
+
+  const mesh = buildProbeMesh()
+  mesh.position.copy(launchPos)
+  mesh.quaternion.copy(quatFacing(launchPos, scanPos))
+  scene.add(mesh)
+
+  probeEffect = {
+    phase: 'outbound',
+    elapsed: 0,
+    body,
+    mesh,
+    launchPos: launchPos.clone(),
+    scanPos,
+    bodyPos,
+    returnStart: null,
+    // Snapshot attempt # at launch for mission-first-probe / messages.
+    attemptNumber: n
+  }
+  audio.playProbeLaunch()
+  flashToast(`Probe launched toward ${body.name}… (${n}/${MAX_PROBE_ATTEMPTS})`, 2.2)
+}
+
+function showFloatingProbeResults(messages) {
+  if (!probeResultsEl || !messages.length) return
+  probeResultsEl.replaceChildren()
+  for (const line of messages) {
+    const row = document.createElement('div')
+    row.className = 'probe-result-line'
+    row.style.cssText = 'margin:0 0 6px 0;padding:0;'
+    row.textContent = line
+    probeResultsEl.appendChild(row)
+  }
+  probeResultsEl.style.display = 'block'
+  probeResultsEl.style.opacity = '1'
+  // Stay long enough to read multi-line mission results; fade via simTime.
+  const hold = Math.min(14, 5.5 + messages.length * 1.4)
+  probeResultsUntil = (gameState?.simTime ?? 0) + hold
+}
+
+function finishProbeResults(body, attemptNumber = null) {
+  // Attempt was already reserved at launch — do not double-count here.
+  const attempt = attemptNumber ?? probeAttemptCount(gameState, body.id)
+  const wasMissionTarget = isActiveMissionProbeTarget(gameState, body.id)
+  // First probe on a mission target always delivers the mission outcome.
+  const missionFirstProbe = wasMissionTarget && attempt === 1
+
+  const probeMissionHere = body.kind !== 'star' && gameState.missions.active.find(
     (m) => m.type === 'probe' && !m.objectiveComplete && m.target.bodyId === body.id
   )
   markBodyProbed(gameState, body.id)
   // Investigation resolves on the probe itself (intel / hostile / lead further),
-  // not from merely being listed in probedBodyIds.
-  const investigation = resolveInvestigationProbe(gameState, body.id, Math.random)
+  // not from merely being listed in probedBodyIds. Stars are never investigation targets.
+  // Mission targets resolve on this first hit (resolveInvestigationProbe is idempotent
+  // once objectiveComplete / retargeted).
+  const investigation = body.kind === 'star'
+    ? null
+    : resolveInvestigationProbe(gameState, body.id, Math.random)
   updateMissionProgress(gameState)
 
-  const result = launchProbe(gameState, playerShipClass, Math.random)
-  audio.playClick()
+  // Random survey data; first mission probe always rolls a find (mission "result").
+  const result = launchProbe(gameState, playerShipClass, Math.random, {
+    forceFind: missionFirstProbe
+  })
 
   const messages = []
   if (investigation?.kind === 'intel') {
@@ -920,13 +1047,78 @@ function probeBody(body) {
   if (result.found && result.stored) messages.push(`Probe found valuable survey data at ${body.name}! Added to cargo — sell it at any station.`)
   else if (result.found) messages.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
   else if (!investigation && !probeMissionHere) messages.push(`Probe found nothing of interest at ${body.name}.`)
-  const wasFlying = flightMode
-  alert(messages.join('\n'))
-  // The native alert() dialog itself releases pointer lock (the existing
-  // pointerlockchange listener already flips flightMode off when that
-  // happens) — restore it once the dialog closes, same as every other
-  // menu/popup that forces the mouse free.
-  if (wasFlying) reenterFlightMode()
+
+  if (attempt >= MAX_PROBE_ATTEMPTS) {
+    messages.push(PROBE_EXHAUSTED_MESSAGE)
+  }
+
+  // Floating HUD text — never a blocking dialog (keeps pointer lock / flight).
+  showFloatingProbeResults(messages)
+}
+
+function updateProbeEffect(dt) {
+  if (!probeEffect) return
+  probeEffect.elapsed += dt
+  const { mesh, body } = probeEffect
+
+  // Keep scan hold point tracking the body if it orbits while we wait.
+  const liveBodyPos = new THREE.Vector3().fromArray(body.position)
+  const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
+  const toShip = shipPos.clone().sub(liveBodyPos)
+  if (toShip.lengthSq() < 1e-6) toShip.set(0, 0, 1)
+  else toShip.normalize()
+  const bodyRadius = probeScanRadius(body)
+  const liveScanPos = liveBodyPos.clone().addScaledVector(toShip, bodyRadius + PROBE_SCAN_STANDOFF)
+  probeEffect.scanPos = liveScanPos
+  probeEffect.bodyPos = liveBodyPos
+
+  if (probeEffect.phase === 'outbound') {
+    const t = Math.min(1, probeEffect.elapsed / PROBE_OUTBOUND_S)
+    const lt = easeInOutCubic(t)
+    mesh.position.copy(probeEffect.launchPos).lerp(liveScanPos, lt)
+    const face = quatFacing(probeEffect.launchPos, liveScanPos)
+    updateProbeMesh(mesh, dt, { scanning: false, baseQuat: face })
+    if (t >= 1) {
+      probeEffect.phase = 'scanning'
+      probeEffect.elapsed = 0
+      audio.setProbeScanActive(true)
+      flashToast(`Scanning ${body.name}…`, PROBE_SCAN_S)
+    }
+  } else if (probeEffect.phase === 'scanning') {
+    mesh.position.copy(liveScanPos)
+    // Face the body (+Z toward center) so the nose beam paints the surface.
+    const face = quatFacing(liveScanPos, liveBodyPos)
+    const scanDist = mesh.position.distanceTo(liveBodyPos)
+    // Cap beam visual length; huge worlds would stretch a unit cylinder forever.
+    const beamCap = body.kind === 'star' ? 80 : 40
+    updateProbeMesh(mesh, dt, { scanning: true, scanDist: Math.min(scanDist, beamCap), baseQuat: face })
+    if (probeEffect.elapsed >= PROBE_SCAN_S) {
+      probeEffect.phase = 'returning'
+      probeEffect.elapsed = 0
+      probeEffect.returnStart = mesh.position.clone()
+      audio.setProbeScanActive(false)
+      audio.playProbeReturn()
+      flashToast('Probe returning…', 2.2)
+    }
+  } else if (probeEffect.phase === 'returning') {
+    const t = Math.min(1, probeEffect.elapsed / PROBE_RETURN_S)
+    const lt = easeInOutCubic(t)
+    // Home on the ship's live position (player may have drifted).
+    const home = shipPos.clone().add(
+      new THREE.Vector3(0, 0, 3).applyQuaternion(
+        new THREE.Quaternion().fromArray(gameState.player.ship.quaternion)
+      )
+    )
+    mesh.position.copy(probeEffect.returnStart).lerp(home, lt)
+    const face = quatFacing(probeEffect.returnStart, home)
+    updateProbeMesh(mesh, dt, { scanning: false, baseQuat: face })
+    if (t >= 1) {
+      const finishedBody = body
+      const attemptNumber = probeEffect.attemptNumber
+      clearProbeEffect()
+      finishProbeResults(finishedBody, attemptNumber)
+    }
+  }
 }
 
 // The chase camera sits behind+above the ship via lookAt() with a world-up
@@ -1001,6 +1193,15 @@ function handleJump(targetSystemId) {
   }
   navMapOpen = false
   navMap.hide()
+  // Probe can't follow a hyperspace jump — abort mid-survey cleanly.
+  clearProbeEffect()
+  // Jump is launched from a button click — arm flight intent and grab
+  // pointer lock *now* (user gesture). reenterFlightMode at jump end cannot
+  // always re-lock after the multi-second animation (no live gesture left).
+  flightModeWanted = true
+  if (document.pointerLockElement !== renderer.domElement) {
+    renderer.domElement.requestPointerLock().catch(() => {})
+  }
   jumpEffect = { elapsed: 0, targetSystemId, jumped: false }
   jumpFlashEl.style.background = HYPERSPACE_FLASH_COLOR
   jumpFlashEl.style.display = 'block'
@@ -1061,9 +1262,12 @@ function updateJumpEffect(dt) {
         alert(err.message)
         jumpEffect = null
         hyperspaceTunnel.stop()
+        audio.playHyperspaceArrival()
         jumpFlashEl.style.display = 'none'
         camera.fov = BASE_FOV
         camera.updateProjectionMatrix()
+        // Jump started from nav (which exits flight) — restore on abort too.
+        reenterFlightMode()
         return
       }
     }
@@ -1077,6 +1281,17 @@ function updateJumpEffect(dt) {
     audio.announce('Hyperdrive disengaged')
     camera.fov = BASE_FOV
     camera.updateProjectionMatrix()
+    // Re-assert sun-facing at jump end (hyperspaceJump already set this at
+    // mid-tunnel swap; belt-and-suspenders if anything nudged orientation).
+    const ship = gameState.player.ship
+    ship.quaternion = quatFacing(
+      new THREE.Vector3().fromArray(ship.position),
+      new THREE.Vector3(0, 0, 0)
+    ).toArray()
+    if (playerMesh) syncMeshToEntity(playerMesh, ship)
+    // Nav map opens with exitFlightMode and handleJump hides the map without
+    // its onClose path — re-arm mouse-aim so the player isn't stuck free-look.
+    reenterFlightMode()
   }
 }
 
@@ -1110,14 +1325,22 @@ function dockExteriorPoint(body, shipPos) {
   return { bodyPos, approachDir, exteriorPoint, standoff }
 }
 
-// Docking/undocking is a scripted two-half animation: fly from wherever the
-// ship is to just outside the body's collision shell, swap the whole exterior
-// scene for the bay interior behind a brief flash (masking the cut), then
-// glide to the parked spot. Undocking reverses the same path. dockedApproach
+// Docking/undocking is a scripted multi-phase animation:
+//   approach hang → brief align settle → flash into bay → park glide.
+// Undocking reverses: unpark → flash out → back away. dockedApproach
 // remembers the original approach so the reverse trip lines up.
 function beginDocking(body) {
   const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
   const { bodyPos, approachDir, exteriorPoint } = dockExteriorPoint(body, shipPos)
+
+  // Align hang: slightly closer than exterior, nose locked on bay.
+  const alignPoint = exteriorPoint.clone().lerp(bodyPos, 0.12)
+  const facingQuat = quatFacing(exteriorPoint, bodyPos)
+  // Slight bank into the approach so the glide feels less robotic.
+  const bankedFacing = facingQuat.clone().multiply(
+    new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.22)
+  )
+  const alignQuat = quatFacing(alignPoint, bodyPos)
 
   dockedApproach = { body, exteriorPoint, approachDir }
   dockEffect = {
@@ -1125,11 +1348,14 @@ function beginDocking(body) {
     elapsed: 0,
     body,
     swapped: false,
+    thrusterPulsed: false,
+    baySettled: false,
     fromPos: shipPos.clone(),
     fromQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
     exteriorPoint,
-    // Face the body while approaching the hang, then bay-forward inside.
-    facingQuat: quatFacing(exteriorPoint, bodyPos)
+    alignPoint,
+    facingQuat: bankedFacing,
+    alignQuat
   }
   gameState.player.ship.velocity = [0, 0, 0]
   audio.setThrustState(null)
@@ -1170,6 +1396,7 @@ function beginUndocking() {
     elapsed: 0,
     body,
     swapped: false,
+    thrusterPulsed: false,
     exteriorPoint,
     awayQuat: quatFacing(exteriorPoint, backAwayPoint),
     backAwayPoint
@@ -1189,58 +1416,107 @@ function beginUndocking() {
 
 function updateDockEffect(dt) {
   dockEffect.elapsed += dt
-  const half = DOCK_ANIM_DURATION_S / 2
-  // Flash peaks at the exterior↔interior swap, not for the whole second half.
+  // Exterior half is slightly longer than bay half so the approach reads.
+  const approachEnd = DOCK_ANIM_DURATION_S * 0.42
+  const alignEnd = DOCK_ANIM_DURATION_S * 0.55
+  const swapAt = alignEnd
   const flashWindow = DOCK_FLASH_FADE_S
 
   if (!dockEffect.undocking) {
-    if (dockEffect.elapsed < half) {
-      const lt = easeInOutCubic(dockEffect.elapsed / half)
+    if (dockEffect.elapsed < approachEnd) {
+      // Phase 1: banked glide to hang point outside the shell.
+      const lt = easeInOutCubic(dockEffect.elapsed / approachEnd)
       gameState.player.ship.position = dockEffect.fromPos.clone().lerp(dockEffect.exteriorPoint, lt).toArray()
       gameState.player.ship.quaternion = dockEffect.fromQuat.clone().slerp(dockEffect.facingQuat, lt).toArray()
+      if (!dockEffect.thrusterPulsed && dockEffect.elapsed > 0.15) {
+        dockEffect.thrusterPulsed = true
+        audio.playDockThrusterPulse()
+      }
+    } else if (dockEffect.elapsed < alignEnd) {
+      // Phase 2: nose settle / slight nudge toward bay before the cut.
+      const lt = easeInOutCubic((dockEffect.elapsed - approachEnd) / (alignEnd - approachEnd))
+      gameState.player.ship.position = dockEffect.exteriorPoint.clone().lerp(dockEffect.alignPoint, lt).toArray()
+      gameState.player.ship.quaternion = dockEffect.facingQuat.clone().slerp(dockEffect.alignQuat, lt).toArray()
     } else {
+      // Phase 3: flash into bay, then ease into the park slot with a soft settle.
       if (!dockEffect.swapped) {
         dockEffect.swapped = true
         swapToInterior()
         gameState.player.ship.position = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET).toArray()
         gameState.player.ship.quaternion = [0, 0, 0, 1] // bay local +Z into the bay
+        audio.playDockThrusterPulse()
       }
-      const lt = easeInOutCubic(Math.min(1, (dockEffect.elapsed - half) / half))
+      const bayT = Math.min(1, (dockEffect.elapsed - swapAt) / (DOCK_ANIM_DURATION_S - swapAt))
+      const lt = easeInOutCubic(bayT)
       const entry = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET)
       const park = DOCKING_BAY_ORIGIN.clone().add(BAY_PARK_OFFSET)
       gameState.player.ship.position = entry.lerp(park, lt).toArray()
+      // Soft roll-out of residual bank as we settle into the pad.
+      const settleRoll = (1 - lt) * 0.12
+      gameState.player.ship.quaternion = new THREE.Quaternion()
+        .setFromAxisAngle(new THREE.Vector3(0, 0, 1), settleRoll)
+        .toArray()
+      if (!dockEffect.baySettled && bayT > 0.85) {
+        dockEffect.baySettled = true
+      }
     }
   } else {
+    const half = DOCK_ANIM_DURATION_S / 2
     if (dockEffect.elapsed < half) {
       const lt = easeInOutCubic(dockEffect.elapsed / half)
       const park = DOCKING_BAY_ORIGIN.clone().add(BAY_PARK_OFFSET)
       const entry = DOCKING_BAY_ORIGIN.clone().add(BAY_ENTRY_OFFSET)
       gameState.player.ship.position = park.clone().lerp(entry, lt).toArray()
+      // Pitch up slightly as we leave the pad.
+      const pitch = lt * 0.18
+      gameState.player.ship.quaternion = new THREE.Quaternion()
+        .setFromAxisAngle(new THREE.Vector3(1, 0, 0), -pitch)
+        .toArray()
     } else {
       if (!dockEffect.swapped) {
         dockEffect.swapped = true
         swapToExterior()
         gameState.player.ship.position = dockEffect.exteriorPoint.toArray()
         gameState.player.ship.quaternion = dockEffect.awayQuat.toArray()
+        audio.playDockThrusterPulse()
       }
       const lt = easeInOutCubic(Math.min(1, (dockEffect.elapsed - half) / half))
       gameState.player.ship.position = dockEffect.exteriorPoint.clone().lerp(dockEffect.backAwayPoint, lt).toArray()
+      // Level out while backing away.
+      const level = dockEffect.awayQuat.clone()
+      gameState.player.ship.quaternion = level.toArray()
+      if (!dockEffect.thrusterPulsed && lt > 0.2) {
+        dockEffect.thrusterPulsed = true
+        audio.playDockThrusterPulse()
+      }
     }
   }
 
   syncMeshToEntity(playerMesh, gameState.player.ship)
+  // Chase camera a touch closer during dock so the bay sequence fills the frame.
   syncChaseCamera(camera, gameState.player.ship)
 
   // Bright flash centered on the scene swap, fading out over flashWindow.
-  const sinceSwap = dockEffect.elapsed - half
-  if (sinceSwap >= 0 && sinceSwap < flashWindow) {
+  const sinceSwap = dockEffect.elapsed - swapAt
+  if (dockEffect.undocking) {
+    const half = DOCK_ANIM_DURATION_S / 2
+    const uSince = dockEffect.elapsed - half
+    if (uSince >= 0 && uSince < flashWindow) {
+      jumpFlashEl.style.opacity = String(Math.max(0, 1 - uSince / flashWindow))
+    } else if (uSince >= flashWindow) {
+      jumpFlashEl.style.opacity = '0'
+    } else {
+      const untilSwap = half - dockEffect.elapsed
+      jumpFlashEl.style.opacity = untilSwap < 0.2 ? String(1 - untilSwap / 0.2) : '0'
+    }
+  } else if (sinceSwap >= 0 && sinceSwap < flashWindow) {
     jumpFlashEl.style.opacity = String(Math.max(0, 1 - sinceSwap / flashWindow))
   } else if (sinceSwap >= flashWindow) {
     jumpFlashEl.style.opacity = '0'
   } else {
     // Soft ramp-up into the swap so the cut isn't a hard pop.
-    const untilSwap = half - dockEffect.elapsed
-    jumpFlashEl.style.opacity = untilSwap < 0.15 ? String(1 - untilSwap / 0.15) : '0'
+    const untilSwap = swapAt - dockEffect.elapsed
+    jumpFlashEl.style.opacity = untilSwap < 0.22 ? String(1 - untilSwap / 0.22) : '0'
   }
 
   if (dockEffect.elapsed >= DOCK_ANIM_DURATION_S) {
@@ -1282,9 +1558,10 @@ window.addEventListener('keydown', (e) => {
       const wreck = findNearbyWreck()
       if (wreck) lootNearbyWreck(wreck)
     }
-  } else if (e.code === 'KeyP' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
-    const body = findNearbyProbeableBody()
-    if (body) probeBody(body)
+  } else if (e.code === 'KeyP' && !docked && !dockEffect && !probeEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
+    // Orbit + Tab-target planet/moon/star, or close-range belt/body flyby.
+    const launch = getProbeLaunchTarget()
+    if (launch) probeBody(launch.body)
   } else if (e.code === 'F5') {
     e.preventDefault()
     doSave()
@@ -1312,11 +1589,12 @@ window.addEventListener('keydown', (e) => {
     if (cruising) {
       cruising = false
     } else if (!getActiveWaypoint()) {
-      alert('Set a waypoint (Navigation, or track a mission with J) before engaging supercruise.')
+      flashToast('Set a waypoint first (Navigation, Ctrl+Tab on a body, or J for missions)')
     } else if (gameState.inCombat) {
-      alert('Cannot engage supercruise while in combat.')
+      flashToast('Cannot engage supercruise while in combat')
     } else {
       cruising = true
+      gameState.player.ship.supercruiseElapsed = 0
     }
   } else if (e.code === 'Space' && !docked && !dockEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     // If locked in flight, Space exits. If wanted-but-lost (tab-out) or off,
@@ -1328,9 +1606,16 @@ window.addEventListener('keydown', (e) => {
     }
   } else if (e.code === 'Tab' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     e.preventDefault()
-    cycleTarget()
-  } else if (e.code === 'KeyR' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
-    miningMode = !miningMode
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+Tab: set waypoint on body under the crosshair.
+      setWaypointFromCrosshair()
+    } else if (e.shiftKey) {
+      // Shift+Tab: clear lock (plain Tab still cycles).
+      currentTarget = null
+      if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
+    } else {
+      cycleTarget()
+    }
   } else if (e.code === 'KeyI' && !docked && !navMapOpen && !paused && !missionsOpen) {
     inventoryOpen = !inventoryOpen
     audio.setThrustState(null)
@@ -1354,11 +1639,16 @@ window.addEventListener('keydown', (e) => {
   }
 })
 
-// Ships, stations/settlements, and individual asteroids within a field are
-// targetable; planets and moons are deliberately excluded (per design —
-// they're never a combat or scan target, only dock/probe candidates). Only
-// Tab-targeting uses the same range as the radar.
+// Tab-targeting range matches radar for ships/wrecks/rocks. Celestial bodies
+// (planets, moons, stations, settlements, star) use distance-to-surface so a
+// large world stays lockable without needing to be inside its shell.
 const TARGET_RANGE = RADAR_RANGE
+// Rough star shell for range checks (real star mesh radii vary by type/scale;
+// this only gates "near enough to tab-lock", not collision).
+// Rough star shell for Tab-target range (tracks 6× sun scale; was 2200).
+const STAR_TARGET_RADIUS = 13200
+
+const TARGETABLE_BODY_KINDS = new Set(['planet', 'moon', 'station', 'settlement'])
 
 function asteroidWorldPosition(field, rock) {
   return [field.position[0] + rock.position[0], field.position[1] + rock.position[1], field.position[2] + rock.position[2]]
@@ -1371,6 +1661,11 @@ function isHostileToPlayer(npc) {
   return npc.faction === 'alien' || (npc.faction === 'pirate' && !truceActive(gameState))
 }
 
+function bodyKindLabel(kind) {
+  if (kind === 'asteroidField') return 'belt'
+  return kind
+}
+
 function getTargetableEntities() {
   const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
   const entities = []
@@ -1378,25 +1673,57 @@ function getTargetableEntities() {
   for (const npc of gameState.npcs) {
     if (npc.destroyed) continue
     const dist = shipPos.distanceTo(new THREE.Vector3().fromArray(npc.position))
-    if (dist <= TARGET_RANGE) entities.push({ kind: 'npc', id: npc.id, position: npc.position, dist })
+    if (dist <= TARGET_RANGE) entities.push({ kind: 'npc', id: npc.id, position: npc.position, dist, radius: 0 })
   }
 
   for (const wreck of gameState.wrecks) {
     const dist = shipPos.distanceTo(new THREE.Vector3().fromArray(wreck.position))
-    if (dist <= TARGET_RANGE) entities.push({ kind: 'wreck', id: wreck.id, position: wreck.position, dist })
+    if (dist <= TARGET_RANGE) entities.push({ kind: 'wreck', id: wreck.id, position: wreck.position, dist, radius: 0 })
   }
 
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+
+  // System star (always at local origin).
+  {
+    const starPos = [0, 0, 0]
+    const dist = shipPos.distanceTo(new THREE.Vector3(...starPos))
+    const surfaceDist = Math.max(0, dist - STAR_TARGET_RADIUS)
+    if (surfaceDist <= TARGET_RANGE) {
+      entities.push({
+        kind: 'star',
+        id: SYSTEM_STAR_WAYPOINT_ID,
+        position: starPos,
+        dist: surfaceDist,
+        radius: STAR_TARGET_RADIUS,
+        name: `${currentSystem?.name ?? 'System'} Star`
+      })
+    }
+  }
+
   for (const body of currentSystem.bodies) {
-    if (body.kind === 'station' || body.kind === 'settlement') {
-      const dist = shipPos.distanceTo(new THREE.Vector3().fromArray(body.position))
-      if (dist <= TARGET_RANGE) entities.push({ kind: 'body', id: body.id, position: body.position, dist })
+    if (TARGETABLE_BODY_KINDS.has(body.kind)) {
+      const bodyPos = new THREE.Vector3().fromArray(body.position)
+      const dist = shipPos.distanceTo(bodyPos)
+      const radius = collisionRadiusFor(body) ?? 0
+      // Surface distance: large planets stay targetable from outside the shell.
+      const surfaceDist = Math.max(0, dist - radius)
+      if (surfaceDist <= TARGET_RANGE) {
+        entities.push({
+          kind: 'body',
+          id: body.id,
+          position: body.position,
+          dist: surfaceDist,
+          radius,
+          bodyKind: body.kind,
+          name: body.name
+        })
+      }
     } else if (body.kind === 'asteroidField') {
       getAsteroidRocks(body).forEach((rock, index) => {
         if (!isRockAlive(gameState, body.id, index)) return
         const position = asteroidWorldPosition(body, rock)
         const dist = shipPos.distanceTo(new THREE.Vector3(...position))
-        if (dist <= TARGET_RANGE) entities.push({ kind: 'asteroid', fieldId: body.id, index, position, dist })
+        if (dist <= TARGET_RANGE) entities.push({ kind: 'asteroid', fieldId: body.id, index, position, dist, radius: 0 })
       })
     }
   }
@@ -1413,6 +1740,111 @@ function sameTarget(a, b) {
 
 function toTargetRef(entity) {
   return entity.kind === 'asteroid' ? { kind: 'asteroid', fieldId: entity.fieldId, index: entity.index } : { kind: entity.kind, id: entity.id }
+}
+
+// How well the ship's forward boresight lines up with an entity. Small targets
+// use a pure cone; large bodies also score high if the aim ray clips their shell
+// (looking at a planet's limb still locks the planet).
+function aimScore(entity, shipPos, forward) {
+  const pos = new THREE.Vector3().fromArray(entity.position)
+  const to = pos.clone().sub(shipPos)
+  const dist = to.length()
+  if (dist < 1e-4) return 1
+  const dir = to.clone().multiplyScalar(1 / dist)
+  let score = dir.dot(forward)
+  const radius = entity.radius ?? 0
+  if (radius > 2) {
+    const along = to.dot(forward)
+    if (along > 0) {
+      const missSq = Math.max(0, to.lengthSq() - along * along)
+      if (missSq <= radius * radius) score = Math.max(score, 0.995)
+    }
+  }
+  return score
+}
+
+// Bodies that can be locked as a navigation waypoint via Ctrl+Tab (fields as
+// a whole, not individual rocks — rocks are combat/mining targets only).
+const WAYPOINTABLE_BODY_KINDS = new Set(['planet', 'moon', 'station', 'settlement', 'asteroidField'])
+
+// Ctrl+Tab: set (or clear) a waypoint on whatever body is under the crosshair.
+// No range limit — any body in the system whose aim cone / limb is under the
+// reticle counts (distant planets included). Combat Tab targeting still uses TARGET_RANGE.
+function setWaypointFromCrosshair() {
+  if (!gameState) return
+  const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
+  const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(
+    new THREE.Quaternion().fromArray(gameState.player.ship.quaternion)
+  )
+  const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  const candidates = []
+
+  // System star at origin — always eligible; aimScore decides if it's under reticle.
+  candidates.push({
+    id: SYSTEM_STAR_WAYPOINT_ID,
+    position: [0, 0, 0],
+    radius: STAR_TARGET_RADIUS,
+    name: `${currentSystem?.name ?? 'System'} Star`
+  })
+
+  for (const body of currentSystem.bodies) {
+    if (!WAYPOINTABLE_BODY_KINDS.has(body.kind)) continue
+    const radius = collisionRadiusFor(body) ?? (body.kind === 'asteroidField' ? (body.radius ?? 80) : 0)
+    candidates.push({
+      id: body.id,
+      position: body.position,
+      radius,
+      name: body.name
+    })
+  }
+
+  // Prefer strongest aim; limb-hit on large shells scores ~0.995 (see aimScore).
+  // Threshold only filters "not actually under the crosshair" — never distance.
+  let best = null
+  let bestScore = 0.9
+  for (const c of candidates) {
+    const score = aimScore(c, shipPos, forward)
+    if (score > bestScore) {
+      bestScore = score
+      best = c
+    }
+  }
+
+  if (!best) {
+    flashToast('No body under crosshair — aim at a planet, moon, star, station, settlement, or belt')
+    return
+  }
+
+  if (gameState.player.waypointBodyId === best.id) {
+    gameState.player.waypointBodyId = null
+    gameState.player.waypointPosition = null
+    flashToast(`Waypoint cleared: ${best.name}`)
+    return
+  }
+
+  gameState.player.waypointBodyId = best.id
+  gameState.player.waypointPosition = best.id === SYSTEM_STAR_WAYPOINT_ID ? [0, 0, 0] : null
+  flashToast(`Waypoint set: ${best.name}`)
+}
+
+// Primary star tint for VFX (cruise tunnel). Binary uses the larger component
+// (first entry in starMesh.userData.stars — see buildStarMesh).
+function getCurrentStarColor() {
+  const primary = starMesh?.userData?.stars?.[0]?.color
+  return primary?.clone?.() ?? primary ?? null
+}
+
+// Host shells that contain the active waypoint (surface settlements etc.) —
+// tunnel must not fling the player to the far side of the parent planet.
+function cruiseTunnelIgnoreIds(wp, bodies) {
+  if (!wp || !bodies?.length) return null
+  const ids = new Set()
+  for (const body of bodies) {
+    if (ignoreBodyAsCruiseObstacle(body, wp.position, wp.bodyId, wp.arrivalRange)) {
+      ids.add(body.id)
+    }
+  }
+  return ids.size ? ids : null
 }
 
 // First press (or if the current target's gone) locks onto whatever's
@@ -1432,12 +1864,11 @@ function cycleTarget() {
     const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion().fromArray(gameState.player.ship.quaternion))
     let best = null
-    let bestDot = 0.94 // roughly a 20deg cone around the crosshair
+    let bestScore = 0.94 // roughly a 20deg cone around the crosshair
     for (const e of entities) {
-      const dir = new THREE.Vector3().fromArray(e.position).sub(shipPos).normalize()
-      const dot = dir.dot(forward)
-      if (dot > bestDot) {
-        bestDot = dot
+      const score = aimScore(e, shipPos, forward)
+      if (score > bestScore) {
+        bestScore = score
         best = e
       }
     }
@@ -1454,7 +1885,7 @@ function cycleTarget() {
 // Looks the current target up fresh each frame (never cached), so a
 // destroyed NPC target correctly resolves to null instead of a stale
 // position. isAsteroid drives both the mining-beam auto-fire eligibility
-// (updateMiningBeam) and the reticle's amber tint (updateTargetIndicator).
+// Reticle amber tint for asteroids (updateTargetIndicator).
 function resolveTarget() {
   if (!currentTarget) return null
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
@@ -1462,21 +1893,41 @@ function resolveTarget() {
     const npc = gameState.npcs.find((n) => n.id === currentTarget.id && !n.destroyed)
     if (!npc) return null
     const shipClass = getShipClass(npc.shipClassId)
-    return { position: npc.position, name: shipClass.name, hostile: isHostileToPlayer(npc), hullPct: Math.max(0, npc.hull / shipClass.stats.hull), isAsteroid: false }
+    return { position: npc.position, name: shipClass.name, hostile: isHostileToPlayer(npc), hullPct: Math.max(0, npc.hull / shipClass.stats.hull), isAsteroid: false, reticle: 'hostile' }
   }
   if (currentTarget.kind === 'wreck') {
     const wreck = gameState.wrecks.find((w) => w.id === currentTarget.id)
-    return wreck ? { position: wreck.position, name: 'Wreck', hostile: false, hullPct: null, isAsteroid: false } : null
+    return wreck ? { position: wreck.position, name: 'Wreck', hostile: false, hullPct: null, isAsteroid: false, reticle: 'wreck' } : null
   }
   if (currentTarget.kind === 'asteroid') {
     const field = currentSystem.bodies.find((b) => b.id === currentTarget.fieldId)
     if (!field) return null
     const rock = getAsteroidRocks(field)[currentTarget.index]
     if (!rock || !isRockAlive(gameState, field.id, currentTarget.index)) return null
-    return { position: asteroidWorldPosition(field, rock), name: `${rockDisplayName(currentSystem)} (${field.name})`, hostile: false, hullPct: null, isAsteroid: true }
+    return { position: asteroidWorldPosition(field, rock), name: `${rockDisplayName(currentSystem)} (${field.name})`, hostile: false, hullPct: null, isAsteroid: true, reticle: 'asteroid' }
+  }
+  if (currentTarget.kind === 'star') {
+    return {
+      position: [0, 0, 0],
+      name: `${currentSystem?.name ?? 'System'} Star`,
+      hostile: false,
+      hullPct: null,
+      isAsteroid: false,
+      reticle: 'star',
+      kindLabel: 'star'
+    }
   }
   const body = currentSystem.bodies.find((b) => b.id === currentTarget.id)
-  return body ? { position: body.position, name: body.name, hostile: false, hullPct: null, isAsteroid: false } : null
+  if (!body) return null
+  return {
+    position: body.position,
+    name: body.name,
+    hostile: false,
+    hullPct: null,
+    isAsteroid: false,
+    reticle: body.kind === 'station' || body.kind === 'settlement' ? 'facility' : 'world',
+    kindLabel: bodyKindLabel(body.kind)
+  }
 }
 
 function updateTargetIndicator() {
@@ -1496,12 +1947,28 @@ function updateTargetIndicator() {
   targetIndicatorEl.style.left = `${(projected.x * 0.5 + 0.5) * window.innerWidth}px`
   targetIndicatorEl.style.top = `${(-projected.y * 0.5 + 0.5) * window.innerHeight}px`
   targetIndicatorEl.style.display = 'block'
-  const color = target.hostile ? '#e05a5a' : target.isAsteroid ? '#ffb347' : '#cfe3ff'
+  // Reticle tint by target class.
+  const color = target.hostile
+    ? '#e05a5a'
+    : target.reticle === 'asteroid'
+      ? '#ffb347'
+      : target.reticle === 'star'
+        ? '#ffd27a'
+        : target.reticle === 'facility'
+          ? '#7fe6ff'
+          : target.reticle === 'world'
+            ? '#9ad0ff'
+            : target.reticle === 'wreck'
+              ? '#c0a070'
+              : '#cfe3ff'
   targetIndicatorEl.querySelector('.target-box').style.borderColor = color
   const label = targetIndicatorEl.querySelector('.target-label')
   label.style.color = color
   const dist = new THREE.Vector3().fromArray(gameState.player.ship.position).distanceTo(new THREE.Vector3(...target.position))
-  label.textContent = target.hullPct !== null ? `${target.name} · ${Math.round(dist)}m · ${Math.round(target.hullPct * 100)}%` : `${target.name} · ${Math.round(dist)}m`
+  const kindBit = target.kindLabel ? ` · ${target.kindLabel}` : ''
+  label.textContent = target.hullPct !== null
+    ? `${target.name} · ${Math.round(dist)}m · ${Math.round(target.hullPct * 100)}%`
+    : `${target.name}${kindBit} · ${Math.round(dist)}m`
 }
 
 // Shows exactly where the ship is currently pointing (and thus where fixed
@@ -1532,7 +1999,7 @@ function getActiveWaypoint() {
       name: `${currentSystem?.name ?? 'System'} Star`,
       bodyId: SYSTEM_STAR_WAYPOINT_ID,
       isMission: false,
-      arrivalRange: 2500 + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
+      arrivalRange: 15000 + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
     }
   }
   if (gameState.player.waypointBodyId) {
@@ -1599,7 +2066,8 @@ function applyOrbitalCarry(sysBodies, prevPositions, dt) {
   const x = ship.position[0]
   const z = ship.position[2]
   const r = Math.hypot(x, z)
-  if (r < 500 || r > STAR_ORBITAL_CARRY_RADIUS) return
+  // Skip deep core (inside/near the star) and beyond the co-orbit band.
+  if (r < 3000 || r > STAR_ORBITAL_CARRY_RADIUS) return
   const a = STAR_ORBITAL_OMEGA * dt
   const c = Math.cos(a)
   const s = Math.sin(a)
@@ -1715,6 +2183,8 @@ function animate() {
   if (dockEffect) {
     motionFx.hide()
     updateDockEffect(dt)
+    // Bay activity runs as soon as the interior is swapped in.
+    if (interiorMesh?.parent) updateStationInterior(interiorMesh, dt)
     renderer.render(scene, camera)
     return
   }
@@ -1723,11 +2193,27 @@ function animate() {
     audio.setStrafeActive(false)
     motionFx.hide()
     updateStarfieldMotion(starfield, 0, false)
+    // Keep the hangar alive behind the docking UI (loaders, drones, lights).
+    if (docked && interiorMesh?.parent) {
+      updateStationInterior(interiorMesh, dt)
+      // Gentle camera drift so the bay doesn't feel frozen while menus are open.
+      const park = DOCKING_BAY_ORIGIN.clone().add(BAY_PARK_OFFSET)
+      const t = performance.now() * 0.00015
+      camera.position.set(
+        park.x + Math.sin(t) * 4,
+        park.y + 10 + Math.sin(t * 0.7) * 1.2,
+        park.z - 28 + Math.cos(t * 0.5) * 2
+      )
+      camera.lookAt(park.x, park.y + 1, park.z + 4)
+    }
     renderer.render(scene, camera)
     return
   }
 
   gameState.simTime += dt
+
+  // Probe flight runs in normal play (ship can still fly while it works).
+  if (probeEffect) updateProbeEffect(dt)
 
   let thrustState = null
   if (cruising) {
@@ -1750,6 +2236,16 @@ function animate() {
         wp.bodyId
       )) {
         cruising = false
+        // Clear nav lock on arrival — you're already there.
+        gameState.player.waypointBodyId = null
+        gameState.player.waypointPosition = null
+        // Snap facing onto the destination we just arrived at so the player
+        // isn't looking past the body after the autopilot coasted in.
+        const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
+        const targetPos = new THREE.Vector3(...wp.position)
+        if (shipPos.distanceToSquared(targetPos) > 1e-4) {
+          gameState.player.ship.quaternion = quatFacing(shipPos, targetPos).toArray()
+        }
       }
     }
     audio.setThrustState(null)
@@ -1762,10 +2258,14 @@ function animate() {
   // fire on auto-arrival, combat interrupt, and manual KeyC alike.
   audio.setSupercruiseActive(cruising)
   if (cruising !== wasCruising) {
-    if (!cruising) {
+    if (cruising) {
+      // Spool ramp starts at 0 every engage (see supercruise.SUPERCRUISE_RAMP_UP_S).
+      gameState.player.ship.supercruiseElapsed = 0
+    } else {
       // Drop all residual cruise speed so normal flight doesn't inherit a huge v.
       gameState.player.ship.velocity = [0, 0, 0]
       gameState.player.ship.throttle = 0
+      gameState.player.ship.supercruiseElapsed = 0
       // Kill cyan velocity streaks / starfield stretch immediately (don't wait a frame).
       motionFx.stopCruiseStreaks()
       thrusterEffects?.stopCruiseStreaks()
@@ -1779,12 +2279,14 @@ function animate() {
   const shipRadius = getShipCollisionRadius(playerShipClass)
   if (cruising) {
     // Tunnel through non-destination bodies with warp FX instead of bouncing.
+    // Also skip host shells that contain the waypoint (settlement on a planet).
     const wp = getActiveWaypoint()
     const tunnel = trySupercruiseTunnel(
       gameState.player.ship,
       currentBodies,
       shipRadius,
-      wp?.bodyId ?? null
+      wp?.bodyId ?? null,
+      cruiseTunnelIgnoreIds(wp, currentBodies)
     )
     if (tunnel) {
       thrusterEffects?.playTunnelBurst(tunnel.from, tunnel.to)
@@ -1801,11 +2303,15 @@ function animate() {
     cruising,
     throttle: cruising ? 1 : (gameState.player.ship.throttle ?? 0),
     shipPos: gameState.player.ship.position,
-    shipQuat: gameState.player.ship.quaternion
+    shipQuat: gameState.player.ship.quaternion,
+    camera,
+    starColor: cruising ? getCurrentStarColor() : null
   })
+  // Skybox stays unwarped; cruise uses motionFx full-screen star tunnel.
   updateStarfieldMotion(starfield, motion.intensity, cruising)
-  // Speed FOV: mild in normal flight, major in supercruise on top of CRUISE_FOV.
-  const targetFov = (cruising ? CRUISE_FOV : BASE_FOV) + motion.fovBoost
+  // Speed FOV: mild in normal flight; cruise uses a fixed +5% FOV only
+  // (camera distance is handled by snappier chase follow in syncChaseCamera).
+  const targetFov = cruising ? CRUISE_FOV : BASE_FOV + motion.fovBoost
   camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4)
   camera.updateProjectionMatrix()
   if (cruising) {
@@ -1815,7 +2321,6 @@ function animate() {
   } else {
     cruiseIndicatorEl.style.display = 'none'
   }
-  miningModeIndicatorEl.style.display = miningMode ? 'block' : 'none'
   syncMeshToEntity(playerMesh, gameState.player.ship)
   const strafeX = cruising ? 0 : (gameState.player.ship.strafeX ?? 0)
   const strafeY = cruising ? 0 : (gameState.player.ship.strafeY ?? 0)
@@ -1838,14 +2343,12 @@ function animate() {
     hullLength: playerShipClass.hull.length
   })
 
-  // Mining mode swaps the laser from manual crosshair fire to an auto-firing
-  // beam locked onto the current target — see updateMiningBeam. Missiles are
-  // unaffected either way.
+  // Normal weapons only — lasers mine asteroids on hit (see combat.js).
   if (flightMode && !cruising) {
-    if (!miningMode && laserFireHeld) fireProjectile(gameState, gameState.player.ship, playerShipClass, 'player', onWeaponFired, 'laser')
+    if (laserFireHeld) fireProjectile(gameState, gameState.player.ship, playerShipClass, 'player', onWeaponFired, 'laser')
     if (missileFireHeld) fireProjectile(gameState, gameState.player.ship, playerShipClass, 'player', onWeaponFired, 'missile')
   }
-  updateMiningBeam()
+  oreScoopEffects?.update(dt, new THREE.Vector3().fromArray(gameState.player.ship.position))
 
   for (const npc of gameState.npcs) {
     if (npc.destroyed) continue
@@ -1901,12 +2404,13 @@ function animate() {
   const spawnSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
   const core = coreFraction(spawnSystem)
   const ambientCap = Math.max(1, Math.round(AMBIENT_NPC_CAP + 1 - core * 3))
-  // The player's own starting system stays free of hostile encounters until
-  // they break that peace themselves (see combat.js's updateProjectiles) —
-  // ambient traffic still spawns there, just neutral-only in the meantime.
+  // Neutral-only ambient traffic:
+  //  - home system until the player breaks peace (see combat.js)
+  //  - Whispers (outer rim landmark) permanently — mission NPCs still spawn
   const atPeacefulHome = gameState.player.currentSystemId === gameState.player.startingSystemId && !gameState.flags.startingSystemPeaceBroken
+  const forceNeutralAmbient = atPeacefulHome || !!spawnSystem.noAmbientHostiles
   if (gameState.simTime > nextAmbientSpawnAt && gameState.npcs.filter((n) => !n.destroyed).length < ambientCap) {
-    gameState.npcs.push(spawnEncounterNear(Math.random, gameState.player.ship.position, gameState.galaxy, core, atPeacefulHome))
+    gameState.npcs.push(spawnEncounterNear(Math.random, gameState.player.ship.position, gameState.galaxy, core, forceNeutralAmbient))
     nextAmbientSpawnAt = gameState.simTime + AMBIENT_SPAWN_INTERVAL_S * (0.7 + core * 0.6)
   }
 
@@ -1976,7 +2480,7 @@ function animate() {
     }
   }
 
-  syncChaseCamera(camera, gameState.player.ship)
+  syncChaseCamera(camera, gameState.player.ship, { cruising })
   if (starMesh) updateStarMesh(starMesh, gameState.simTime, dt, camera)
   for (const mesh of bodyMeshes.values()) updateStationMesh(mesh, gameState.simTime, dt)
   // Depleted rocks "explode" (see onProjectileHit) and stay hidden until
@@ -2021,7 +2525,10 @@ function animate() {
       orbit.body.position[2] = parentPos[2] + orbit.radius * Math.sin(angle)
     }
     const mesh = bodyMeshes.get(orbit.body.id)
-    if (mesh) mesh.position.fromArray(orbit.body.position)
+    if (mesh) {
+      mesh.position.fromArray(orbit.body.position)
+      if (orbit.isSurface) orientSettlementOnSurface(mesh, orbit.surfaceOffset)
+    }
   }
   applyOrbitalCarry(sysBodies, prevBodyPositions, dt)
 
@@ -2048,9 +2555,19 @@ function animate() {
   dockPromptEl.style.display = nearbyBody ? 'block' : 'none'
   if (nearbyBody) dockPromptEl.textContent = `Dock with ${nearbyBody.name}`
 
-  const nearbyProbeBody = findNearbyProbeableBody()
-  probePromptEl.style.display = nearbyProbeBody ? 'block' : 'none'
-  if (nearbyProbeBody) probePromptEl.textContent = `Press P to launch a probe at ${nearbyProbeBody.name}`
+  const probeLaunch = !probeEffect ? getProbeLaunchTarget() : null
+  probePromptEl.style.display = probeLaunch ? 'block' : 'none'
+  if (probeLaunch) {
+    const left = MAX_PROBE_ATTEMPTS - probeAttemptCount(gameState, probeLaunch.body.id)
+    if (left <= 0) {
+      probePromptEl.textContent = `Probes exhausted at ${probeLaunch.body.name}`
+    } else {
+      const base = probeLaunch.viaOrbit
+        ? `Press P to probe ${probeLaunch.body.name} (in orbit)`
+        : `Press P to launch a probe at ${probeLaunch.body.name}`
+      probePromptEl.textContent = `${base} · ${left} left`
+    }
+  }
 
   // Only shown when there's no dockable body in range too, matching the
   // KeyF handler's own dock-takes-priority-over-loot fallback.
@@ -2061,6 +2578,15 @@ function animate() {
   }
   if (factionToastEl.style.display === 'block' && gameState.simTime > factionToastUntil) {
     factionToastEl.style.display = 'none'
+  }
+  if (probeResultsEl && probeResultsEl.style.display === 'block') {
+    const remain = probeResultsUntil - gameState.simTime
+    if (remain <= 0) {
+      probeResultsEl.style.display = 'none'
+      probeResultsEl.style.opacity = '1'
+    } else if (remain < 1.2) {
+      probeResultsEl.style.opacity = String(Math.max(0, remain / 1.2))
+    }
   }
 
   updateWaypointIndicator()

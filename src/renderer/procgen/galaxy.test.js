@@ -1,6 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { generateGalaxy, canJumpTo, ensureStartingSystemFacilities } from './galaxy.js'
+import {
+  generateGalaxy,
+  canJumpTo,
+  ensureStartingSystemFacilities,
+  coreFraction,
+  WHISPERS_SYSTEM_NAME,
+  WHISPERS_STATION_NAME
+} from './galaxy.js'
 import { mulberry32 } from './prng.js'
 
 function allBodies(galaxy) {
@@ -28,11 +35,9 @@ test('moons appear on roughly 23% of planets and orbit close to their parent', (
         body.position[1] - parent.position[1],
         body.position[2] - parent.position[2]
       )
-      // Threshold accounts for the scaled-up planet/moon radii (see
-      // PLANET_SIZE_SCALE/MOON_SIZE_SCALE in galaxy.js): the orbit clearance
-      // clamp can push larger pairs' orbit radius well past the old ~45 cap —
-      // now potentially several hundred units for the biggest planet/moon pairs.
-      assert.ok(dist < 1300, `moon should orbit close to its parent planet, got distance ${dist}`)
+      // Threshold accounts for scaled planet/moon radii (PLANET/MOON_SIZE_SCALE):
+      // orbit clearance = parentR + moonR + margin can exceed several thousand.
+      assert.ok(dist < 8000, `moon should orbit close to its parent planet, got distance ${dist}`)
     })
   }
 })
@@ -60,7 +65,7 @@ test("a moon's orbit radius always clears its parent planet's collision shell", 
 test('a handful of asteroid fields are scattered across the galaxy and are not mission givers', () => {
   const galaxy = generateGalaxy(42)
   const fields = allBodies(galaxy).filter((b) => b.kind === 'asteroidField')
-  assert.equal(fields.length, 40)
+  assert.equal(fields.length, 85)
   assert.ok(fields.every((f) => f.hasMissions === false && f.hasShipyard === false))
 })
 
@@ -71,8 +76,10 @@ test('planets, moons, and asteroid fields have a physical radius sized for their
 
   // Base ranges scaled by PLANET_SIZE_SCALE/MOON_SIZE_SCALE, times the
   // per-system SYSTEM_SCALE_VARIANCE (0.85-1.15) — see galaxy.js.
-  for (const b of byKind('planet')) assert.ok(b.radius >= 8 * 37.5 * 0.85 && b.radius <= 21 * 37.5 * 1.15)
-  for (const b of byKind('moon')) assert.ok(b.radius >= 3 * 24.75 * 0.85 && b.radius <= 8 * 24.75 * 1.15)
+  const PLANET_SIZE_SCALE = 187.5
+  const MOON_SIZE_SCALE = 123.75
+  for (const b of byKind('planet')) assert.ok(b.radius >= 8 * PLANET_SIZE_SCALE * 0.85 && b.radius <= 21 * PLANET_SIZE_SCALE * 1.15)
+  for (const b of byKind('moon')) assert.ok(b.radius >= 3 * MOON_SIZE_SCALE * 0.85 && b.radius <= 8 * MOON_SIZE_SCALE * 1.15)
   for (const b of byKind('asteroidField')) assert.ok(b.radius >= 70 * 0.85 && b.radius <= 110 * 1.15)
   for (const b of [...byKind('station'), ...byKind('settlement')]) assert.equal(b.radius, null)
 })
@@ -125,7 +132,9 @@ test('settlements sit on a planet/moon surface (or rarely an asteroid field)', (
         s.position[1] - parent.position[1],
         s.position[2] - parent.position[2]
       )
+      // On the crust: slightly above parent.radius (small surface lift only).
       assert.ok(dist >= parent.radius, `settlement should be outside host radius (dist ${dist}, r ${parent.radius})`)
+      assert.ok(dist <= parent.radius + 80, `settlement should sit on the surface, not float (dist ${dist}, r ${parent.radius})`)
       surface++
     }
   }
@@ -133,13 +142,53 @@ test('settlements sit on a planet/moon surface (or rarely an asteroid field)', (
   assert.ok(belt / (surface + belt) < 0.05, 'asteroid-belt settlements should be rare')
 })
 
+test('at most one settlement per planet family (planet or its moon, not both)', () => {
+  const galaxy = generateGalaxy(42)
+  for (const system of galaxy.systems) {
+    const familyCount = new Map()
+    for (const s of system.bodies.filter((b) => b.kind === 'settlement' && !b.inAsteroidField)) {
+      const parent = system.bodies.find((b) => b.id === s.parentId)
+      assert.ok(parent)
+      const family = parent.kind === 'moon' && parent.parentId ? parent.parentId : parent.id
+      familyCount.set(family, (familyCount.get(family) ?? 0) + 1)
+    }
+    for (const [family, n] of familyCount) {
+      assert.equal(n, 1, `family ${family} has ${n} settlements`)
+    }
+  }
+})
+
 test('ensureStartingSystemFacilities adds at least 1 station and 2 settlements', () => {
   const galaxy = generateGalaxy(7)
-  // Pick a sparse system if possible
-  const system = galaxy.systems.find((s) => s.bodies.filter((b) => b.kind === 'planet').length >= 1) ?? galaxy.systems[0]
+  // Need ≥2 planet families so family-unique settlement rules can still place two.
+  const system = galaxy.systems.find((s) => s.bodies.filter((b) => b.kind === 'planet').length >= 2) ?? galaxy.systems[0]
   // Strip facilities
   system.bodies = system.bodies.filter((b) => b.kind === 'planet' || b.kind === 'moon')
   ensureStartingSystemFacilities(system, mulberry32(99), galaxy._nextBodyId ?? 0)
   assert.ok(system.bodies.filter((b) => b.kind === 'station').length >= 1)
   assert.ok(system.bodies.filter((b) => b.kind === 'settlement').length >= 2)
+})
+
+test('Whispers is the outermost system, has SerNub station, and is ambient-hostile-free', () => {
+  for (const seed of [1, 42, 99, 1337]) {
+    const galaxy = generateGalaxy(seed)
+    const whispers = galaxy.systems.filter((s) => s.name === WHISPERS_SYSTEM_NAME)
+    assert.equal(whispers.length, 1, `seed ${seed}: exactly one Whispers`)
+    const system = whispers[0]
+    assert.equal(system.noAmbientHostiles, true)
+    assert.equal(system.starType, 'trinary', `seed ${seed}: Whispers is the trinary system`)
+
+    // Outer rim: no other system should be farther from the core.
+    const dist = Math.hypot(system.galaxyPosition[0], system.galaxyPosition[2])
+    for (const other of galaxy.systems) {
+      if (other === system) continue
+      const d = Math.hypot(other.galaxyPosition[0], other.galaxyPosition[2])
+      assert.ok(d <= dist + 1e-6, `seed ${seed}: ${other.name} farther than Whispers`)
+      assert.notEqual(other.starType, 'trinary', `seed ${seed}: only Whispers is trinary`)
+    }
+    assert.ok(coreFraction(system) > 0.85, `seed ${seed}: Whispers should be near the rim, got ${coreFraction(system)}`)
+
+    const palace = system.bodies.filter((b) => b.kind === 'station' && b.name === WHISPERS_STATION_NAME)
+    assert.equal(palace.length, 1, `seed ${seed}: SerNub's Pleasure Palace station`)
+  }
 })

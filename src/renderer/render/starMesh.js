@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { mulberry32 } from '../procgen/prng.js'
-import { STAR_TYPES } from '../procgen/starType.js'
+import { starTypeForSystem } from '../procgen/starType.js'
 import { buildLensFlare } from './lensFlare.js'
 import { getSurfaceTextures } from './textures.js'
 
@@ -99,7 +99,8 @@ const STAR_TYPE_PARAMS = {
 // STAR_TYPE_PARAMS range) since corona scales are already relative to radius
 // and grow with it automatically. (Was 2.5, then 12.5 — each pass still read
 // as too small.)
-const STAR_SIZE_SCALE = 37.5
+// 6× prior scale (37.5) — suns "600% bigger" pass.
+const STAR_SIZE_SCALE = 225
 
 // Soft multi-stop radial glow (lazy — tests import this module with no DOM).
 // Wider falloff than a hard disc so the corona reads as real solar atmosphere
@@ -289,6 +290,9 @@ function buildSingleStar(type, rng) {
   const flare = buildLensFlare(color)
   group.add(flare)
 
+  // Coronal mass ejections — pooled, launched occasionally (see updateStarCmes).
+  const cmes = buildCmePool(group, radius, color, rng)
+
   group.frustumCulled = false
   return {
     group,
@@ -309,161 +313,543 @@ function buildSingleStar(type, rng) {
     distantSpotBase,
     coreMap,
     // Slow, slightly diagonal texture drift — see updateStarMesh.
-    mapDrift: [0.004 + rng() * 0.004, 0.002 + rng() * 0.003]
+    mapDrift: [0.004 + rng() * 0.004, 0.002 + rng() * 0.003],
+    cmes
   }
 }
 
-// A thick, fiery additive-blended ring lying flat around the stationary
-// (bigger) star, at the exact radius the smaller star orbits at — so the
-// smaller star always sits right on the ring, "intersecting" it as it goes
-// around. Vertex-painted with the same value-noise trick as the star cores
-// (deep red through hot yellow-orange) rather than a flat tint, so it reads
-// as roiling plasma; `ring.rotateOnWorldAxis` in updateStarMesh spins that
-// noise pattern around the circle each frame for a flowing-fire look
-// (rotateOnWorldAxis, not plain rotation.y, since the ring's own local axes
-// are already reoriented by the initial flat-lie rotation below). A few
-// bright spark spheres travel around the ring on their own independent
-// phase/speed on top of that. Static position once built (only pulses/spins
-// in place) — much cheaper per-frame than a beam re-measured between two
-// moving endpoints every frame.
-// Tube/spark size used to be a flat "4"/"3.2" regardless of the ring's own
-// radius — fine back when STAR_SIZE_SCALE was small, but as that scale grew
-// (2.5 -> 12.5 -> 37.5) the ring's radius grew right along with it while the
-// tube didn't, so the ring got proportionally thinner each time — eventually
-// a near-invisible hairline (the same class of bug detailForRadius fixed for
-// planet/star surface faceting above). Sizing both off the ring's own radius
-// keeps the ring's thickness readable at any scale.
-// Painted with the classic fire structure — a blinding white-yellow core
-// inside a colored falloff — rather than one flat-orange tube: an inner
-// thin torus runs near-white at high opacity, the fat outer torus carries
-// the deep-red-to-orange noise.
-//
-// Geometry: the ring's radius is HALF the stars' separation and its center
-// sits at the midpoint between them, so the circle passes through both star
-// centers by construction — a plasma bridge threading the pair, not a halo
-// around the primary. updateStarMesh moves the midpoint with the smaller
-// star's orbit every frame and rolls the whole ring around the star-to-star
-// axis: both suns lie ON that roll axis, so the ring can weave and tilt out
-// of the orbital plane as much as it likes while always still intersecting
-// both of them exactly.
-//
-// Each torus lives inside its own `spinner` group whose local-Y spin flows
-// the fire pattern around the circle — a plain rotation on the torus itself
-// would compose badly with its flat-lie X rotation, and rotateOnWorldAxis
-// (the old approach) breaks once the parent ring group itself starts
-// re-orienting every frame.
-function buildEnergyRing(separation, rng) {
-  const radius = separation / 2
-  const tubeRadius = Math.max(4, radius * 0.05)
-  const offsets = [rng() * 10, rng() * 10, rng() * 10]
-  const group = new THREE.Group()
-  // Yaw first (align local X with the star axis), then roll about that
-  // now-yawed X — see updateStarMesh.
-  group.rotation.order = 'YXZ'
+// Prebuild a few reusable CME groups per star (never allocate mid-flight).
+// Each is a short plasma loop/jet: root blob + expanding arc puffs + leading ribbon.
+function buildCmePool(starGroup, radius, starColor, rng) {
+  const pool = []
+  const poolSize = 3
+  const hot = starColor.clone().lerp(new THREE.Color(1, 0.95, 0.7), 0.45)
+  const mid = starColor.clone().lerp(new THREE.Color(1, 0.45, 0.15), 0.35)
 
-  function paintTorus(tube, deepColor, hotColor, opacity) {
-    const geometry = new THREE.TorusGeometry(radius, tube, 12, 96)
-    const pos = geometry.attributes.position
-    const v = new THREE.Vector3()
-    const colors = []
-    const c = new THREE.Color()
-    for (let i = 0; i < pos.count; i++) {
-      v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize()
-      const n = surfaceNoise(v.x, v.y, v.z, offsets)
-      c.copy(deepColor).lerp(hotColor, Math.min(1, Math.max(0, n * 1.5)))
-      colors.push(c.r, c.g, c.b)
+  for (let i = 0; i < poolSize; i++) {
+    const g = new THREE.Group()
+    g.visible = false
+
+    // Root flare at the surface (bright lift-off).
+    const root = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 10, 8),
+      new THREE.MeshBasicMaterial({
+        color: hot,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    )
+    g.add(root)
+
+    // Arc of plasma puffs along the ejection path.
+    const puffs = []
+    for (let p = 0; p < 7; p++) {
+      const puff = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 8, 6),
+        new THREE.MeshBasicMaterial({
+          color: mid.clone().lerp(hot, p / 6),
+          transparent: true,
+          opacity: 0.55,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      )
+      puff.frustumCulled = false
+      g.add(puff)
+      puffs.push(puff)
     }
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false }))
-    mesh.rotation.x = Math.PI / 2 // lie flat in the ring group's local XZ plane
-    const spinner = new THREE.Group()
-    spinner.add(mesh)
-    group.add(spinner)
-    return { mesh, spinner }
+
+    // Leading ribbon / streamer sprite (camera-facing gas sheet).
+    const ribbon = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: getStreamerTexture(),
+      color: hot,
+      transparent: true,
+      opacity: 0.55,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    }))
+    g.add(ribbon)
+
+    // Soft halo around the front of the mass.
+    const frontHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: getHaloTexture(),
+      color: mid,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    }))
+    g.add(frontHalo)
+
+    starGroup.add(g)
+    pool.push({
+      group: g,
+      root,
+      puffs,
+      ribbon,
+      frontHalo,
+      active: false,
+      age: 0,
+      duration: 6,
+      // Local unit direction of ejection (from star center).
+      dir: new THREE.Vector3(1, 0, 0),
+      speed: radius * 0.35,
+      // ~⅔ of previous scale (user: reduce CME size by a third).
+      size: radius * 0.2 * (2 / 3),
+      peak: 1
+    })
   }
 
-  const outer = paintTorus(tubeRadius, new THREE.Color().setHSL(0.01, 1, 0.35), new THREE.Color().setHSL(0.09, 1, 0.6), 0.75)
-  const core = paintTorus(tubeRadius * 0.4, new THREE.Color().setHSL(0.08, 1, 0.65), new THREE.Color().setHSL(0.13, 0.9, 0.9), 0.95)
+  return {
+    pool,
+    // First CME after a short settle so menu/load isn't an instant blast.
+    nextAt: 12 + rng() * 28,
+    // Mean ~38s between ejections; jitter keeps them irregular.
+    meanInterval: 32 + rng() * 18,
+    rngSeed: rng() * 1e6
+  }
+}
 
+// Cheap deterministic-ish float from a seed + salt (no need to re-seed mulberry).
+function cmeRand(seed, salt) {
+  const x = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453
+  return x - Math.floor(x)
+}
+
+function launchCme(star, elapsed) {
+  const cmes = star.cmes
+  if (!cmes) return
+  const slot = cmes.pool.find((c) => !c.active)
+  if (!slot) return
+
+  const seed = cmes.rngSeed + elapsed * 17.13
+  // Random direction on the sphere (slightly prefer mid-latitudes — real CMEs).
+  const u = cmeRand(seed, 1)
+  const v = cmeRand(seed, 2)
+  const theta = u * Math.PI * 2
+  const phi = Math.acos(2 * v - 1) * 0.75 + Math.PI * 0.125 // avoid pure poles a bit
+  slot.dir.set(
+    Math.sin(phi) * Math.cos(theta),
+    Math.cos(phi),
+    Math.sin(phi) * Math.sin(theta)
+  ).normalize()
+
+  slot.active = true
+  slot.age = 0
+  slot.duration = 5 + cmeRand(seed, 3) * 4.5
+  // Size ~⅔ of original (reduce CMEs by a third).
+  const sizeScale = 2 / 3
+  slot.speed = star.radius * (0.28 + cmeRand(seed, 4) * 0.35) * sizeScale
+  slot.size = star.radius * (0.12 + cmeRand(seed, 5) * 0.18) * sizeScale
+  slot.peak = 0.85 + cmeRand(seed, 6) * 0.35
+  slot.group.visible = true
+  slot.group.position.set(0, 0, 0)
+
+  // Schedule next: rare-ish but regular enough to notice in a play session.
+  const gap = cmes.meanInterval * (0.55 + cmeRand(seed, 7) * 0.9)
+  cmes.nextAt = elapsed + Math.max(18, gap)
+}
+
+function updateStarCmes(star, elapsed, dt) {
+  const cmes = star.cmes
+  if (!cmes) return
+
+  if (elapsed >= cmes.nextAt) launchCme(star, elapsed)
+
+  for (const cme of cmes.pool) {
+    if (!cme.active) continue
+    cme.age += dt
+    const u = Math.min(1, cme.age / cme.duration)
+    // Ease-out expansion: fast launch, then coast / disperse.
+    const travel = cme.speed * (cme.age * (0.55 + 0.45 * (1 - u * u)))
+    const front = star.radius * 1.02 + travel
+    // Opacity: bright rise, long fade.
+    const fade = u < 0.12 ? u / 0.12 : Math.pow(1 - (u - 0.12) / 0.88, 1.35)
+    const opacity = Math.max(0, fade * cme.peak)
+
+    // Root sits on the photosphere, flaring as the mass lifts off.
+    cme.root.position.copy(cme.dir).multiplyScalar(star.radius * 1.02)
+    const rootScale = cme.size * (1.2 + u * 2.5) * (u < 0.2 ? 1.4 : 1 - u * 0.5)
+    cme.root.scale.setScalar(Math.max(0.01, rootScale))
+    cme.root.material.opacity = opacity * (u < 0.35 ? 1 : 1 - (u - 0.35) * 1.2)
+
+    // Chain of puffs along the expanding front — loops slightly off-axis.
+    for (let i = 0; i < cme.puffs.length; i++) {
+      const puff = cme.puffs[i]
+      const t = (i + 1) / (cme.puffs.length + 1)
+      // Arc: lateral offset grows then collapses (classic CME loop).
+      const arc = Math.sin(t * Math.PI) * cme.size * (1.2 + u * 3.5)
+      // Build a stable perpendicular from dir.
+      const ax = Math.abs(cme.dir.y) < 0.9 ? 0 : 1
+      const side = new THREE.Vector3(ax, 1 - ax, 0).cross(cme.dir).normalize()
+      const up = new THREE.Vector3().crossVectors(cme.dir, side).normalize()
+      const loopPhase = t * Math.PI * 2 + elapsed * 0.4
+      const lat = side.clone().multiplyScalar(Math.cos(loopPhase) * arc)
+        .add(up.clone().multiplyScalar(Math.sin(loopPhase) * arc * 0.55))
+      const along = front * (0.25 + t * 0.75)
+      puff.position.copy(cme.dir).multiplyScalar(along).add(lat)
+      const puffScale = cme.size * (0.7 + t * 1.4) * (1 + u * 2.8)
+      puff.scale.setScalar(Math.max(0.01, puffScale))
+      puff.material.opacity = opacity * (0.35 + 0.65 * (1 - t * 0.5))
+    }
+
+    // Ribbon points along the jet (sprite is camera-facing; stretch length).
+    const tip = front * 1.05
+    cme.ribbon.position.copy(cme.dir).multiplyScalar(tip * 0.72)
+    cme.ribbon.scale.set(
+      cme.size * (1.5 + u * 4),
+      cme.size * (4 + u * 10),
+      1
+    )
+    cme.ribbon.material.opacity = opacity * 0.65
+    cme.ribbon.material.rotation = Math.atan2(cme.dir.x, cme.dir.z)
+
+    cme.frontHalo.position.copy(cme.dir).multiplyScalar(tip)
+    const haloS = cme.size * (3 + u * 8)
+    cme.frontHalo.scale.setScalar(Math.max(0.01, haloS))
+    cme.frontHalo.material.opacity = opacity * 0.45
+
+    // Peak corona swell from the youngest active CME (applied once after loop).
+    if (u < 0.18) {
+      cmes.coronaPunch = Math.max(cmes.coronaPunch ?? 0, (1 - u / 0.18) * 0.12)
+    }
+
+    if (u >= 1) {
+      cme.active = false
+      cme.group.visible = false
+    }
+  }
+}
+
+// Soft radial-gradient sprite for gaseous plasma puffs (shared).
+let _plasmaPuffTex = null
+function plasmaPuffTexture() {
+  if (_plasmaPuffTex) return _plasmaPuffTex
+  if (typeof document === 'undefined') return null
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+  grd.addColorStop(0, 'rgba(255,220,140,1)')
+  grd.addColorStop(0.25, 'rgba(255,120,40,0.7)')
+  grd.addColorStop(0.55, 'rgba(180,30,20,0.3)')
+  grd.addColorStop(1, 'rgba(40,0,10,0)')
+  g.fillStyle = grd
+  g.fillRect(0, 0, 64, 64)
+  _plasmaPuffTex = new THREE.CanvasTexture(c)
+  return _plasmaPuffTex
+}
+
+// Centerline of the plasma bridge: imperfect ellipse + multi-harmonic warp
+// so it never reads as a clean torus, while still roughly linking both suns
+// (radius ≈ separation/2, center at the pair midpoint).
+function energyRingPathPoint(theta, radius, t, warp) {
+  const w1 = Math.sin(2 * theta + t * warp.flow1 + warp.p1)
+  const w2 = Math.sin(3 * theta - t * warp.flow2 + warp.p2)
+  const w3 = Math.sin(5 * theta + t * warp.flow3 + warp.p3)
+  const radial = 1 + warp.a1 * w1 + warp.a2 * w2 + warp.a3 * w3
+  // Mild ellipse that breathes over time.
+  const ex = 1 + warp.ellipse * Math.sin(t * warp.ellipseSpeed)
+  const ez = 1 - warp.ellipse * 0.85 * Math.sin(t * warp.ellipseSpeed + 0.8)
+  const r = radius * radial
+  const y =
+    radius * (warp.y1 * Math.sin(2 * theta + t * warp.yFlow1 + warp.py1)
+      + warp.y2 * Math.sin(3 * theta - t * warp.yFlow2 + warp.py2)
+      + warp.y3 * Math.sin(4 * theta + t * warp.yFlow3))
+  return {
+    x: Math.cos(theta) * r * ex,
+    y,
+    z: Math.sin(theta) * r * ez
+  }
+}
+
+// Build a soft tube along the warped path (not a perfect TorusGeometry).
+// tubularSegs along the loop, radialSegs around the tube cross-section.
+function buildWarpedTubeGeometry(radius, tubeR, tubularSegs, radialSegs, warp, t = 0, colorDeep, colorHot, noiseOffsets) {
+  const positions = []
+  const colors = []
+  const indices = []
+  const c = new THREE.Color()
+  const deep = colorDeep.clone()
+  const hot = colorHot.clone()
+
+  const centers = []
+  for (let i = 0; i <= tubularSegs; i++) {
+    const theta = (i / tubularSegs) * Math.PI * 2
+    centers.push(energyRingPathPoint(theta, radius, t, warp))
+  }
+
+  for (let i = 0; i <= tubularSegs; i++) {
+    const p = centers[i]
+    const prev = centers[(i - 1 + tubularSegs) % tubularSegs]
+    const next = centers[(i + 1) % tubularSegs]
+    // Tangent along the path.
+    let tx = next.x - prev.x
+    let ty = next.y - prev.y
+    let tz = next.z - prev.z
+    const tlen = Math.hypot(tx, ty, tz) || 1
+    tx /= tlen; ty /= tlen; tz /= tlen
+    // Build a frame (N, B) perpendicular to tangent.
+    let nx = -ty, ny = tx, nz = 0
+    let nlen = Math.hypot(nx, ny, nz)
+    if (nlen < 1e-4) { nx = 0; ny = -tz; nz = ty; nlen = Math.hypot(nx, ny, nz) || 1 }
+    nx /= nlen; ny /= nlen; nz /= nlen
+    // B = T × N
+    let bx = ty * nz - tz * ny
+    let by = tz * nx - tx * nz
+    let bz = tx * ny - ty * nx
+    const blen = Math.hypot(bx, by, bz) || 1
+    bx /= blen; by /= blen; bz /= blen
+
+    // Tube radius also breathes irregularly along the path.
+    const theta = (i / tubularSegs) * Math.PI * 2
+    const tubeScale = 1 + 0.35 * Math.sin(3 * theta + t * 1.1) + 0.2 * Math.sin(7 * theta - t * 0.7)
+    const tr = tubeR * tubeScale
+
+    for (let j = 0; j <= radialSegs; j++) {
+      const phi = (j / radialSegs) * Math.PI * 2
+      const cp = Math.cos(phi)
+      const sp = Math.sin(phi)
+      const px = p.x + (nx * cp + bx * sp) * tr
+      const py = p.y + (ny * cp + by * sp) * tr
+      const pz = p.z + (nz * cp + bz * sp) * tr
+      positions.push(px, py, pz)
+
+      const nNoise = surfaceNoise(px / radius, py / radius, pz / radius, noiseOffsets)
+      // Hotter toward tube center (lower |phi variation| is wrong — use radial
+      // ring angle + noise for fire blotches).
+      const heat = Math.pow(Math.max(0, 0.45 + nNoise * 0.7 + 0.25 * Math.sin(theta * 4 + phi * 2)), 0.75)
+      c.copy(deep).lerp(hot, Math.min(1, heat))
+      colors.push(c.r, c.g, c.b)
+    }
+  }
+
+  const stride = radialSegs + 1
+  for (let i = 0; i < tubularSegs; i++) {
+    for (let j = 0; j < radialSegs; j++) {
+      const a = i * stride + j
+      const b = a + stride
+      const c0 = a + 1
+      const d = b + 1
+      indices.push(a, b, c0, b, d, c0)
+    }
+  }
+
+  const geom = new THREE.BufferGeometry()
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  geom.setIndex(indices)
+  geom.computeVertexNormals()
+  return geom
+}
+
+// Plasma bridge between a binary pair: warped / weaving multi-layer fire-gas
+// tube (not a perfect torus). Geometry path is rebuilt each frame so the
+// ring thrashs and breathes while the group still tracks the star midpoint.
+//
+// Geometry: nominal radius = separation/2, centered on the pair midpoint so
+// it roughly threads both stars; harmonics + out-of-plane waves keep it from
+// reading as a clean circle. updateStarMesh re-centers/yaws/rolls the group
+// and remeshes the warp.
+function buildEnergyRing(separation, rng) {
+  const radius = separation / 2
+  const tubeRadius = Math.max(5, radius * 0.055)
+  const noiseOffsets = [rng() * 10, rng() * 10, rng() * 10]
+  const group = new THREE.Group()
+  group.rotation.order = 'YXZ'
+
+  const warp = {
+    a1: 0.1 + rng() * 0.08,
+    a2: 0.06 + rng() * 0.05,
+    a3: 0.03 + rng() * 0.04,
+    p1: rng() * Math.PI * 2,
+    p2: rng() * Math.PI * 2,
+    p3: rng() * Math.PI * 2,
+    flow1: 0.35 + rng() * 0.25,
+    flow2: 0.45 + rng() * 0.3,
+    flow3: 0.55 + rng() * 0.25,
+    ellipse: 0.06 + rng() * 0.06,
+    ellipseSpeed: 0.18 + rng() * 0.12,
+    y1: 0.1 + rng() * 0.08,
+    y2: 0.06 + rng() * 0.05,
+    y3: 0.03 + rng() * 0.03,
+    yFlow1: 0.4 + rng() * 0.25,
+    yFlow2: 0.55 + rng() * 0.3,
+    yFlow3: 0.7 + rng() * 0.25,
+    py1: rng() * Math.PI * 2,
+    py2: rng() * Math.PI * 2
+  }
+
+  const deepOuter = new THREE.Color().setHSL(0.02, 0.95, 0.28)
+  const hotOuter = new THREE.Color().setHSL(0.07, 1, 0.52)
+  const deepMid = new THREE.Color().setHSL(0.05, 1, 0.4)
+  const hotMid = new THREE.Color().setHSL(0.1, 1, 0.62)
+  const deepCore = new THREE.Color().setHSL(0.1, 0.85, 0.7)
+  const hotCore = new THREE.Color().setHSL(0.14, 0.55, 0.95)
+
+  function makeLayer(tubeScale, deep, hot, opacity) {
+    const geom = buildWarpedTubeGeometry(radius, tubeRadius * tubeScale, 72, 10, warp, 0, deep, hot, noiseOffsets)
+    const mat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+    const mesh = new THREE.Mesh(geom, mat)
+    mesh.frustumCulled = false
+    group.add(mesh)
+    return mesh
+  }
+
+  // Three nested shells: smoky outer gas → fire mid → white-hot filament.
+  const gas = makeLayer(1.85, deepOuter, hotOuter, 0.28)
+  const mid = makeLayer(1.05, deepMid, hotMid, 0.55)
+  const core = makeLayer(0.38, deepCore, hotCore, 0.85)
+
+  // Soft gaseous puffs drifting along the bridge.
+  const puffs = []
+  const puffTex = plasmaPuffTexture()
+  const puffCount = 22
+  for (let i = 0; i < puffCount; i++) {
+    const mat = new THREE.SpriteMaterial({
+      map: puffTex,
+      color: new THREE.Color().setHSL(0.04 + rng() * 0.08, 0.95, 0.55 + rng() * 0.2),
+      transparent: true,
+      opacity: 0.35 + rng() * 0.35,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+    const sprite = new THREE.Sprite(mat)
+    const size = tubeRadius * (2.5 + rng() * 4)
+    sprite.scale.set(size, size, 1)
+    group.add(sprite)
+    puffs.push({
+      mesh: sprite,
+      phase: rng() * Math.PI * 2,
+      speed: 0.15 + rng() * 0.35,
+      size,
+      radialJitter: 0.04 + rng() * 0.1,
+      yJitter: tubeRadius * (0.5 + rng() * 2)
+    })
+  }
+
+  // Ember sparks — chaotic, not locked to a perfect circle.
   const sparks = []
-  const sparkCount = 14
+  const sparkCount = 18
   for (let i = 0; i < sparkCount; i++) {
-    const color = new THREE.Color().setHSL(0.03 + rng() * 0.1, 1, 0.55 + rng() * 0.3)
-    const size = tubeRadius * (0.4 + rng() * 0.9)
-    const spark = new THREE.Mesh(new THREE.SphereGeometry(size, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }))
-    // Children of the ring group, positioned on its local circle — they ride
-    // along automatically as the ring re-orients/weaves each frame.
+    const color = new THREE.Color().setHSL(0.04 + rng() * 0.12, 1, 0.55 + rng() * 0.35)
+    const size = tubeRadius * (0.25 + rng() * 0.7)
+    const spark = new THREE.Mesh(
+      new THREE.SphereGeometry(size, 6, 4),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })
+    )
     group.add(spark)
-    // Small radial/vertical wobble per spark (applied in updateStarMesh) so
-    // they read as embers thrown off the ring, not beads on a wire.
-    sparks.push({ mesh: spark, phase: rng() * Math.PI * 2, speed: 0.35 + rng() * 0.5, wobble: tubeRadius * (0.5 + rng() * 1.5), wobbleFreq: 2 + rng() * 3 })
+    sparks.push({
+      mesh: spark,
+      phase: rng() * Math.PI * 2,
+      speed: 0.25 + rng() * 0.65,
+      wobble: tubeRadius * (0.8 + rng() * 2.2),
+      wobbleFreq: 1.5 + rng() * 3.5,
+      trail: rng() * Math.PI * 2
+    })
   }
 
   return {
     group,
-    ring: outer.mesh,
-    ringCore: core.mesh,
-    outerSpinner: outer.spinner,
-    coreSpinner: core.spinner,
+    layers: [
+      { mesh: gas, tubeScale: 1.85, deep: deepOuter, hot: hotOuter, baseOpacity: 0.28, pulse: 3.1 },
+      { mesh: mid, tubeScale: 1.05, deep: deepMid, hot: hotMid, baseOpacity: 0.55, pulse: 4.2 },
+      { mesh: core, tubeScale: 0.38, deep: deepCore, hot: hotCore, baseOpacity: 0.85, pulse: 5.5 }
+    ],
     radius,
+    tubeRadius,
+    warp,
+    noiseOffsets,
+    puffs,
     sparks,
-    spinSpeed: 0.3 + rng() * 0.2,
-    // Slow oscillating roll around the star-to-star axis — the "weave".
-    weaveSpeed: 0.25 + rng() * 0.15,
-    weaveAmplitude: 0.35 + rng() * 0.25
+    // Group roll / thrash around the star-to-star axis.
+    weaveSpeed: 0.35 + rng() * 0.25,
+    weaveAmplitude: 0.55 + rng() * 0.4,
+    weaveSpeed2: 0.55 + rng() * 0.35,
+    weaveAmplitude2: 0.2 + rng() * 0.2,
+    // How often we rebuild warped mesh (every N frames worth of time).
+    morphAccum: 0,
+    morphInterval: 1 / 28 // ~28 Hz morph — smooth enough, cheap enough
   }
 }
 
-// A star (or, for binary systems, a pair of stars) always sits at a system's
-// local origin. Each star's core is self-lit (MeshBasicMaterial ignores
-// scene lighting) with a turbulent, mottled surface so it reads as a roiling
-// ball of plasma rather than a flat gem; two additive corona shells give it
-// a soft, pulsing halo. In a binary, the bigger star is stationary at the
-// origin and the smaller one orbits it (see updateStarMesh, called each
-// frame from main.js).
+// A star (or multi-star system) always sits at a system's local origin.
+// Each star's core is self-lit (MeshBasicMaterial ignores scene lighting)
+// with a turbulent, mottled surface so it reads as a roiling ball of plasma
+// rather than a flat gem; corona shells give it a soft, pulsing halo.
+// Binary / trinary: biggest component stays at the origin (primary + system
+// anchor); companions orbit it with plasma energy rings bridging each pair
+// (see updateStarMesh). Trinary only exists on Whispers (system.starType).
 // forceType (optional) skips the hashed random pick — used by main.js's
-// main-menu flyby to always get a binary pair rather than leaving it to luck.
+// main-menu flyby to always get Whispers' trinary rather than leaving it to luck.
 export function buildStarMesh(system, forceType = null) {
   const hash = hashString(system.id)
   const rng = mulberry32(hash)
-  const type = forceType ?? STAR_TYPES[Math.floor(rng() * STAR_TYPES.length)]
+  // Same source of truth as starting-system pick / Whispers override.
+  const type = forceType ?? starTypeForSystem(system)
 
   const group = new THREE.Group()
   group.userData.stars = []
+  group.userData.energyRings = []
 
-  if (type === 'binary') {
-    const componentTypes = [
-      BINARY_COMPONENT_TYPES[Math.floor(rng() * BINARY_COMPONENT_TYPES.length)],
+  if (type === 'binary' || type === 'trinary') {
+    const count = type === 'trinary' ? 3 : 2
+    const componentTypes = Array.from({ length: count }, () =>
       BINARY_COMPONENT_TYPES[Math.floor(rng() * BINARY_COMPONENT_TYPES.length)]
-    ]
-    const orbitSpeed = 0.04 + rng() * 0.04
+    )
     const stars = componentTypes.map((componentType) => buildSingleStar(componentType, rng))
-    // Wide enough that the two cores (and ideally most of their coronas,
-    // which reach up to ~1.9x radius) read as a clear double star rather
-    // than one blob — corona reach, not core radius alone, dominates here.
-    const separation = Math.max(220, (stars[0].radius + stars[1].radius) * 2.2)
+    // Primary = largest; companions orbit it (same stationary-anchor rule as binary).
+    const order = stars
+      .map((s, i) => i)
+      .sort((a, b) => stars[b].radius - stars[a].radius)
+    const primary = stars[order[0]]
+    group.add(primary.group)
+    group.userData.stars.push(primary)
 
-    // The bigger star stays put at the system origin (it's the "primary" —
-    // and also where the rest of the system, arrival point included, is
-    // anchored); the smaller one orbits around it. Real binaries orbit a
-    // shared barycenter, but a single stationary anchor reads more clearly
-    // and keeps every other body's already-origin-relative position simple.
-    const biggerIndex = stars[0].radius >= stars[1].radius ? 0 : 1
-    const smallerIndex = 1 - biggerIndex
+    // Companions: each separation clears corona reach; outer ones step out so
+    // they don't sit on top of the inner orbit (trinary hierarchical look).
+    let prevSep = 0
+    for (let c = 1; c < order.length; c++) {
+      const companion = stars[order[c]]
+      const baseSep = Math.max(220, (primary.radius + companion.radius) * 2.2)
+      // Outer companion farther than the previous so the triple reads clearly.
+      const separation = Math.max(baseSep, prevSep * 1.55 + primary.radius * 0.35)
+      prevSep = separation
+      const orbitSpeed = (0.035 + rng() * 0.04) * (c === 1 ? 1 : 0.72)
+      const orbit = {
+        radius: separation,
+        angle0: rng() * Math.PI * 2,
+        speed: orbitSpeed
+      }
+      companion.group.position.set(
+        Math.cos(orbit.angle0) * orbit.radius,
+        0,
+        Math.sin(orbit.angle0) * orbit.radius
+      )
+      group.add(companion.group)
+      const orbiterEntry = { ...companion, orbit }
+      group.userData.stars.push(orbiterEntry)
 
-    group.add(stars[biggerIndex].group)
-    group.userData.stars.push(stars[biggerIndex])
+      // Plasma bridge threads primary (origin) ↔ this companion.
+      // orbit.radius = separation; ring radius = separation/2 (buildEnergyRing).
+      const energyRing = buildEnergyRing(orbit.radius, rng)
+      // Index into userData.stars of the companion this ring follows.
+      energyRing.orbiterIndex = group.userData.stars.length - 1
+      group.add(energyRing.group)
+      group.userData.energyRings.push(energyRing)
+    }
 
-    const orbit = { radius: separation, angle0: rng() * Math.PI * 2, speed: orbitSpeed }
-    stars[smallerIndex].group.position.set(Math.cos(orbit.angle0) * orbit.radius, 0, Math.sin(orbit.angle0) * orbit.radius)
-    group.add(stars[smallerIndex].group)
-    group.userData.stars.push({ ...stars[smallerIndex], orbit })
-
-    // orbit.radius doubles as the star separation — the ring is built at
-    // half of it so it threads both star centers (see buildEnergyRing).
-    const energyRing = buildEnergyRing(orbit.radius, rng)
-    group.add(energyRing.group)
-    group.userData.energyRing = energyRing
+    // Legacy single-ring handle (binary tools / older call sites).
+    group.userData.energyRing = group.userData.energyRings[0] ?? null
   } else {
     const star = buildSingleStar(type, rng)
     group.add(star.group)
@@ -484,11 +870,10 @@ const flareTargetWorld = new THREE.Vector3()
 const DISTANT_SUN_MIN_ANGLE = 0.014
 
 // Slow rotation plus a gentle breathing pulse on the corona shells for every
-// star in the system (1, or 2 for a binary) — driven by gameState.simTime
-// (via the elapsed param), never wall-clock time. In a binary, only the
-// smaller star has an `orbit` (the bigger one is stationary at the origin —
-// see buildStarMesh); the energy ring threads both suns and is re-centered
-// on their midpoint each frame (see energyRing block below).
+// star in the system (1, 2 binary, or 3 trinary) — driven by gameState.simTime
+// (via the elapsed param), never wall-clock time. Companions carry `orbit`;
+// the primary stays at the origin. Each energy ring threads primary↔one
+// companion and is re-centered on that pair's midpoint each frame.
 // camera (optional) drives the lens flare: three.js's Lensflare occludes
 // itself via a depth-buffer test at its own anchor point, but that anchor
 // starts out at the star's exact center — behind the near (camera-facing)
@@ -501,6 +886,8 @@ const DISTANT_SUN_MIN_ANGLE = 0.014
 export function updateStarMesh(mesh, elapsed, dt, camera) {
   for (const star of mesh.userData.stars) {
     star.group.rotation.y += star.spinSpeed * dt
+    // CME corona swell is layered on after updateStarCmes (below).
+    if (star.cmes) star.cmes.coronaPunch = 0
     star.corona1.scale.setScalar(1 + Math.sin(elapsed * 0.6 + star.pulsePhase) * 0.07)
     star.corona2.scale.setScalar(1 + Math.sin(elapsed * 0.4 + star.pulsePhase + 1) * 0.11)
     if (star.corona3) star.corona3.scale.setScalar(1 + Math.sin(elapsed * 0.28 + star.pulsePhase + 2) * 0.09)
@@ -519,6 +906,15 @@ export function updateStarMesh(mesh, elapsed, dt, camera) {
         s.mesh.material.opacity = 0.14 + 0.12 * (0.5 + 0.5 * Math.sin(elapsed * s.speed + s.phase))
         s.mesh.material.rotation += dt * 0.05
       }
+    }
+    // Occasional coronal mass ejections (rare but not vanishingly rare).
+    updateStarCmes(star, elapsed, dt)
+    if (star.cmes?.coronaPunch > 0) {
+      const p = star.cmes.coronaPunch
+      star.corona1.scale.setScalar(star.corona1.scale.x * (1 + p))
+      star.corona2.scale.setScalar(star.corona2.scale.x * (1 + p * 0.7))
+      if (star.corona3) star.corona3.scale.setScalar(star.corona3.scale.x * (1 + p * 0.45))
+      if (star.halo) star.halo.material.opacity = Math.min(1, (star.halo.material.opacity ?? 0.8) + p * 0.5)
     }
     if (star.orbit) {
       const angle = star.orbit.angle0 + elapsed * star.orbit.speed
@@ -559,36 +955,86 @@ export function updateStarMesh(mesh, elapsed, dt, camera) {
     }
   }
 
-  const energyRing = mesh.userData.energyRing
-  if (energyRing) {
-    // The ring threads BOTH suns: its circle has radius separation/2 and is
-    // centered on the midpoint between the stars, so both star centers lie
-    // exactly on it. Follow the smaller star's orbit each frame (primary is
-    // at the local origin, so the midpoint is simply half the orbiting
-    // star's position), yaw the group so its local X runs along the
-    // star-to-star axis, then roll around that axis — both suns sit on the
-    // roll axis, so the ring weaves and tilts out of the orbital plane
-    // while never leaving either of them.
-    const orbiter = mesh.userData.stars.find((s) => s.orbit)
+  // Binary: one ring. Trinary: one ring per companion (primary ↔ each orbiter).
+  const energyRings =
+    mesh.userData.energyRings?.length
+      ? mesh.userData.energyRings
+      : mesh.userData.energyRing
+        ? [mesh.userData.energyRing]
+        : []
+
+  for (const energyRing of energyRings) {
+    // Midpoint between primary (origin) and its companion; yaw so local X ≈
+    // star axis, then thrash roll so the bridge weaves out of the orbital plane.
+    const orbiter =
+      energyRing.orbiterIndex != null
+        ? mesh.userData.stars[energyRing.orbiterIndex]
+        : mesh.userData.stars.find((s) => s.orbit)
+    if (!orbiter?.orbit) continue
     const angle = orbiter.orbit.angle0 + elapsed * orbiter.orbit.speed
     energyRing.group.position.set(Math.cos(angle) * energyRing.radius, 0, Math.sin(angle) * energyRing.radius)
     energyRing.group.rotation.y = -angle
-    energyRing.group.rotation.x = Math.sin(elapsed * energyRing.weaveSpeed) * energyRing.weaveAmplitude
+    energyRing.group.rotation.x =
+      Math.sin(elapsed * energyRing.weaveSpeed) * energyRing.weaveAmplitude
+      + Math.sin(elapsed * energyRing.weaveSpeed2 * 1.7 + 1.1) * energyRing.weaveAmplitude2
+    energyRing.group.rotation.z =
+      Math.sin(elapsed * energyRing.weaveSpeed2 + 0.6) * energyRing.weaveAmplitude2 * 0.85
 
-    // Spinners flow the fire pattern around the circle (the white-hot core
-    // counter-rotates slower, so the two fire layers visibly slide).
-    energyRing.outerSpinner.rotation.y += energyRing.spinSpeed * dt
-    energyRing.coreSpinner.rotation.y -= energyRing.spinSpeed * 0.6 * dt
-    energyRing.ring.material.opacity = 0.6 + 0.3 * (0.5 + 0.5 * Math.sin(elapsed * 4))
-    energyRing.ringCore.material.opacity = 0.8 + 0.2 * (0.5 + 0.5 * Math.sin(elapsed * 5.5))
+    // Remesh warped tubes on a timer so the fire/gas path lives without
+    // rebuilding every frame (still ~28 Hz — reads as continuous thrash).
+    energyRing.morphAccum = (energyRing.morphAccum ?? 0) + dt
+    if (energyRing.morphAccum >= energyRing.morphInterval) {
+      energyRing.morphAccum = 0
+      for (const layer of energyRing.layers) {
+        const next = buildWarpedTubeGeometry(
+          energyRing.radius,
+          energyRing.tubeRadius * layer.tubeScale,
+          72,
+          10,
+          energyRing.warp,
+          elapsed,
+          layer.deep,
+          layer.hot,
+          energyRing.noiseOffsets
+        )
+        layer.mesh.geometry.dispose()
+        layer.mesh.geometry = next
+        const pulse = layer.baseOpacity * (0.75 + 0.35 * (0.5 + 0.5 * Math.sin(elapsed * layer.pulse)))
+        layer.mesh.material.opacity = pulse
+      }
+    } else {
+      // Opacity still breathes between remeshes.
+      for (const layer of energyRing.layers) {
+        layer.mesh.material.opacity =
+          layer.baseOpacity * (0.75 + 0.35 * (0.5 + 0.5 * Math.sin(elapsed * layer.pulse)))
+      }
+    }
+
+    // Gaseous puffs ride the warped centerline and pulse.
+    for (const puff of energyRing.puffs) {
+      const theta = elapsed * puff.speed + puff.phase
+      const p = energyRingPathPoint(theta, energyRing.radius, elapsed, energyRing.warp)
+      const j = puff.radialJitter * energyRing.radius * Math.sin(elapsed * 1.3 + puff.phase)
+      puff.mesh.position.set(
+        p.x * (1 + j / Math.max(1, energyRing.radius)),
+        p.y + Math.sin(elapsed * 2.1 + puff.phase) * puff.yJitter,
+        p.z * (1 + j / Math.max(1, energyRing.radius))
+      )
+      const breathe = 0.85 + 0.35 * Math.sin(elapsed * 2.4 + puff.phase)
+      puff.mesh.scale.setScalar(puff.size * breathe)
+      puff.mesh.material.opacity = 0.2 + 0.35 * (0.5 + 0.5 * Math.sin(elapsed * 3 + puff.phase))
+    }
+
+    // Embers thrash off the bridge rather than skating a perfect circle.
     for (const spark of energyRing.sparks) {
       const sparkAngle = elapsed * spark.speed + spark.phase
+      const p = energyRingPathPoint(sparkAngle, energyRing.radius, elapsed, energyRing.warp)
       const wobble = Math.sin(elapsed * spark.wobbleFreq + spark.phase) * spark.wobble
-      spark.mesh.position.set(
-        Math.cos(sparkAngle) * (energyRing.radius + wobble),
-        Math.cos(elapsed * spark.wobbleFreq * 0.7 + spark.phase) * spark.wobble,
-        Math.sin(sparkAngle) * (energyRing.radius + wobble)
-      )
+      const wobble2 = Math.cos(elapsed * spark.wobbleFreq * 0.7 + spark.trail) * spark.wobble * 0.7
+      spark.mesh.position.set(p.x + wobble, p.y + wobble2, p.z + wobble * 0.5)
+      spark.mesh.material.opacity = 0.45 + 0.5 * (0.5 + 0.5 * Math.sin(elapsed * 6 + spark.phase))
+      const s = 0.7 + 0.5 * Math.sin(elapsed * 5 + spark.trail)
+      spark.mesh.scale.setScalar(s)
     }
   }
 }

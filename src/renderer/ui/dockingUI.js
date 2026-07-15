@@ -10,7 +10,7 @@ import { acceptMission, turnInMission } from '../game/missions.js'
 import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
-#docking-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.55); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+#docking-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.38); backdrop-filter: blur(1.5px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
 #docking-ui .docked-layout { display: flex; gap: 16px; align-items: flex-start; }
 #docking-ui .panel, #docking-ui .side-panel {
   max-height: 80vh; overflow-y: auto; padding: 18px 22px;

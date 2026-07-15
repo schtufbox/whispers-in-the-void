@@ -1,9 +1,10 @@
 {
   "name": "whispers-in-the-void",
-  "version": "1.4.1",
+  "productName": "Whispers In The Void",
+  "version": "1.4.2",
   "description": "Procedurally generated 3D space trading/combat/exploration game",
   "main": "./out/main/index.js",
-  "author": "",
+  "author": "Laughing In Purgatory",
   "private": true,
   "type": "module",
   "scripts": {
@@ -25,23 +26,45 @@
   "build": {
     "appId": "com.whispersinthevoid.game",
     "productName": "Whispers In The Void",
+    "copyright": "© Laughing In Purgatory 2026",
+    "icon": "build/icon.png",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*"
     ],
     "mac": {
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "icon": "build/icon.png",
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64", "arm64"] }]
+      "target": [{ "target": "nsis", "arch": ["x64", "arm64"] }],
+      "icon": "build/icon.png",
+      "publisherName": "Laughing In Purgatory"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Whispers In The Void",
+      "uninstallDisplayName": "Whispers In The Void",
+      "artifactName": "${productName}-${version}-${arch}-setup.${ext}"
     },
     "linux": {
-      "target": [{ "target": "AppImage", "arch": ["x64", "arm64"] }]
+      "target": [{ "target": "AppImage", "arch": ["x64", "arm64"] }],
+      "icon": "build/icon.png",
+      "category": "Game",
+      "synopsis": "Whispers In The Void",
+      "description": "Whispers In The Void — a procedurally generated 3D space trading, combat, and exploration game. © Laughing In Purgatory 2026",
+      "desktop": {
+        "Name": "Whispers In The Void",
+        "Comment": "© Laughing In Purgatory 2026",
+        "Categories": "Game;AdventureGame;"
+      }
     },
     "afterSign": "scripts/afterSignAdHoc.cjs"
   },

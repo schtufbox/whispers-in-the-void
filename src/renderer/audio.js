@@ -57,10 +57,9 @@ function ensureSfx() {
       thrustMode = null
       setThrustState(mode)
     }
-    // Cruise: stop any synth placeholder and start the sample loop if still wanted.
+    // Cruise bed is pure synth (stretched thunder) — only re-arm if still wanted.
     if (cruiseWanted) {
-      if (cruiseOscs) stopCruiseAudio()
-      if (!cruiseNodes) startCruiseLoop()
+      if (!cruiseRumble) startCruiseLoop()
     } else {
       stopCruiseAudio()
     }
@@ -259,27 +258,233 @@ export function playClick() {
   tone({ type: 'square', freq: 700, duration: 0.05, peak: 0.08 })
 }
 
-// Long wind-up while "Hyperdrive engaged" speech plays — rising charge.
+// Shared noise buffer fillers (hyperdrive static + supercruise thunder beds).
+function fillBrownNoise(data) {
+  let last = 0
+  for (let i = 0; i < data.length; i++) {
+    const white = Math.random() * 2 - 1
+    last = (last + 0.02 * white) / 1.02
+    data[i] = last * 3.8
+  }
+}
+
+function fillWhiteNoise(data) {
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
+}
+
+// Sparse digital crackle — mostly silence with random brief ticks (matrix rain grit).
+function fillCrackleNoise(data) {
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() < 0.012 ? (Math.random() * 2 - 1) * 0.9 : 0
+  }
+}
+
+// --- Hyperdrive: drawn-out low static, layered — "entering the matrix" ---
+// Sustained bed for the whole jump (not a rising sci-fi whoosh). Stopped on
+// arrival / abort via stopHyperspaceStatic.
+let hyperStatic = null
+
+function stopHyperspaceStatic(fadeOut = 0.55) {
+  if (!hyperStatic) return
+  const audio = getContext()
+  const now = audio.currentTime
+  const { gain, sources } = hyperStatic
+  try {
+    const from = Math.max(gain.gain.value, 0.0001)
+    gain.gain.cancelScheduledValues(now)
+    gain.gain.setValueAtTime(from, now)
+    gain.gain.linearRampToValueAtTime(0.0001, now + fadeOut)
+    for (const src of sources) {
+      try { src.stop(now + fadeOut + 0.08) } catch { /* already */ }
+      try { src.disconnect() } catch { /* already */ }
+    }
+    setTimeout(() => {
+      try { gain.disconnect() } catch { /* already */ }
+    }, (fadeOut + 0.12) * 1000)
+  } catch { /* ignore */ }
+  hyperStatic = null
+}
+
+function startHyperspaceStatic() {
+  if (hyperStatic) return
+  const audio = getContext()
+  const now = audio.currentTime
+  const sources = []
+
+  const master = audio.createGain()
+  // Slow pull-in — static blooms rather than slamming on.
+  master.gain.setValueAtTime(0, now)
+  master.gain.linearRampToValueAtTime(0.38, now + 1.4)
+
+  // Breath gain sits before master so LFOs don't cancel the fade-in ramp.
+  const breath = audio.createGain()
+  breath.gain.value = 1
+
+  // Soft clip for dense digital grit without harsh peaks.
+  const grit = audio.createWaveShaper()
+  grit.curve = distortionCurve(2.4)
+  grit.oversample = '2x'
+
+  const masterLp = audio.createBiquadFilter()
+  masterLp.type = 'lowpass'
+  masterLp.frequency.value = 1400
+  masterLp.Q.value = 0.45
+
+  // Keep the bed low — matrix entry is under the speech, not a bright whoosh.
+  const masterHp = audio.createBiquadFilter()
+  masterHp.type = 'highpass'
+  masterHp.frequency.value = 40
+
+  const brownSecs = 3.5
+  const brownBuf = audio.createBuffer(1, Math.floor(audio.sampleRate * brownSecs), audio.sampleRate)
+  fillBrownNoise(brownBuf.getChannelData(0))
+
+  const whiteSecs = 2.2
+  const whiteBuf = audio.createBuffer(1, Math.floor(audio.sampleRate * whiteSecs), audio.sampleRate)
+  fillWhiteNoise(whiteBuf.getChannelData(0))
+
+  const crackleSecs = 2.8
+  const crackleBuf = audio.createBuffer(1, Math.floor(audio.sampleRate * crackleSecs), audio.sampleRate)
+  fillCrackleNoise(crackleBuf.getChannelData(0))
+
+  function loopBuf(buf) {
+    const src = audio.createBufferSource()
+    src.buffer = buf
+    src.loop = true
+    src.start()
+    sources.push(src)
+    return src
+  }
+
+  function lfo(freq, depth, destParam, base) {
+    const osc = audio.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.value = freq
+    const g = audio.createGain()
+    g.gain.value = depth
+    destParam.setValueAtTime(base, now)
+    osc.connect(g).connect(destParam)
+    osc.start()
+    sources.push(osc)
+  }
+
+  // Layer 1 — deep brown body (drawn-out low static).
+  {
+    const src = loopBuf(brownBuf)
+    const lp = audio.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 180
+    lp.Q.value = 0.5
+    const g = audio.createGain()
+    g.gain.value = 0.72
+    src.connect(lp).connect(g).connect(grit)
+    lfo(0.07, 40, lp.frequency, 170)
+    lfo(0.11, 0.12, g.gain, 0.68)
+  }
+
+  // Layer 2 — mid murk static (second noise floor, slightly brighter).
+  {
+    const src = loopBuf(brownBuf)
+    const lp = audio.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 420
+    const bp = audio.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = 280
+    bp.Q.value = 0.6
+    const g = audio.createGain()
+    g.gain.value = 0.32
+    src.connect(lp).connect(bp).connect(g).connect(grit)
+    lfo(0.09, 90, bp.frequency, 260)
+    lfo(0.15, 0.08, g.gain, 0.3)
+  }
+
+  // Layer 3 — thin digital hiss (the "code rain" air).
+  {
+    const src = loopBuf(whiteBuf)
+    const bp = audio.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = 900
+    bp.Q.value = 1.1
+    const g = audio.createGain()
+    g.gain.value = 0.07
+    src.connect(bp).connect(g).connect(grit)
+    lfo(0.13, 220, bp.frequency, 850)
+    lfo(0.28, 0.03, g.gain, 0.065)
+  }
+
+  // Layer 4 — sparse crackle ticks (matrix grit).
+  {
+    const src = loopBuf(crackleBuf)
+    const hp = audio.createBiquadFilter()
+    hp.type = 'highpass'
+    hp.frequency.value = 600
+    const lp = audio.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 2800
+    const g = audio.createGain()
+    g.gain.value = 0.14
+    src.connect(hp).connect(lp).connect(g).connect(grit)
+    lfo(0.19, 0.05, g.gain, 0.12)
+  }
+
+  // Layer 5 — sub drone (pressure under the static, barely pitched).
+  for (const [freq, peak] of [[22, 0.22], [31, 0.14], [47, 0.08]]) {
+    const osc = audio.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.value = freq
+    const g = audio.createGain()
+    g.gain.value = peak
+    const drift = audio.createOscillator()
+    drift.type = 'sine'
+    drift.frequency.value = 0.05 + Math.random() * 0.04
+    const driftG = audio.createGain()
+    driftG.gain.value = freq * 0.03
+    drift.connect(driftG).connect(osc.frequency)
+    drift.start()
+    sources.push(drift)
+    osc.connect(g).connect(grit)
+    osc.start()
+    sources.push(osc)
+    lfo(0.08 + Math.random() * 0.04, peak * 0.25, g.gain, peak)
+  }
+
+  // Slow amplitude "breath" on the whole bed — drawn out, not a pulse engine.
+  lfo(0.06, 0.16, breath.gain, 1)
+
+  grit.connect(masterHp).connect(masterLp).connect(breath).connect(master).connect(audio.destination)
+  hyperStatic = { gain: master, sources }
+}
+
+// Entry into the jump corridor: layered low static (matrix). No rising whoosh.
 export function playHyperspaceWindup() {
-  tone({ type: 'sine', freq: 90, freqEnd: 420, duration: 2.2, attack: 0.4, peak: 0.18 })
-  tone({ type: 'sawtooth', freq: 60, freqEnd: 280, duration: 2.0, attack: 0.5, peak: 0.08 })
-  noiseBurst({ duration: 2.0, filterFreq: 900, peak: 0.06 })
-  // Late punch into the jump corridor.
-  tone({ type: 'sine', freq: 200, freqEnd: 1800, duration: 0.85, attack: 0.05, peak: 0.26, delay: 2.0 })
-  noiseBurst({ duration: 0.7, filterFreq: 2400, peak: 0.16, delay: 2.05 })
+  ensureSfx()
+  startHyperspaceStatic()
+  // Soft initial "fold-in" crack under the bed bloom.
+  noiseBurst({ duration: 0.9, filterFreq: 350, peak: 0.2, drive: 2.2 })
+  noiseBurst({ duration: 1.4, filterFreq: 160, peak: 0.16, drive: 1.5, delay: 0.15 })
+  tone({ type: 'sine', freq: 48, freqEnd: 26, duration: 2.0, attack: 0.35, peak: 0.14 })
 }
 
 export function playHyperspace() {
   playHyperspaceWindup()
 }
 
-// The mirror of playHyperspace — a high-to-low settling sweep plus a bassy
-// thump, for the moment the jump animation actually completes and control
-// returns to the player, distinct from the departure's rising whoosh.
+// Silent stop (menu clear / abort without the arrival pop).
+export function stopHyperspaceAudio(fadeOut = 0.4) {
+  stopHyperspaceStatic(fadeOut)
+}
+
+// Dissolve the static bed + a soft pressure pop as the corridor collapses.
 export function playHyperspaceArrival() {
-  tone({ type: 'sine', freq: 1200, freqEnd: 150, duration: 0.5, attack: 0.02, peak: 0.24 })
-  tone({ type: 'sine', freq: 70, freqEnd: 32, duration: 0.6, peak: 0.35 })
-  noiseBurst({ duration: 0.4, filterFreq: 1800, peak: 0.15 })
+  const wasOn = !!hyperStatic
+  stopHyperspaceStatic(0.7)
+  if (!wasOn) return
+  noiseBurst({ duration: 0.55, filterFreq: 220, peak: 0.22, drive: 1.8 })
+  noiseBurst({ duration: 0.9, filterFreq: 120, peak: 0.14, drive: 1.2, delay: 0.05 })
+  tone({ type: 'sine', freq: 55, freqEnd: 18, duration: 1.1, attack: 0.04, peak: 0.2 })
+  // Quiet high tail dying out — last of the static air.
+  noiseBurst({ duration: 0.7, filterFreq: 1800, peak: 0.05, delay: 0.08 })
 }
 
 // Supercruise body tunnel — Doppler warp whoosh as you punch through.
@@ -323,30 +528,130 @@ export function setStrafeActive(active) {
   strafeNodes = { source, gain, volume: 0.04 }
 }
 
-// Dock: metal clamp + bay door close + soft seal. Undock reverses the order.
+// Dock: approach thruster whoosh → metal clamp → bay door → soft seal → confirm chirp.
 // Kenney CC0 samples (see public/audio/sfx/); synth fallback if not loaded.
 export function playDock() {
   ensureSfx()
-  const clamp = playSample('dock_clamp.ogg', { volume: 0.55, rate: 0.92 })
-  const door = playSample('dock.ogg', { volume: 0.5, delay: 0.06 })
-  const seal = playSample('dock_seal.ogg', { volume: 0.28, rate: 0.85, delay: 0.22 })
-  if (clamp || door || seal) return
-  tone({ type: 'sine', freq: 260, freqEnd: 480, duration: 0.7, attack: 0.1, peak: 0.16 })
-  tone({ type: 'square', freq: 90, freqEnd: 55, duration: 0.18, peak: 0.32 })
-  noiseBurst({ duration: 0.1, filterFreq: 1800, peak: 0.3, drive: 2.5 })
-  noiseBurst({ duration: 0.5, filterFreq: 3000, peak: 0.14, delay: 0.08 })
+  // Soft thruster wash as the ship glides into the hang.
+  playSample('thrust.ogg', { volume: 0.22, rate: 0.72, fadeIn: 0.05 })
+  const clamp = playSample('dock_clamp.ogg', { volume: 0.62, rate: 0.88, delay: 0.35 })
+  const door = playSample('dock.ogg', { volume: 0.55, delay: 0.48 })
+  const seal = playSample('dock_seal.ogg', { volume: 0.32, rate: 0.82, delay: 0.72 })
+  // Second clamp + computer confirm for a more mechanical bay sequence.
+  playSample('dock_clamp.ogg', { volume: 0.35, rate: 1.15, delay: 1.05 })
+  playSample('engine_engage.ogg', { volume: 0.18, rate: 1.4, delay: 1.35 })
+  if (clamp || door || seal) {
+    // Extra synth chirp layered under samples for a "lock confirmed" beep.
+    tone({ type: 'sine', freq: 880, freqEnd: 1320, duration: 0.12, peak: 0.08, delay: 1.4 })
+    tone({ type: 'sine', freq: 1320, duration: 0.08, peak: 0.06, delay: 1.52 })
+    return
+  }
+  // Full synth fallback sequence.
+  noiseBurst({ duration: 0.45, filterFreq: 900, peak: 0.12, delay: 0 })
+  tone({ type: 'sine', freq: 180, freqEnd: 90, duration: 0.5, peak: 0.1, delay: 0.05 })
+  tone({ type: 'square', freq: 90, freqEnd: 50, duration: 0.2, peak: 0.34, delay: 0.35 })
+  noiseBurst({ duration: 0.12, filterFreq: 1600, peak: 0.32, drive: 2.8, delay: 0.35 })
+  tone({ type: 'sine', freq: 260, freqEnd: 520, duration: 0.55, attack: 0.08, peak: 0.14, delay: 0.5 })
+  noiseBurst({ duration: 0.4, filterFreq: 2800, peak: 0.12, delay: 0.55 })
+  tone({ type: 'sine', freq: 70, freqEnd: 40, duration: 0.35, peak: 0.18, delay: 0.85 })
+  tone({ type: 'sine', freq: 880, freqEnd: 1320, duration: 0.12, peak: 0.1, delay: 1.2 })
+  tone({ type: 'sine', freq: 1320, duration: 0.09, peak: 0.08, delay: 1.32 })
 }
 
 export function playUndock() {
   ensureSfx()
-  const seal = playSample('dock_seal.ogg', { volume: 0.25, rate: 1.15 })
-  const door = playSample('undock.ogg', { volume: 0.52, delay: 0.05 })
-  const clamp = playSample('dock_clamp.ogg', { volume: 0.45, rate: 1.08, delay: 0.28 })
-  if (seal || door || clamp) return
-  tone({ type: 'sine', freq: 480, freqEnd: 260, duration: 0.7, attack: 0.1, peak: 0.16 })
-  noiseBurst({ duration: 0.35, filterFreq: 3000, peak: 0.14 })
-  tone({ type: 'square', freq: 70, freqEnd: 105, duration: 0.16, peak: 0.3, delay: 0.3 })
-  noiseBurst({ duration: 0.1, filterFreq: 1800, peak: 0.28, drive: 2.5, delay: 0.3 })
+  // Seal release → door open → clamps free → thruster push out.
+  const seal = playSample('dock_seal.ogg', { volume: 0.28, rate: 1.2 })
+  const door = playSample('undock.ogg', { volume: 0.58, delay: 0.08 })
+  const clamp = playSample('dock_clamp.ogg', { volume: 0.5, rate: 1.12, delay: 0.32 })
+  playSample('dock_clamp.ogg', { volume: 0.32, rate: 0.95, delay: 0.55 })
+  playSample('thrust.ogg', { volume: 0.28, rate: 0.85, delay: 0.7 })
+  playSample('engine_engage.ogg', { volume: 0.22, rate: 1.15, delay: 0.85 })
+  if (seal || door || clamp) {
+    tone({ type: 'sine', freq: 660, freqEnd: 440, duration: 0.15, peak: 0.07, delay: 0.05 })
+    return
+  }
+  tone({ type: 'sine', freq: 520, freqEnd: 240, duration: 0.55, attack: 0.08, peak: 0.14 })
+  noiseBurst({ duration: 0.3, filterFreq: 2600, peak: 0.12 })
+  tone({ type: 'square', freq: 70, freqEnd: 110, duration: 0.18, peak: 0.3, delay: 0.35 })
+  noiseBurst({ duration: 0.12, filterFreq: 1700, peak: 0.28, drive: 2.5, delay: 0.35 })
+  tone({ type: 'sine', freq: 140, freqEnd: 70, duration: 0.45, peak: 0.12, delay: 0.55 })
+  noiseBurst({ duration: 0.35, filterFreq: 800, peak: 0.14, delay: 0.65 })
+}
+
+// Mid-sequence thruster nudge during the exterior approach / back-away half.
+export function playDockThrusterPulse() {
+  ensureSfx()
+  const s = playSample('thrust.ogg', { volume: 0.2, rate: 1.05, fadeIn: 0.02 })
+  if (s) return
+  tone({ type: 'sawtooth', freq: 95, freqEnd: 55, duration: 0.28, peak: 0.1 })
+  noiseBurst({ duration: 0.22, filterFreq: 700, peak: 0.1 })
+}
+
+// Probe launch (one-shot whoosh) + continuous scan warble + soft return chirp.
+export function playProbeLaunch() {
+  ensureSfx()
+  const s = playSample('rocket.ogg', { volume: 0.32, rate: 1.55 })
+  tone({ type: 'sine', freq: 420, freqEnd: 980, duration: 0.35, peak: 0.1 })
+  if (s) return
+  tone({ type: 'sawtooth', freq: 280, freqEnd: 90, duration: 0.4, peak: 0.14 })
+  noiseBurst({ duration: 0.3, filterFreq: 2200, peak: 0.16 })
+}
+
+export function playProbeReturn() {
+  ensureSfx()
+  playSample('engine_engage.ogg', { volume: 0.2, rate: 1.35 })
+  tone({ type: 'sine', freq: 720, freqEnd: 360, duration: 0.28, peak: 0.09 })
+  tone({ type: 'sine', freq: 980, duration: 0.1, peak: 0.07, delay: 0.2 })
+}
+
+let probeScanOsc = null
+let probeScanGain = null
+let probeScanLFO = null
+let probeScanPing = null
+
+// Continuous scanning hum + soft radar pings while the probe surveys a body.
+export function setProbeScanActive(active) {
+  const audio = getContext()
+  if (active && !probeScanOsc) {
+    probeScanOsc = audio.createOscillator()
+    probeScanGain = audio.createGain()
+    probeScanOsc.type = 'sine'
+    probeScanOsc.frequency.value = 520
+    probeScanGain.gain.setValueAtTime(0, audio.currentTime)
+    probeScanGain.gain.linearRampToValueAtTime(0.055, audio.currentTime + 0.2)
+
+    probeScanLFO = audio.createOscillator()
+    probeScanLFO.type = 'sine'
+    probeScanLFO.frequency.value = 4.5
+    const lfoGain = audio.createGain()
+    lfoGain.gain.value = 45
+    probeScanLFO.connect(lfoGain).connect(probeScanOsc.frequency)
+    probeScanLFO.start()
+
+    probeScanOsc.connect(probeScanGain).connect(audio.destination)
+    probeScanOsc.start()
+
+    // Soft repeating radar-style pings.
+    const schedulePings = () => {
+      if (!probeScanOsc) return
+      tone({ type: 'sine', freq: 1400, freqEnd: 900, duration: 0.12, peak: 0.045 })
+      tone({ type: 'triangle', freq: 2100, freqEnd: 1200, duration: 0.08, peak: 0.03, delay: 0.04 })
+      probeScanPing = setTimeout(schedulePings, 850)
+    }
+    probeScanPing = setTimeout(schedulePings, 200)
+  } else if (!active && probeScanOsc) {
+    if (probeScanPing) {
+      clearTimeout(probeScanPing)
+      probeScanPing = null
+    }
+    probeScanGain.gain.linearRampToValueAtTime(0, audio.currentTime + 0.15)
+    probeScanOsc.stop(audio.currentTime + 0.2)
+    probeScanLFO.stop(audio.currentTime + 0.2)
+    probeScanOsc = null
+    probeScanGain = null
+    probeScanLFO = null
+  }
 }
 
 export function playMiningPing() {
@@ -497,98 +802,221 @@ export function setThrustState(mode) {
   thrustOsc.start()
 }
 
-let cruiseNodes = null
-// Synth fallback for cruise (only if sample missing after load).
-let cruiseOscs = null
-let cruiseGain = null
-// Intent flag — samples may still be loading when cruise engages; we start
-// the loop once ready, and never leave a synth hum running after disengage.
+// Continuous "stretched thunder crack" bed while supercruise is engaged.
+// (Not an engine loop — the crack's transient elongated into a rolling sustain.)
+let cruiseRumble = null
 let cruiseWanted = false
 
-function stopCruiseAudio() {
-  if (cruiseNodes) {
-    stopSampleNodes(cruiseNodes, 0.2)
-    cruiseNodes = null
-  }
-  if (cruiseOscs) {
-    const audio = getContext()
-    const now = audio.currentTime
-    try {
-      cruiseGain.gain.cancelScheduledValues(now)
-      cruiseGain.gain.setValueAtTime(Math.max(cruiseGain.gain.value, 0.0001), now)
-      cruiseGain.gain.linearRampToValueAtTime(0.0001, now + 0.08)
-      for (const osc of cruiseOscs) {
-        try { osc.stop(now + 0.1) } catch { /* already stopped */ }
-        try { osc.disconnect() } catch { /* already */ }
-      }
-      try { cruiseGain.disconnect() } catch { /* already */ }
-    } catch { /* ignore */ }
-    cruiseOscs = null
-    cruiseGain = null
-  }
+function stopCruiseRumble(fadeOut = 0.55) {
+  if (!cruiseRumble) return
+  const audio = getContext()
+  const now = audio.currentTime
+  const { gain, sources } = cruiseRumble
+  try {
+    const from = Math.max(gain.gain.value, 0.0001)
+    gain.gain.cancelScheduledValues(now)
+    gain.gain.setValueAtTime(from, now)
+    // Long die-away — thunder doesn't cut off, it rolls out.
+    gain.gain.linearRampToValueAtTime(0.0001, now + fadeOut)
+    for (const src of sources) {
+      try { src.stop(now + fadeOut + 0.08) } catch { /* already */ }
+      try { src.disconnect() } catch { /* already */ }
+    }
+    setTimeout(() => {
+      try { gain.disconnect() } catch { /* already */ }
+    }, (fadeOut + 0.12) * 1000)
+  } catch { /* ignore */ }
+  cruiseRumble = null
 }
 
-function startCruiseLoop() {
-  if (!cruiseWanted || cruiseNodes || cruiseOscs) return
+function stopCruiseAudio() {
+  stopCruiseRumble(0.65)
+}
 
-  // One-shot spool-up, then a looping big-engine bed.
-  playSample('engine_engage.ogg', { volume: 0.45, rate: 1.05 })
+// One-shot: the front of a thunderclap (sharp crack → boom) for engage/disengage.
+function playThunderCrack({ volume = 1, delay = 0 } = {}) {
+  // High crack (stretched attack of the clap).
+  noiseBurst({ duration: 0.12, filterFreq: 5200, peak: 0.42 * volume, drive: 2.2, delay })
+  noiseBurst({ duration: 0.28, filterFreq: 1800, peak: 0.32 * volume, drive: 1.6, delay: delay + 0.02 })
+  // Body boom that blooms under the crack.
+  noiseBurst({ duration: 1.1, filterFreq: 280, peak: 0.48 * volume, drive: 2.8, delay: delay + 0.04 })
+  tone({ type: 'sine', freq: 95, freqEnd: 28, duration: 1.4, attack: 0.02, peak: 0.38 * volume, delay: delay + 0.03 })
+  tone({ type: 'triangle', freq: 48, freqEnd: 18, duration: 1.6, attack: 0.04, peak: 0.28 * volume, delay: delay + 0.05 })
+}
 
-  const nodes = playSample('supercruise.ogg', {
-    volume: 0.38,
-    rate: 1.08,
-    loop: true,
-    fadeIn: 0.35
-  })
-  if (nodes) {
-    cruiseNodes = nodes
-    return
+// Imagine a crack of thunder frozen mid-clap and stretched into a continuous
+// bed: pressure boom + rolling body + sustained crack texture, all slowly
+// breathing so it never reads as a static loop.
+function startCruiseRumble() {
+  if (cruiseRumble || !cruiseWanted) return
+  const audio = getContext()
+  const now = audio.currentTime
+  const sources = []
+
+  const master = audio.createGain()
+  // Swell in like the clap opening out across the sky.
+  master.gain.setValueAtTime(0, now)
+  master.gain.linearRampToValueAtTime(0.42, now + 1.1)
+
+  // Mild saturation so the stack feels like real atmospheric grit, not clean synth.
+  const grit = audio.createWaveShaper()
+  grit.curve = distortionCurve(1.8)
+  grit.oversample = '2x'
+
+  // Soft ceiling so mid crackle doesn't get harsh at peak swell.
+  const masterLp = audio.createBiquadFilter()
+  masterLp.type = 'lowpass'
+  masterLp.frequency.value = 4200
+  masterLp.Q.value = 0.4
+
+  // ---- Layer helpers ----
+  const brownSecs = 4
+  const brownBuf = audio.createBuffer(1, Math.floor(audio.sampleRate * brownSecs), audio.sampleRate)
+  fillBrownNoise(brownBuf.getChannelData(0))
+
+  const whiteSecs = 2.5
+  const whiteBuf = audio.createBuffer(1, Math.floor(audio.sampleRate * whiteSecs), audio.sampleRate)
+  fillWhiteNoise(whiteBuf.getChannelData(0))
+
+  function loopNoise(buf) {
+    const src = audio.createBufferSource()
+    src.buffer = buf
+    src.loop = true
+    src.start()
+    sources.push(src)
+    return src
   }
 
-  // Sample missing after load — short-lived synth only as last resort.
-  const audio = getContext()
-  cruiseGain = audio.createGain()
-  cruiseGain.gain.setValueAtTime(0, audio.currentTime)
-  cruiseGain.gain.linearRampToValueAtTime(0.04, audio.currentTime + 0.4)
-  cruiseOscs = [55, 58].map((freq) => {
+  function lfo(freq, depth, destParam, base = 0) {
     const osc = audio.createOscillator()
     osc.type = 'sine'
     osc.frequency.value = freq
-    const f = audio.createBiquadFilter()
-    f.type = 'lowpass'
-    f.frequency.value = 200
-    osc.connect(f).connect(cruiseGain)
+    const g = audio.createGain()
+    g.gain.value = depth
+    // Offset so modulation sits around `base` rather than ±depth around 0.
+    destParam.setValueAtTime(base, now)
+    osc.connect(g).connect(destParam)
     osc.start()
+    sources.push(osc)
     return osc
-  })
-  cruiseGain.connect(audio.destination)
+  }
+
+  // ---- 1. Pressure boom (the clap's sub, held forever) ----
+  const boomBus = audio.createGain()
+  boomBus.gain.value = 0.95
+  for (const [freq, type, peak] of [
+    [14, 'sine', 0.55],
+    [19, 'sine', 0.48],
+    [27, 'sine', 0.32],
+    [36, 'triangle', 0.16]
+  ]) {
+    const osc = audio.createOscillator()
+    osc.type = type
+    osc.frequency.value = freq
+    const g = audio.createGain()
+    g.gain.value = peak
+    // Slow detune drift — pressure wave never sits perfectly still.
+    const drift = audio.createOscillator()
+    drift.type = 'sine'
+    drift.frequency.value = 0.07 + Math.random() * 0.06
+    const driftG = audio.createGain()
+    driftG.gain.value = freq * 0.04
+    drift.connect(driftG).connect(osc.frequency)
+    drift.start()
+    sources.push(drift)
+    osc.connect(g).connect(boomBus)
+    osc.start()
+    sources.push(osc)
+  }
+  // Rolling swell on the boom (thunder undulating across distance).
+  lfo(0.11, 0.22, boomBus.gain, 0.85)
+  boomBus.connect(grit)
+
+  // ---- 2. Body roll — brown noise through a low, breathing filter ----
+  const body = loopNoise(brownBuf)
+  const bodyLp = audio.createBiquadFilter()
+  bodyLp.type = 'lowpass'
+  bodyLp.frequency.value = 140
+  bodyLp.Q.value = 0.7
+  const bodyGain = audio.createGain()
+  bodyGain.gain.value = 0.7
+  body.connect(bodyLp).connect(bodyGain).connect(grit)
+  // Filter "rolls" — the stretched clap's body sliding lower/higher slowly.
+  lfo(0.08, 55, bodyLp.frequency, 130)
+  lfo(0.13, 0.18, bodyGain.gain, 0.65)
+
+  // Second body, slightly brighter and out of phase, for depth.
+  const body2 = loopNoise(brownBuf)
+  const body2Lp = audio.createBiquadFilter()
+  body2Lp.type = 'lowpass'
+  body2Lp.frequency.value = 220
+  body2Lp.Q.value = 0.5
+  const body2Gain = audio.createGain()
+  body2Gain.gain.value = 0.38
+  body2.connect(body2Lp).connect(body2Gain).connect(grit)
+  lfo(0.055, 70, body2Lp.frequency, 200)
+  lfo(0.17, 0.12, body2Gain.gain, 0.35)
+
+  // ---- 3. Stretched crack texture — bandpass noise (the "zip" of the clap, held) ----
+  const crack = loopNoise(whiteBuf)
+  const crackBp = audio.createBiquadFilter()
+  crackBp.type = 'bandpass'
+  crackBp.frequency.value = 900
+  crackBp.Q.value = 0.85
+  const crackHp = audio.createBiquadFilter()
+  crackHp.type = 'highpass'
+  crackHp.frequency.value = 280
+  const crackGain = audio.createGain()
+  crackGain.gain.value = 0.22
+  crack.connect(crackHp).connect(crackBp).connect(crackGain).connect(grit)
+  // Sweep the crack band like the formant of a clap elongated over seconds.
+  lfo(0.09, 380, crackBp.frequency, 850)
+  lfo(0.21, 0.08, crackGain.gain, 0.2)
+
+  // ---- 4. Distant sizzle / residual spark — quieter high air ----
+  const air = loopNoise(whiteBuf)
+  const airHp = audio.createBiquadFilter()
+  airHp.type = 'highpass'
+  airHp.frequency.value = 2400
+  const airLp = audio.createBiquadFilter()
+  airLp.type = 'lowpass'
+  airLp.frequency.value = 7000
+  const airGain = audio.createGain()
+  airGain.gain.value = 0.05
+  air.connect(airHp).connect(airLp).connect(airGain).connect(grit)
+  // Occasional "flicker" — irregular pulse of residual crackle.
+  lfo(0.33, 0.035, airGain.gain, 0.045)
+  lfo(0.07, 900, airHp.frequency, 2200)
+
+  grit.connect(masterLp).connect(master).connect(audio.destination)
+  cruiseRumble = { gain: master, sources }
+}
+
+function startCruiseLoop() {
+  if (!cruiseWanted || cruiseRumble) return
+  playThunderCrack({ volume: 0.85 })
+  startCruiseRumble()
 }
 
 export function setSupercruiseActive(active) {
   ensureSfx()
   if (active) {
-    // Called every frame while cruising — only arm once, then keep the loop
-    // alive (or start it once samples finish decoding).
+    // Called every frame while cruising — arm once, keep the bed alive.
     if (cruiseWanted) {
-      if (!cruiseNodes && !cruiseOscs) startCruiseLoop()
+      if (!cruiseRumble) startCruiseLoop()
       return
     }
     cruiseWanted = true
-    // Wait for sample decode so we don't start a synth hum that can leak
-    // if disengage races the load callback.
-    if (sfxBuffers.has('supercruise.ogg')) {
-      startCruiseLoop()
-    } else {
-      sfxLoadPromise?.then(() => {
-        if (cruiseWanted) startCruiseLoop()
-      })
-    }
+    startCruiseLoop()
   } else {
-    const wasOn = cruiseWanted || cruiseNodes || cruiseOscs
+    const wasOn = cruiseWanted || cruiseRumble
     cruiseWanted = false
     stopCruiseAudio()
     if (wasOn) {
-      playSample('engine_engage.ogg', { volume: 0.3, rate: 0.75 })
+      // Distant closing roll as the stretched clap finally ends.
+      playThunderCrack({ volume: 0.45, delay: 0.05 })
+      noiseBurst({ duration: 1.4, filterFreq: 180, peak: 0.28, drive: 2, delay: 0.08 })
+      tone({ type: 'sine', freq: 55, freqEnd: 16, duration: 1.8, attack: 0.08, peak: 0.22, delay: 0.1 })
     }
   }
 }
@@ -640,7 +1068,17 @@ let ambientMusic = null
 // restarting at bg1.
 let ambientTrackIndex = 0
 
-const AMBIENT_TRACKS = ['bg1.mp3', 'bg2.mp3', 'bg3.mp3', 'bg4.mp3', 'bg5.mp3', 'bg6.mp3']
+const AMBIENT_TRACKS = [
+  'bg1.mp3', 'bg2.mp3', 'bg3.mp3', 'bg4.mp3', 'bg5.mp3', 'bg6.mp3',
+  'ancient_signal.mp3',
+  'drift_signal.mp3',
+  'far_signal.mp3',
+  'far_signal_drift.mp3',
+  'perihelion.mp3',
+  'perihelion_drift.mp3',
+  'relay.mp3',
+  'relay_through_europa.mp3'
+]
 const TITLE_VOLUME = 0.5
 const DEATH_VOLUME = 0.55
 const AMBIENT_VOLUME = 0.15 // deliberately quiet — background gameplay music, not foreground
@@ -697,6 +1135,9 @@ function playNextAmbientTrack() {
 export function startAmbientMusic() {
   if (ambientMusic) return
   stopAllMusic()
+  // Random entry point, then advance in list order so sessions don't always
+  // open on bg1 — still a continuous cycle after the first pick.
+  ambientTrackIndex = Math.floor(Math.random() * AMBIENT_TRACKS.length)
   playNextAmbientTrack()
 }
 

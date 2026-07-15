@@ -26,6 +26,8 @@ test('hyperspaceJump moves to a neighboring system and resets local ship/encount
   const startSystemId = gameState.player.currentSystemId
   gameState.player.ship.position = [40, 5, -30]
   gameState.player.ship.velocity = [10, 0, 0]
+  // Point somewhere other than the sun so we can assert facing is reset.
+  gameState.player.ship.quaternion = [0, 0.7071, 0, 0.7071]
   const targetSystemId = getSystem(gameState.galaxy, startSystemId).neighborIds[0]
 
   hyperspaceJump(gameState, targetSystemId, Math.random)
@@ -34,6 +36,20 @@ test('hyperspaceJump moves to a neighboring system and resets local ship/encount
   assert.deepEqual(gameState.player.ship.position, SYSTEM_ARRIVAL_POSITION)
   assert.deepEqual(gameState.player.ship.velocity, [0, 0, 0])
   assert.equal(gameState.npcs.length, 0)
+
+  // Local +Z should aim at the system origin (the sun / binary primary).
+  const q = gameState.player.ship.quaternion
+  const forward = [
+    2 * (q[0] * q[2] + q[3] * q[1]),
+    2 * (q[1] * q[2] - q[3] * q[0]),
+    1 - 2 * (q[0] * q[0] + q[1] * q[1])
+  ]
+  const pos = gameState.player.ship.position
+  const toSun = [-pos[0], -pos[1], -pos[2]]
+  const toLen = Math.hypot(...toSun)
+  const fLen = Math.hypot(...forward)
+  const dot = (forward[0] * toSun[0] + forward[1] * toSun[1] + forward[2] * toSun[2]) / (toLen * fLen)
+  assert.ok(dot > 0.999, `ship forward should face the sun after jump, dot=${dot}`)
 })
 
 test('hyperspaceJump refuses to jump to the current system or while in combat', () => {

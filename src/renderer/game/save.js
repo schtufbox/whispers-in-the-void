@@ -13,6 +13,7 @@ export function serializeGameState(gameState) {
     missions: gameState.missions,
     visitedBodyIds: gameState.visitedBodyIds,
     probedBodyIds: gameState.probedBodyIds,
+    probeCounts: gameState.probeCounts ?? {},
     stationStorage: gameState.stationStorage,
     flags: gameState.flags
   }
@@ -20,9 +21,20 @@ export function serializeGameState(gameState) {
 
 export function deserializeGameState(data) {
   // probedBodyIds falls back to [] for saves written before probe missions existed.
+  // probeCounts falls back to {} for older saves (re-probes start from 0).
   // wrecks/asteroids are ephemeral like npcs/projectiles — never persisted,
   // always start empty on load.
-  const gameState = { ...data, npcs: [], projectiles: [], wrecks: [], asteroids: {}, inCombat: false, simTime: 0, probedBodyIds: data.probedBodyIds ?? [] }
+  const gameState = {
+    ...data,
+    npcs: [],
+    projectiles: [],
+    wrecks: [],
+    asteroids: {},
+    inCombat: false,
+    simTime: 0,
+    probedBodyIds: data.probedBodyIds ?? [],
+    probeCounts: data.probeCounts ?? {}
+  }
   // miningHold falls back to {} for saves written before mining existed.
   gameState.player.ship.miningHold ??= {}
   gameState.player.ship.shipParts ??= 0

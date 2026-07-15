@@ -4,9 +4,10 @@ export function createScene(container) {
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x05070d)
 
-  // Far plane must clear a full system diameter (local scatter ~50k+ after
-  // SYSTEM_SIZE_SCALE) so the star at the origin stays visible from the rim.
-  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.5, 200000)
+  // Far plane must clear a full system diameter (local scatter up to ~300k+
+  // after the large sun/planet system scale-up) so the star stays visible
+  // from the rim / arrival point.
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.5, 2_000_000)
 
   const renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setSize(window.innerWidth, window.innerHeight)

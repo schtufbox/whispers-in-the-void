@@ -65,19 +65,6 @@ const STYLE = `
 #hud .bar.velocity .fill { position: absolute; top: 0; background: linear-gradient(90deg, #3a8f5c, #7fe0a0); box-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #hud .bar.velocity .fill.reversing { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
 
-/* Kept at its original bottom-left spot per user request, independent of
-   the status panel's move to top-left. */
-#hud .hint {
-  position: fixed; left: 16px; bottom: 16px;
-  display: flex; flex-wrap: wrap; gap: 5px 10px; max-width: 320px;
-}
-#hud .hint .pair { display: flex; align-items: center; gap: 4px; opacity: 0.65; }
-#hud .hint .key {
-  font-size: 10px; padding: 1px 5px; border: 1px solid rgba(111,216,242,0.4);
-  border-radius: 3px; color: #a8d8ea; background: rgba(111,216,242,0.08);
-}
-#hud .hint .label { font-size: 11px; }
-
 /* Current system — top center, clear of status (left) and radar (right). */
 #hud .system-label {
   position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
@@ -126,25 +113,6 @@ const STYLE = `
 #radar .radar-label { margin-top: 5px; font-size: 11px; letter-spacing: 2px; opacity: 0.85; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.8); }
 `
 
-// [key, label] pairs rather than one static string, so each key reads as a
-// small bordered "keycap" chip instead of plain middot-separated text.
-const HINTS = [
-  ['Space', 'Flight Mode'],
-  ['Tab', 'Target'],
-  ['W/S', 'Throttle'],
-  ['A/D', 'Strafe'],
-  ['X/Z', 'Up/Down'],
-  ['Q/E', 'Roll'],
-  ['R', 'Mining'],
-  ['I', 'Inv'],
-  ['J', 'Missions'],
-  ['F', 'Dock'],
-  ['P', 'Probe'],
-  ['M', 'Nav'],
-  ['C', 'Cruise'],
-  ['Esc', 'Pause']
-]
-
 export function createHud(container) {
   const style = document.createElement('style')
   style.textContent = STYLE
@@ -181,7 +149,6 @@ export function createHud(container) {
       <div class="row-label"><span>Velocity</span><span class="speed"></span></div>
       <div class="bar velocity"><div class="zero-marker"></div><div class="fill"></div></div>
     </div>
-    <div class="hint">${HINTS.map(([key, label]) => `<span class="pair"><span class="key">${key}</span><span class="label">${label}</span></span>`).join('')}</div>
   `
   container.appendChild(hud)
 

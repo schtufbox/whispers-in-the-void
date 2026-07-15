@@ -134,6 +134,9 @@ export function createNavMap(container, gameState) {
     const ctx = canvas.getContext('2d')
     const tooltipEl = contentEl.querySelector('.map-tooltip')
     const size = canvas.width
+    // Shared by draw() (rings/dots) and the hover tooltip — must live outside
+    // draw so mousemove can see it (was ReferenceError: missionSystems).
+    const missionSystems = missionMarkedSystemIds(gameState)
 
     function toCanvas(pos) {
       return [size / 2 + (pos[0] / maxRadius) * (size / 2 - 16), size / 2 + (pos[2] / maxRadius) * (size / 2 - 16)]
@@ -170,7 +173,6 @@ export function createNavMap(container, gameState) {
       }
 
       // Mission objective / turn-in systems get an orange ring under the dot.
-      const missionSystems = missionMarkedSystemIds(gameState)
       for (const system of systems) {
         if (!missionSystems.has(system.id)) continue
         const [px, py] = toCanvas(system.galaxyPosition)

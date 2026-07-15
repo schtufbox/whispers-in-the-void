@@ -8,29 +8,40 @@ const MAX_RADIUS = GALAXY_MAX_RADIUS
 const ARM_TWIST = 2.5
 const JITTER_ANGLE = 0.5
 const DISK_THICKNESS = 120
-// Local system scatter. STAR_SIZE_SCALE (37.5) makes giants ~7500 radius with
-// corona ~1.9× — min orbit must clear that or planets spawn inside the sun.
-const SYSTEM_SIZE_SCALE = 18
+// Local system scatter. Stars are STAR_SIZE_SCALE 225 (giants ~45k radius,
+// corona ~1.9×) — min orbit must clear that or planets spawn inside the sun.
+// Bumped with the 6× sun / 5× planet pass (was SYSTEM_SIZE_SCALE 18).
+const SYSTEM_SIZE_SCALE = 120
 const SYSTEM_LOCAL_MIN_RADIUS = 900 * SYSTEM_SIZE_SCALE
 const SYSTEM_LOCAL_MAX_RADIUS = 2800 * SYSTEM_SIZE_SCALE
-const PLANET_SIZE_SCALE = 37.5
-const MOON_SIZE_SCALE = 24.75
+// Planets 5× prior (was 37.5); moons keep the same relative scale vs planets.
+const PLANET_SIZE_SCALE = 187.5
+const MOON_SIZE_SCALE = 123.75
 const SYSTEM_SCALE_VARIANCE = [0.85, 1.15]
 const MOON_CHANCE = 0.23
 const MOON_ORBIT_MIN_RADIUS = 18
 const MOON_ORBIT_MAX_RADIUS = 45
 const MOON_ORBIT_CLEARANCE_MARGIN = 6
-// Match game/collision.js station/settlement shells so orbits/surface sit clear.
-const STATION_CLEARANCE_RADIUS = 225
-const SETTLEMENT_CLEARANCE_RADIUS = 123.75
-const SETTLEMENT_SURFACE_MARGIN = 8
+// Match game/collision.js station shells (+50% station/settlement pass).
+const STATION_CLEARANCE_RADIUS = 337.5
+// Settlements sit on the crust — only a small radial lift so the mesh base
+// meets the surface (not floating on the full collision shell).
+const SETTLEMENT_SURFACE_LIFT = 33
+const SETTLEMENT_CLEARANCE_RADIUS = 60
 // Vast majority of stations orbit a planet, moon, or the star; a tiny fraction drift alone.
 const STATION_FREE_DRIFT_CHANCE = 0.003
 // Settlements are almost always surface-bound; a rare outpost in an asteroid belt.
 const SETTLEMENT_ASTEROID_CHANCE = 0.003
+// If the chosen host already has an orbiting station, settlement is rare.
+const SETTLEMENT_WITH_STATION_CHANCE = 0.05
 const JUMP_NEIGHBOR_COUNT = 5
 
 export const SYSTEM_ARRIVAL_POSITION = [0, 400, -SYSTEM_LOCAL_MAX_RADIUS * 0.95]
+
+// Special outer-rim destination: always one system, always this station name.
+// Ambient hostiles never spawn here (mission NPCs still can).
+export const WHISPERS_SYSTEM_NAME = 'Whispers'
+export const WHISPERS_STATION_NAME = "SerNub's Pleasure Palace"
 
 function spiralPosition(rng, armIndex) {
   const radius = MAX_RADIUS * Math.sqrt(rng())
@@ -69,20 +80,40 @@ function localPositionStarOrbit(rng, systemScale) {
   return [radius * Math.cos(theta), y, radius * Math.sin(theta)]
 }
 
-// Settlement sits on a planet/moon surface (outside the collision shell).
+// Settlement sits ON a planet/moon surface (center slightly above crust so the
+// mesh base meets the ground; not perched far out on a collision shell).
 function localPositionOnSurface(rng, host) {
   const theta = rng() * Math.PI * 2
   const phi = Math.acos(2 * rng() - 1)
-  const dist = host.radius + SETTLEMENT_CLEARANCE_RADIUS + SETTLEMENT_SURFACE_MARGIN
-  const offset = [
-    dist * Math.sin(phi) * Math.cos(theta),
-    dist * Math.cos(phi),
-    dist * Math.sin(phi) * Math.sin(theta)
-  ]
+  const dist = host.radius + SETTLEMENT_SURFACE_LIFT
+  const nx = Math.sin(phi) * Math.cos(theta)
+  const ny = Math.cos(phi)
+  const nz = Math.sin(phi) * Math.sin(theta)
+  const offset = [dist * nx, dist * ny, dist * nz]
   return {
     position: [host.position[0] + offset[0], host.position[1] + offset[1], host.position[2] + offset[2]],
     surfaceOffset: offset
   }
+}
+
+// Planet + its moons share one "family" — at most one settlement in the whole family.
+function hostFamilyId(body) {
+  if (body.kind === 'moon' && body.parentId) return body.parentId
+  return body.id
+}
+
+function familiesWithSettlements(system) {
+  const taken = new Set()
+  for (const b of system.bodies) {
+    if (b.kind !== 'settlement' || !b.parentId || b.inAsteroidField) continue
+    const parent = system.bodies.find((p) => p.id === b.parentId)
+    if (parent) taken.add(hostFamilyId(parent))
+  }
+  return taken
+}
+
+function hostHasStation(system, hostId) {
+  return system.bodies.some((b) => b.kind === 'station' && b.parentId === hostId)
 }
 
 function randomTags(rng) {
@@ -179,9 +210,9 @@ function makeStation(rng, idCounter, system) {
   }
 }
 
-function makeSettlement(rng, idCounter, system) {
-  // Rare asteroid-belt outpost — only non-surface case.
-  if (rng() < SETTLEMENT_ASTEROID_CHANCE) {
+function makeSettlement(rng, idCounter, system, { force = false } = {}) {
+  // Rare asteroid-belt outpost — only non-surface case (not subject to family rules).
+  if (!force && rng() < SETTLEMENT_ASTEROID_CHANCE) {
     const fields = system.bodies.filter((b) => b.kind === 'asteroidField')
     if (fields.length) {
       const field = pick(rng, fields)
@@ -203,24 +234,35 @@ function makeSettlement(rng, idCounter, system) {
     }
   }
 
-  // Otherwise ONLY on a planet or moon surface — never free-floating in space.
-  const hosts = system.bodies.filter((b) => b.kind === 'planet' || b.kind === 'moon')
-  if (!hosts.length) return null
-  const host = pick(rng, hosts)
-  const { position, surfaceOffset } = localPositionOnSurface(rng, host)
-  return {
-    id: `body-${idCounter}`,
-    name: generateBodyName(rng, 'settlement'),
-    kind: 'settlement',
-    parentId: host.id,
-    surfaceOffset,
-    position,
-    radius: null,
-    economyTags: randomTags(rng),
-    hasMissions: true,
-    hasShipyard: false,
-    hasShipParts: rng() < 0.06
+  // Surface settlements: at most ONE per planet family (planet OR one of its
+  // moons — never both). If that body already has a station, only 5% chance.
+  const takenFamilies = familiesWithSettlements(system)
+  const candidates = system.bodies.filter(
+    (b) => (b.kind === 'planet' || b.kind === 'moon') && !takenFamilies.has(hostFamilyId(b))
+  )
+  // Shuffle-pick until one accepts (station co-location roll, unless forced).
+  const pool = [...candidates]
+  while (pool.length) {
+    const idx = intRange(rng, 0, pool.length - 1)
+    const host = pool.splice(idx, 1)[0]
+    if (!force && hostHasStation(system, host.id) && rng() >= SETTLEMENT_WITH_STATION_CHANCE) continue
+
+    const { position, surfaceOffset } = localPositionOnSurface(rng, host)
+    return {
+      id: `body-${idCounter}`,
+      name: generateBodyName(rng, 'settlement'),
+      kind: 'settlement',
+      parentId: host.id,
+      surfaceOffset,
+      position,
+      radius: null,
+      economyTags: randomTags(rng),
+      hasMissions: true,
+      hasShipyard: false,
+      hasShipParts: rng() < 0.06
+    }
   }
+  return null
 }
 
 function computeNeighborLanes(systems) {
@@ -254,8 +296,11 @@ export function ensureStartingSystemFacilities(system, rng, startId = 0) {
   while (system.bodies.filter((b) => b.kind === 'station').length < 1) {
     system.bodies.push(makeStation(rng, bodyIdCounter++, system))
   }
-  while (system.bodies.filter((b) => b.kind === 'settlement').length < 2) {
-    const s = makeSettlement(rng, bodyIdCounter++, system)
+  // Force surface placements so the home system always gets docks even when
+  // station co-location / family rules would otherwise reject random rolls.
+  let guard = 0
+  while (system.bodies.filter((b) => b.kind === 'settlement').length < 2 && guard++ < 20) {
+    const s = makeSettlement(rng, bodyIdCounter++, system, { force: true })
     if (s) system.bodies.push(s)
     else break
   }
@@ -268,7 +313,8 @@ export function generateGalaxy(seed, opts = {}) {
     totalPlanets = 1500,
     stationCount = 180,
     settlementCount = 120,
-    asteroidFieldCount = 40,
+    // ~19% of systems (was 40 ≈ 9%; +10 percentage points).
+    asteroidFieldCount = 85,
     speciesCount = 20
   } = opts
   const rng = mulberry32(seed)
@@ -319,10 +365,56 @@ export function generateGalaxy(seed, opts = {}) {
 
   computeNeighborLanes(systems)
 
+  // Outer-rim landmark: rename the farthest system and guarantee SerNub's station.
+  bodyIdCounter = placeWhispersSystem(systems, bodyIdCounter)
+
   const species = []
   for (let i = 0; i < speciesCount; i++) species.push(generateSpeciesName(rng))
 
   return { seed, systems, species, _nextBodyId: bodyIdCounter }
+}
+
+/**
+ * Picks the system farthest from the galactic core, names it Whispers, tags it
+ * as ambient-hostile-free, and ensures a station named SerNub's Pleasure Palace.
+ * Deterministic from layout alone (no extra RNG) so seeds stay stable.
+ */
+function placeWhispersSystem(systems, bodyIdCounter) {
+  let rim = systems[0]
+  let bestDist = -1
+  for (const system of systems) {
+    const dist = Math.hypot(system.galaxyPosition[0], system.galaxyPosition[2])
+    if (dist > bestDist) {
+      bestDist = dist
+      rim = system
+    }
+  }
+
+  // Avoid a second system keeping the same display name if procgen rolled it.
+  for (const system of systems) {
+    if (system !== rim && system.name === WHISPERS_SYSTEM_NAME) {
+      system.name = `${system.name} Reach`
+    }
+  }
+
+  rim.name = WHISPERS_SYSTEM_NAME
+  // main.js ambient spawn keys off this — permanent (not breakable like home peace).
+  rim.noAmbientHostiles = true
+  // Only trinary in the galaxy — starMesh / starTypeForSystem read this flag.
+  rim.starType = 'trinary'
+
+  let station = rim.bodies.find((b) => b.kind === 'station')
+  if (!station) {
+    // Seeded only from system id so we don't perturb the main galaxy RNG stream.
+    const idHash = [...rim.id].reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0)
+    const stationRng = mulberry32(Math.abs(idHash) ^ 0x5e12ab)
+    station = makeStation(stationRng, bodyIdCounter++, rim)
+    rim.bodies.push(station)
+  }
+  station.name = WHISPERS_STATION_NAME
+  station.hasMissions = true
+
+  return bodyIdCounter
 }
 
 export function canJumpTo(fromSystem, toSystemId) {

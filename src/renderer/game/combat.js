@@ -210,7 +210,14 @@ export function updateProjectiles(gameState, dt, onHit) {
           if (closestDistanceToSegment(rockPos, prevPos, newPos) < rock.radius + HIT_RADIUS) {
             const shipClass = getShipClass(gameState.player.ship.classId)
             const mined = mineRock(gameState, shipClass, currentSystem, body.id, i)
-            onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, weaponId: proj.weaponId, destroyed: false, mined })
+            onHit?.({
+              position: newPos.toArray(),
+              rockPosition: rockPos.toArray(),
+              weaponType: proj.weaponType,
+              weaponId: proj.weaponId,
+              destroyed: !!mined.destroyed,
+              mined
+            })
             hit = true
             break fieldLoop
           }

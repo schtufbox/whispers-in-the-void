@@ -1,24 +1,39 @@
 import { mulberry32, pick } from '../procgen/prng.js'
-import { generateGalaxy, SYSTEM_ARRIVAL_POSITION, coreFraction, ensureStartingSystemFacilities } from '../procgen/galaxy.js'
-import { starTypeForSystem } from '../procgen/starType.js'
+import {
+  generateGalaxy,
+  SYSTEM_ARRIVAL_POSITION,
+  coreFraction,
+  ensureStartingSystemFacilities,
+  WHISPERS_SYSTEM_NAME
+} from '../procgen/galaxy.js'
+import { starTypeForSystem, isExoticStarType } from '../procgen/starType.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { seedMissionsForGalaxy } from '../data/missionTemplates.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
+import { quatFacingSun } from './hyperspace.js'
+
+// Dev convenience: start new games in the outer-rim Whispers system.
+// Flip to true only while testing Whispers; normal play starts near the core.
+const START_IN_WHISPERS = false
 
 // The player starts nearer the galactic core than the edge — picked from
 // among the 10% of systems closest to it, rather than an arbitrary system.
 // Binaries are excluded so a new game always opens on a single sun (menu
 // flyby still forces a binary; that's separate).
 function pickStartingSystem(galaxy, rng) {
+  if (START_IN_WHISPERS) {
+    const whispers = galaxy.systems.find((s) => s.name === WHISPERS_SYSTEM_NAME)
+    if (whispers) return whispers
+  }
   const sorted = [...galaxy.systems].sort((a, b) => coreFraction(a) - coreFraction(b))
   const nearCoreCount = Math.max(1, Math.floor(sorted.length * 0.1))
   const nearCore = sorted.slice(0, nearCoreCount)
-  const nonBinary = nearCore.filter((s) => starTypeForSystem(s) !== 'binary')
-  if (nonBinary.length) return pick(rng, nonBinary)
+  const nonExotic = nearCore.filter((s) => !isExoticStarType(starTypeForSystem(s)))
+  if (nonExotic.length) return pick(rng, nonExotic)
   // Extremely unlikely (~1/8 of systems are binary); fall back galaxy-wide
-  // rather than accept a binary start.
-  const anyNonBinary = sorted.filter((s) => starTypeForSystem(s) !== 'binary')
-  return pick(rng, anyNonBinary.length ? anyNonBinary : nearCore)
+  // rather than accept a binary/trinary start.
+  const anySimple = sorted.filter((s) => !isExoticStarType(starTypeForSystem(s)))
+  return pick(rng, anySimple.length ? anySimple : nearCore)
 }
 
 export function createGameState({ characterName, shipInstanceName, shipClassId, seed }) {
@@ -69,7 +84,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
         spareWeapons: {},
         position: [...SYSTEM_ARRIVAL_POSITION],
         velocity: [0, 0, 0],
-        quaternion: [0, 0, 0, 1]
+        // Same sun-facing orientation as post-hyperspace arrival.
+        quaternion: quatFacingSun(SYSTEM_ARRIVAL_POSITION)
       }
     },
     galaxy,
@@ -77,6 +93,9 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
     missions: { available: availableMissions, active: [] },
     visitedBodyIds: [],
     probedBodyIds: [],
+    // How many times each body (or system star id) has been fully probed.
+    // Cap is MAX_PROBE_ATTEMPTS in game/probe.js.
+    probeCounts: {},
     // Per-station storage — cargo/ore/ship-parts left behind, and ships owned
     // but not currently active — keyed by body id (see game/economy.js's
     // storage-related functions). Never crosses to a different station.

@@ -1,7 +1,16 @@
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
 
 const STYLE = `
-#main-menu { position: fixed; inset: 0; background: radial-gradient(ellipse at center, rgba(6,9,18,0.35) 0%, rgba(4,6,12,0.8) 100%); font-family: monospace; color: #cfe3ff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+/* Light dark halo for legibility over the sun — keep it modest so type stays bright. */
+#main-menu {
+  position: fixed; inset: 0;
+  background: radial-gradient(ellipse at center, rgba(6,9,18,0.35) 0%, rgba(4,6,12,0.8) 100%);
+  font-family: monospace; color: #cfe3ff;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.75),
+    0 2px 6px rgba(0,0,0,0.45);
+}
 #main-menu::before {
   content: ''; position: absolute; inset: -20%; pointer-events: none;
   background: repeating-linear-gradient(0deg, rgba(79,195,217,0.03) 0px, rgba(79,195,217,0.03) 1px, transparent 1px, transparent 3px);
@@ -13,7 +22,35 @@ const STYLE = `
   display: flex; flex-direction: column; gap: 10px; width: 560px; position: relative; z-index: 1;
   padding: 28px 32px;
 }
-#main-menu .main-view { align-items: center; text-align: center; }
+/* Full-screen main view: title up above the star, menu links dead-center. */
+#main-menu .main-view {
+  width: min(92vw, 720px);
+  height: 100%;
+  max-height: 100%;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none; /* only interactive children re-enable */
+}
+#main-menu .main-view .menu-links {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 2;
+}
+#main-menu .title-block {
+  position: absolute;
+  top: max(36px, 7vh);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(92vw, 780px);
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
 
 /* Cinematic vignette so the 3D backdrop darkens toward the edges and the
    title pops. Corner braces match the in-game HUD's cockpit frame, so menu
@@ -31,42 +68,64 @@ const STYLE = `
 
 #main-menu .footer {
   position: absolute; bottom: 26px; left: 0; right: 0; text-align: center; z-index: 2;
-  font-size: 10px; letter-spacing: 3px; color: #3a5a7a; pointer-events: none;
+  font-size: 10px; letter-spacing: 3px; color: #7a9ab8; pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.5);
+}
+/* Same monospace / cyan HUD type as in-game panels. */
+#main-menu .copyright {
+  position: absolute; bottom: 22px; right: 28px; z-index: 2;
+  font-family: monospace; font-size: 10px; letter-spacing: 2px;
+  color: #cfe3ff; opacity: 0.65; pointer-events: none; user-select: none;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.5);
 }
 
-#main-menu h1 { margin: 0 0 4px 0; }
+#main-menu h1 { margin: 0 0 8px 0; }
 /* One-shot cinematic entrance — the title resolves out of a blur — replayed
    whenever the menu (re)shows via the same .reveal class the buttons use. */
-#main-menu.reveal h1 { animation: titleEntrance 1.1s ease-out; }
 @keyframes titleEntrance {
-  from { opacity: 0; transform: scale(1.12); filter: blur(14px); }
-  to { opacity: 1; transform: scale(1); filter: blur(0); }
+  from { opacity: 0; transform: translateX(-50%) scale(1.08); filter: blur(14px); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); filter: blur(0); }
 }
 /* Each line of the (now two-line) title is its own box with the gradient/
    glitch applied per-line, rather than once across the whole h1 — the
    glitch clip-path bands below are percentages of a single line's height,
    so splitting them over a taller multi-line block would slice across the
    gap between lines instead of through each line's own glyphs. */
+/* Bright gradient fill — avoid stacking opaque black drop-shadows on
+   background-clip:text (they eat the fill and leave a dark outline). */
 #main-menu h1 .line {
-  display: block; position: relative; font-size: 46px; letter-spacing: 6px;
-  background: linear-gradient(90deg, #4fc3d9, #8fb3ff, #7fe0a0, #4fc3d9);
+  display: block; position: relative; font-size: 69px; letter-spacing: 6px;
+  font-weight: 600; text-transform: uppercase;
+  background: linear-gradient(90deg, #9ef0ff, #e0ecff, #b8ffd4, #9ef0ff);
   background-size: 300% auto;
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent; -webkit-text-fill-color: transparent;
   animation: titleShift 6s linear infinite, titleGlow 5s ease-in-out infinite;
 }
 /* Second line sits under WHISPERS a bit smaller so the hierarchy reads clearly. */
 #main-menu h1 .line.line-sub {
-  font-size: 28px; letter-spacing: 8px; margin-top: 6px;
-  opacity: 0.92;
+  font-size: 42px; letter-spacing: 8px; margin-top: 6px;
+  opacity: 1;
 }
 @keyframes titleShift { to { background-position: 300% center; } }
-/* A slow, shifting multi-color halo (nebula-gas feel) instead of a single
-   static color pulse — drop-shadow (not box-shadow) so it hugs the glyphs. */
+/* Soft dark lift + bright colored halo only — keep the gradient readable. */
 @keyframes titleGlow {
-  0%   { filter: drop-shadow(0 0 10px rgba(79,195,217,0.6)) drop-shadow(0 0 26px rgba(143,90,255,0.35)); }
-  33%  { filter: drop-shadow(0 0 14px rgba(143,179,255,0.7)) drop-shadow(0 0 30px rgba(255,120,200,0.3)); }
-  66%  { filter: drop-shadow(0 0 12px rgba(127,224,160,0.65)) drop-shadow(0 0 28px rgba(79,195,217,0.35)); }
-  100% { filter: drop-shadow(0 0 10px rgba(79,195,217,0.6)) drop-shadow(0 0 26px rgba(143,90,255,0.35)); }
+  0%   { filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
+    drop-shadow(0 0 8px rgba(160,240,255,0.85))
+    drop-shadow(0 0 22px rgba(100,190,255,0.55)); }
+  33%  { filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
+    drop-shadow(0 0 10px rgba(200,220,255,0.9))
+    drop-shadow(0 0 24px rgba(180,140,255,0.4)); }
+  66%  { filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
+    drop-shadow(0 0 10px rgba(160,255,200,0.85))
+    drop-shadow(0 0 24px rgba(100,220,255,0.5)); }
+  100% { filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
+    drop-shadow(0 0 8px rgba(160,240,255,0.85))
+    drop-shadow(0 0 22px rgba(100,190,255,0.55)); }
 }
 
 /* Brief chromatic-aberration glitch slices, sparse (~93-97% of the loop is
@@ -100,9 +159,10 @@ const STYLE = `
 
 /* Thin glowing rule lines flanking the subtitle — cheap cinematic framing. */
 #main-menu .subtitle {
-  margin: 0 0 34px 0; font-size: 11px; letter-spacing: 5px; color: #5a7fa5;
-  display: flex; align-items: center; gap: 14px;
+  margin: 0; font-size: 11px; letter-spacing: 5px; color: #b8d4f0;
+  display: flex; align-items: center; justify-content: center; gap: 14px;
   animation: flicker 5s ease-in-out infinite;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.5);
 }
 #main-menu .subtitle::before, #main-menu .subtitle::after {
   content: ''; height: 1px; width: 70px;
@@ -115,8 +175,14 @@ const STYLE = `
   93%, 95% { opacity: 0.2; }
 }
 
-#main-menu h2 { margin: 0 0 10px 0; }
-#main-menu label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; text-align: left; }
+#main-menu h2 {
+  margin: 0 0 10px 0;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.5);
+}
+#main-menu label {
+  display: flex; flex-direction: column; gap: 4px; font-size: 13px; text-align: left;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.75), 0 2px 5px rgba(0,0,0,0.45);
+}
 #main-menu input {
   background: #10182a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 8px; font-family: monospace;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -130,30 +196,40 @@ const STYLE = `
 }
 #main-menu button:disabled { opacity: 0.35 !important; cursor: not-allowed; }
 #main-menu button.quit { border-color: #a13a3a; }
-#main-menu button:hover:not(:disabled) { background: #223252; border-color: #8fb3ff; box-shadow: 0 0 14px rgba(143,179,255,0.35); transform: translateY(8px) scale(1.02); }
-#main-menu button.quit:hover:not(:disabled) { border-color: #d94f4f; box-shadow: 0 0 14px rgba(217,79,79,0.4); }
-#main-menu button:active:not(:disabled) { transform: translateY(9px) scale(0.99); }
+/* Boxed hover only for form buttons — not .menu-link (see overrides below). */
+#main-menu button:not(.menu-link):hover:not(:disabled) {
+  background: #223252; border-color: #8fb3ff; box-shadow: 0 0 14px rgba(143,179,255,0.35);
+  transform: translateY(8px) scale(1.02);
+}
+#main-menu button:not(.menu-link).quit:hover:not(:disabled) {
+  border-color: #d94f4f; box-shadow: 0 0 14px rgba(217,79,79,0.4);
+}
+#main-menu button:not(.menu-link):active:not(:disabled) { transform: translateY(9px) scale(0.99); }
 
-/* The top-level New Game/Load Game/Quit entries are plain clickable text,
-   not boxed buttons — no background/border/padding chrome — with the same
-   glitch-layer technique as the h1 title (data-text-mirrored ::before/
-   ::after clip-path bands) and a bright multi-layer glow on hover instead of
-   a hover box-shadow. transform/opacity are kept so the existing .reveal
-   entrance stagger (below) still animates these in unchanged. */
+/* Top-level New Game / Load / Quit — plain text only, never a hover box. */
 #main-menu button.menu-link {
-  background: none; border: none; padding: 6px 0; margin: 0;
-  color: #cfe3ff; font-size: 19px; letter-spacing: 3px; text-transform: uppercase;
+  background: transparent !important; border: none !important; padding: 6px 0; margin: 0;
+  color: #e8f4ff; font-size: 19px; letter-spacing: 3px; text-transform: uppercase;
   cursor: pointer; font-family: monospace;
   opacity: 0; transform: translateY(8px);
-  transition: color 0.2s ease;
+  transition: color 0.2s ease, filter 0.2s ease;
+  box-shadow: none !important; outline: none;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.5);
 }
 #main-menu button.menu-link:disabled { opacity: 0.35 !important; cursor: not-allowed; }
 #main-menu button.menu-link:hover:not(:disabled),
-#main-menu button.menu-link:focus-visible:not(:disabled) { color: #eaffff; }
-#main-menu button.menu-link .glitch-text { position: relative; display: inline-block; padding-bottom: 3px; }
-/* Underline sweep: a glowing line grows out from the center on hover. Uses
-   the span's own ::marker-free box — the glitch layers live on ::before/
-   ::after of .glitch-text, so the underline borrows the button's ::after. */
+#main-menu button.menu-link:focus-visible:not(:disabled) {
+  color: #ffffff;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  transform: translateY(8px); /* no scale — keeps hit area from looking boxed */
+}
+#main-menu button.menu-link .glitch-text {
+  position: relative; display: inline-block; padding-bottom: 3px;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7));
+}
+/* Underline sweep only — no chrome. */
 #main-menu button.menu-link::after {
   content: ''; display: block; margin: 2px auto 0; height: 1px; width: 0%;
   background: currentColor; box-shadow: 0 0 8px currentColor;
@@ -163,11 +239,17 @@ const STYLE = `
 #main-menu button.menu-link:focus-visible:not(:disabled)::after { width: 60%; }
 #main-menu button.menu-link:hover:not(:disabled) .glitch-text,
 #main-menu button.menu-link:focus-visible:not(:disabled) .glitch-text {
-  filter: drop-shadow(0 0 6px rgba(143,179,255,0.9)) drop-shadow(0 0 16px rgba(79,195,217,0.85)) drop-shadow(0 0 32px rgba(127,224,160,0.55));
+  filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.7))
+    drop-shadow(0 0 8px rgba(143,179,255,0.85))
+    drop-shadow(0 0 18px rgba(79,195,217,0.55));
 }
 #main-menu button.menu-link.quit:hover:not(:disabled) .glitch-text,
 #main-menu button.menu-link.quit:focus-visible:not(:disabled) .glitch-text {
-  filter: drop-shadow(0 0 6px rgba(217,79,79,0.95)) drop-shadow(0 0 16px rgba(217,79,79,0.85)) drop-shadow(0 0 32px rgba(255,140,140,0.5));
+  filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.7))
+    drop-shadow(0 0 8px rgba(217,79,79,0.9))
+    drop-shadow(0 0 18px rgba(217,79,79,0.5));
 }
 #main-menu button.menu-link .glitch-text::before, #main-menu button.menu-link .glitch-text::after {
   content: attr(data-text); position: absolute; inset: 0; color: inherit;
@@ -195,9 +277,16 @@ const STYLE = `
   97% { opacity: 0; transform: translate(0, 0); }
 }
 
-#main-menu.reveal .panel > button, #main-menu.reveal .panel > label, #main-menu.reveal .panel > h2 {
+#main-menu.reveal .title-block { animation: titleEntrance 1.1s ease-out; }
+#main-menu.reveal .menu-links > button,
+#main-menu.reveal .panel > button,
+#main-menu.reveal .panel > label,
+#main-menu.reveal .panel > h2 {
   animation: riseIn 0.4s ease-out forwards; opacity: 0;
 }
+#main-menu.reveal .menu-links > button:nth-of-type(1) { animation-delay: 0s; }
+#main-menu.reveal .menu-links > button:nth-of-type(2) { animation-delay: 0.08s; }
+#main-menu.reveal .menu-links > button:nth-of-type(3) { animation-delay: 0.16s; }
 #main-menu.reveal .panel > button:nth-of-type(1), #main-menu.reveal .panel > label:nth-of-type(1) { animation-delay: 0s; }
 #main-menu.reveal .panel > button:nth-of-type(2), #main-menu.reveal .panel > label:nth-of-type(2) { animation-delay: 0.08s; }
 #main-menu.reveal .panel > button:nth-of-type(3), #main-menu.reveal .panel > label:nth-of-type(3) { animation-delay: 0.16s; }
@@ -220,12 +309,17 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
       <div class="corner bl"></div><div class="corner br"></div>
     </div>
     <div class="footer">DEEP-SPACE NAVIGATION INTERFACE // SIGNAL ACQUIRED</div>
+    <div class="copyright">© Laughing In Purgatory 2026</div>
     <div class="panel main-view">
-      <h1><span class="line" data-text="Whispers">Whispers</span><span class="line line-sub" data-text="In The Void">In The Void</span></h1>
-      <div class="subtitle">A PROCEDURALLY GENERATED GALAXY</div>
-      <button class="new-game menu-link"><span class="glitch-text" data-text="New Game">New Game</span></button>
-      <button class="load-game menu-link"><span class="glitch-text" data-text="Load Game">Load Game</span></button>
-      <button class="quit menu-link"><span class="glitch-text" data-text="Quit">Quit</span></button>
+      <div class="title-block">
+        <h1><span class="line" data-text="WHISPERS">WHISPERS</span><span class="line line-sub" data-text="IN THE VOID">IN THE VOID</span></h1>
+        <div class="subtitle">A PROCEDURALLY GENERATED GALAXY</div>
+      </div>
+      <div class="menu-links">
+        <button class="new-game menu-link"><span class="glitch-text" data-text="New Game">New Game</span></button>
+        <button class="load-game menu-link"><span class="glitch-text" data-text="Load Game">Load Game</span></button>
+        <button class="quit menu-link"><span class="glitch-text" data-text="Quit">Quit</span></button>
+      </div>
     </div>
     <div class="panel new-game-view" style="display:none">
       <h2>Create Pilot</h2>

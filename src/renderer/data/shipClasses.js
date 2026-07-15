@@ -11,11 +11,23 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     hardpoints: [{ id: 'fwd1', position: [0, 0.2, 10], type: 'laser' }],
     hull: {
       length: 22,
-      stationWidths: [0.2, 1.4, 2.4, 2.4, 1.6, 0.3],
-      stationHeights: [0.2, 0.9, 1.3, 1.3, 0.9, 0.2],
+      // Blunt freighter nose, fat cargo mid, truncated drive section.
+      stationWidths: [0.9, 2.0, 2.5, 2.5, 2.1, 1.1],
+      stationHeights: [0.7, 1.2, 1.5, 1.5, 1.2, 0.7],
       crossSectionSides: 6,
-      wings: [{ atStation: 3, span: 5, sweep: 0.5, thickness: 0.3 }],
-      color: '#8fb3ff'
+      wings: [{ atStation: 3, span: 4.5, sweep: 0.3, thickness: 0.35, side: 'both' }],
+      // Slight cargo-module offset — starter ship still mostly clean.
+      stationOffsetsX: [0, 0.05, 0.12, 0.12, 0.06, 0],
+      color: '#9aa8b8',
+      style: {
+        asymmetric: true,
+        bridgeSide: 1,
+        engineLayout: 'twin',
+        hasRadiator: true,
+        hasCargoPods: true,
+        hasSensorMast: true,
+        hasDockingRing: false
+      }
     }
   },
   {
@@ -26,12 +38,23 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     stats: { hull: 150, shields: 30, armor: 40, cargoCapacity: 120, speed: 70, turnRate: 0.9, accel: 15 },
     hardpoints: [{ id: 'fwd1', position: [0, 0.5, 12], type: 'laser' }],
     hull: {
-      length: 30,
-      stationWidths: [0.6, 3.2, 3.6, 3.6, 3.2, 0.6],
-      stationHeights: [0.6, 2.4, 2.6, 2.6, 2.4, 0.6],
+      length: 32,
+      // Boxy bulk freighter — nearly constant cross-section.
+      stationWidths: [1.4, 3.4, 3.8, 3.8, 3.5, 1.8],
+      stationHeights: [1.2, 2.6, 2.8, 2.8, 2.5, 1.4],
       crossSectionSides: 4,
-      wings: [],
-      color: '#c2a35c'
+      wings: [{ atStation: 2, span: 2.2, sweep: -0.2, thickness: 0.4, side: 'left' }],
+      stationOffsetsX: [0, -0.15, -0.25, -0.2, -0.1, 0],
+      color: '#a89870',
+      style: {
+        asymmetric: true,
+        bridgeSide: -1,
+        engineLayout: 'quad',
+        hasRadiator: true,
+        hasCargoPods: true,
+        hasSensorMast: true,
+        hasDockingRing: true
+      }
     }
   },
   {
@@ -46,11 +69,23 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     ],
     hull: {
       length: 20,
-      stationWidths: [0.05, 0.6, 1.1, 1.0, 0.7, 0.1],
-      stationHeights: [0.05, 0.4, 0.6, 0.6, 0.4, 0.1],
+      stationWidths: [0.12, 0.55, 1.05, 0.95, 1.15, 0.35],
+      stationHeights: [0.1, 0.35, 0.5, 0.48, 0.55, 0.2],
       crossSectionSides: 6,
-      wings: [{ atStation: 3, span: 8, sweep: 1.2, thickness: 0.2 }],
-      color: '#e0e0e0'
+      wings: [
+        { atStation: 3, span: 7.5, sweep: 1.3, thickness: 0.22, side: 'both' },
+        { atStation: 1, span: 2.2, sweep: 0.4, thickness: 0.14, side: 'both' }
+      ],
+      color: '#c8cdd4',
+      style: {
+        asymmetric: false,
+        bridgeSide: 0,
+        engineLayout: 'twin',
+        hasRadiator: false,
+        hasCargoPods: false,
+        hasSensorMast: true,
+        hasDockingRing: false
+      }
     }
   },
   {
@@ -64,12 +99,26 @@ const HAND_CRAFTED_SHIP_CLASSES = [
       { id: 'wing2', position: [3, 0, 6], type: 'missile' }
     ],
     hull: {
-      length: 24,
-      stationWidths: [0.3, 1.6, 2.0, 2.0, 1.4, 0.3],
-      stationHeights: [0.3, 1.2, 1.5, 1.5, 1.0, 0.3],
+      length: 26,
+      stationWidths: [0.4, 1.5, 2.1, 2.0, 1.6, 0.7],
+      stationHeights: [0.3, 1.0, 1.4, 1.35, 1.0, 0.45],
       crossSectionSides: 4,
-      wings: [{ atStation: 2, span: 9, sweep: 0.3, thickness: 0.4 }],
-      color: '#7d8f9a'
+      // One heavier weapons wing — classic asymmetric gunship.
+      wings: [
+        { atStation: 2, span: 9.5, sweep: 0.4, thickness: 0.45, side: 'left' },
+        { atStation: 2, span: 6.5, sweep: 0.6, thickness: 0.3, side: 'right', tipOffsetY: 0.3 }
+      ],
+      stationOffsetsY: [0, 0.05, 0.15, 0.12, 0.05, 0],
+      color: '#6a7680',
+      style: {
+        asymmetric: true,
+        bridgeSide: 1,
+        engineLayout: 'triple',
+        hasRadiator: true,
+        hasCargoPods: false,
+        hasSensorMast: true,
+        hasDockingRing: false
+      }
     }
   },
   {
@@ -80,12 +129,21 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     stats: { hull: 50, shields: 40, armor: 5, cargoCapacity: 15, speed: 180, turnRate: 2.5, accel: 45 },
     hardpoints: [{ id: 'fwd1', position: [0, 0.1, 7], type: 'laser' }],
     hull: {
-      length: 14,
-      stationWidths: [0.1, 0.7, 1.0, 0.9, 0.5, 0.1],
-      stationHeights: [0.1, 0.6, 0.8, 0.8, 0.5, 0.1],
+      length: 15,
+      stationWidths: [0.15, 0.65, 0.95, 0.85, 0.55, 0.2],
+      stationHeights: [0.12, 0.5, 0.7, 0.65, 0.4, 0.15],
       crossSectionSides: 8,
-      wings: [{ atStation: 3, span: 3, sweep: 0.6, thickness: 0.15 }],
-      color: '#7fe0a0'
+      wings: [{ atStation: 3, span: 3.2, sweep: 0.5, thickness: 0.16, side: 'both' }],
+      color: '#7a9a88',
+      style: {
+        asymmetric: false,
+        bridgeSide: 0,
+        engineLayout: 'single',
+        hasRadiator: false,
+        hasCargoPods: false,
+        hasSensorMast: true,
+        hasDockingRing: false
+      }
     }
   },
   {
@@ -101,11 +159,22 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     ],
     hull: {
       length: 19,
-      stationWidths: [0.05, 0.9, 1.5, 1.3, 1.6, 0.2],
-      stationHeights: [0.05, 0.5, 0.7, 0.7, 0.9, 0.15],
+      // Rough scavenged silhouette — deliberately ugly/asymmetric.
+      stationWidths: [0.15, 0.85, 1.4, 1.15, 1.55, 0.45],
+      stationHeights: [0.1, 0.45, 0.65, 0.6, 0.85, 0.25],
       crossSectionSides: 5,
-      wings: [{ atStation: 4, span: 6, sweep: -0.4, thickness: 0.25 }],
-      color: '#a13a3a'
+      wings: [{ atStation: 4, span: 5.5, sweep: -0.5, thickness: 0.28, side: 'right', tipOffsetY: -0.25 }],
+      stationOffsetsX: [0, 0.1, 0.25, 0.2, -0.15, 0],
+      color: '#8a4540',
+      style: {
+        asymmetric: true,
+        bridgeSide: -1,
+        engineLayout: 'twin',
+        hasRadiator: true,
+        hasCargoPods: true,
+        hasSensorMast: true,
+        hasDockingRing: false
+      }
     }
   },
   {
@@ -117,21 +186,28 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     hardpoints: [{ id: 'fwd1', position: [0, 0.3, 13], type: 'laser' }],
     hull: {
       length: 28,
-      stationWidths: [0.1, 1.0, 1.6, 1.5, 0.9, 0.15],
-      stationHeights: [0.1, 0.7, 1.0, 1.0, 0.6, 0.1],
+      stationWidths: [0.2, 1.0, 1.55, 1.45, 0.95, 0.3],
+      stationHeights: [0.15, 0.65, 0.95, 0.9, 0.55, 0.2],
       crossSectionSides: 6,
-      wings: [{ atStation: 2, span: 10, sweep: 0.8, thickness: 0.2 }],
-      color: '#4fc3d9'
+      wings: [{ atStation: 2, span: 9, sweep: 0.9, thickness: 0.22, side: 'both' }],
+      color: '#6a8fa0',
+      style: {
+        asymmetric: false,
+        bridgeSide: 0,
+        engineLayout: 'twin',
+        hasRadiator: true,
+        hasCargoPods: false,
+        hasSensorMast: true,
+        hasDockingRing: true
+      }
     }
   }
 ]
 
 export const STARTER_SHIP_CLASS_ID = 'bravia_mk2'
-// Tripled per user request (was 5) — still deliberately below
-// computeMiningCapacity's own floor (see MINING_HOLD_MIN in shipRoster.js,
-// scaled up to match) so the starter ship is guaranteed to have the smallest
-// mining hold in the game.
-const STARTER_MINING_CAPACITY = 15
+// 3× prior (was 15) with the mining-hold triple pass — still below
+// computeMiningCapacity's floor so the starter stays the smallest hold.
+const STARTER_MINING_CAPACITY = 45
 
 for (const c of HAND_CRAFTED_SHIP_CLASSES) {
   c.stats.miningCapacity = c.id === STARTER_SHIP_CLASS_ID ? STARTER_MINING_CAPACITY : computeMiningCapacity(c.price, c.role)

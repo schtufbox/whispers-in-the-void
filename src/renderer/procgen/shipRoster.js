@@ -21,10 +21,21 @@ const ROLE_LENGTH_RANGES = {
   explorer: [16, 32]
 }
 
+// Muted industrial palettes — human ships read as painted metal, not candy.
 const ROLE_HUE_RANGES = {
-  trader: [30, 60],
-  fighter: [340, 380],
-  explorer: [160, 220]
+  trader: [25, 55],
+  fighter: [200, 230],
+  explorer: [175, 210]
+}
+const ROLE_SAT_RANGES = {
+  trader: [0.12, 0.35],
+  fighter: [0.08, 0.28],
+  explorer: [0.15, 0.4]
+}
+const ROLE_LIGHT_RANGES = {
+  trader: [0.38, 0.58],
+  fighter: [0.42, 0.62],
+  explorer: [0.45, 0.65]
 }
 
 const ROLE_HARDPOINT_COUNTS = {
@@ -64,33 +75,127 @@ function generateShipModelName(rng, usedNames) {
   return fallback
 }
 
+// Role-shaped silhouettes that read as human engineering:
+//   trader  — blunt nose, fat mid cargo block, truncated tail
+//   fighter — needle nose, pinched mid, broad engine rear
+//   explorer — long slender spine with modest mid flare
 function generateHullSilhouette(rng, role) {
   const [minLen, maxLen] = ROLE_LENGTH_RANGES[role]
   const length = range(rng, minLen, maxLen)
-  const peakWidth = range(rng, length * 0.05, length * 0.11)
-  const noseFrac = range(rng, 0.05, 0.2)
-  const midFrontFrac = range(rng, 0.4, 0.8)
-  const peakFrac = range(rng, 0.9, 1.0)
-  const midBackFrac = range(rng, 0.85, 1.0)
-  const rearFrac = range(rng, 0.5, 0.8)
-  const tailFrac = range(rng, 0.05, 0.3)
-  const stationWidths = [noseFrac, midFrontFrac, peakFrac, midBackFrac, rearFrac, tailFrac].map((f) => f * peakWidth)
-  const heightRatio = range(rng, 0.5, 0.9)
-  const stationHeights = stationWidths.map((w) => w * heightRatio * range(rng, 0.85, 1.15))
-  const crossSectionSides = pick(rng, [4, 5, 6, 8])
+  const peakWidth = range(rng, length * 0.055, length * 0.12)
 
-  const wings = []
-  if (rng() < 0.75) {
-    const atStation = pick(rng, [2, 3, 4])
-    wings.push({
-      atStation,
-      span: range(rng, peakWidth * 1.5, peakWidth * 4),
-      sweep: range(rng, -0.5, 1.3),
-      thickness: range(rng, 0.15, 0.4)
-    })
+  let fracs
+  if (role === 'trader') {
+    // Boxy freighter: fat through most of the length.
+    fracs = [
+      range(rng, 0.25, 0.45),
+      range(rng, 0.75, 0.95),
+      range(rng, 0.95, 1.0),
+      range(rng, 0.95, 1.0),
+      range(rng, 0.7, 0.9),
+      range(rng, 0.35, 0.55)
+    ]
+  } else if (role === 'fighter') {
+    // Combat craft: sharp nose, wasp waist optional, engine flare aft.
+    fracs = [
+      range(rng, 0.04, 0.12),
+      range(rng, 0.35, 0.55),
+      range(rng, 0.7, 0.95),
+      range(rng, 0.55, 0.85),
+      range(rng, 0.65, 1.0),
+      range(rng, 0.2, 0.45)
+    ]
+  } else {
+    // Explorer: long taper, modest mid, sensor nose.
+    fracs = [
+      range(rng, 0.08, 0.18),
+      range(rng, 0.4, 0.65),
+      range(rng, 0.75, 0.95),
+      range(rng, 0.7, 0.9),
+      range(rng, 0.45, 0.7),
+      range(rng, 0.12, 0.3)
+    ]
   }
 
-  return { length, stationWidths, stationHeights, crossSectionSides, wings }
+  const stationWidths = fracs.map((f) => f * peakWidth)
+  // Human hulls are usually flatter than they are tall (decks).
+  const heightRatio = role === 'trader' ? range(rng, 0.55, 0.85) : range(rng, 0.45, 0.75)
+  const stationHeights = stationWidths.map((w) => w * heightRatio * range(rng, 0.9, 1.1))
+  // Prefer boxy / octagonal industrial cross-sections over organic high-n.
+  const crossSectionSides = pick(rng, role === 'fighter' ? [4, 6, 8] : [4, 4, 6, 8])
+
+  // ~40% of human ships are deliberately asymmetrical (radiator, crane wing,
+  // offset bridge, snaking cargo spine) — real spacecraft almost never mirror.
+  const asymmetric = rng() < 0.42
+  let stationOffsetsX = null
+  let stationOffsetsY = null
+  if (asymmetric && rng() < 0.55) {
+    // Mild lateral snake on mid stations — "module bolted off-center".
+    const bias = (rng() < 0.5 ? -1 : 1) * peakWidth * range(rng, 0.08, 0.28)
+    stationOffsetsX = stationWidths.map((_, i) => {
+      if (i === 0 || i === stationWidths.length - 1) return 0
+      return bias * (0.4 + 0.6 * Math.sin((i / (stationWidths.length - 1)) * Math.PI))
+    })
+  }
+  if (asymmetric && rng() < 0.35) {
+    // Slight dorsal hump bias mid-body (raised bridge / cargo tower).
+    const hump = peakWidth * range(rng, 0.05, 0.18)
+    stationOffsetsY = stationHeights.map((_, i) => (i >= 2 && i <= 3 ? hump : 0))
+  }
+
+  const wings = []
+  const wingChance = role === 'fighter' ? 0.85 : role === 'explorer' ? 0.7 : 0.45
+  if (rng() < wingChance) {
+    const atStation = pick(rng, role === 'trader' ? [2, 3] : [2, 3, 4])
+    let side = 'both'
+    if (asymmetric && rng() < 0.55) side = pick(rng, ['left', 'right', 'both'])
+    // Rare double-row: primary wings + smaller canards.
+    wings.push({
+      atStation,
+      span: range(rng, peakWidth * (role === 'fighter' ? 2.2 : 1.4), peakWidth * (role === 'fighter' ? 5 : 3.2)),
+      sweep: range(rng, role === 'fighter' ? 0.2 : -0.4, role === 'fighter' ? 1.6 : 0.9),
+      thickness: range(rng, 0.18, 0.45),
+      side,
+      tipOffsetY: asymmetric && rng() < 0.4 ? range(rng, -0.4, 0.5) : 0,
+      chordScale: range(rng, 0.85, 1.15)
+    })
+    if (role === 'fighter' && rng() < 0.3) {
+      wings.push({
+        atStation: pick(rng, [1, 2]),
+        span: range(rng, peakWidth * 0.8, peakWidth * 1.8),
+        sweep: range(rng, -0.2, 0.6),
+        thickness: range(rng, 0.12, 0.25),
+        side: asymmetric && rng() < 0.4 ? pick(rng, ['left', 'right']) : 'both'
+      })
+    }
+  }
+
+  // Detail hints consumed by shipMesh (not geometry loft).
+  const style = {
+    asymmetric,
+    // Bridge / superstructure bias: -1 left, 0 center, +1 right.
+    bridgeSide: asymmetric && rng() < 0.65 ? (rng() < 0.5 ? -1 : 1) : 0,
+    engineLayout: pick(rng, role === 'trader'
+      ? ['twin', 'triple', 'quad']
+      : role === 'fighter'
+        ? ['twin', 'twin', 'triple', 'single']
+        : ['single', 'twin', 'twin']),
+    hasRadiator: rng() < (role === 'trader' ? 0.7 : 0.45),
+    hasCargoPods: role === 'trader' && rng() < 0.75,
+    hasSensorMast: role === 'explorer' || rng() < 0.4,
+    hasDockingRing: role === 'trader' && rng() < 0.35
+  }
+
+  return {
+    length,
+    stationWidths,
+    stationHeights,
+    crossSectionSides,
+    wings,
+    stationOffsetsX,
+    stationOffsetsY,
+    style
+  }
 }
 
 function generateHardpoints(rng, role, hull) {
@@ -113,18 +218,16 @@ function computePrice(stats, rng) {
 }
 
 const MINING_HOLD_ROLE_MULTIPLIER = { trader: 1.3, fighter: 0.6, explorer: 0.9 }
-// Tripled alongside the starter ship's hard-set capacity (see
-// STARTER_MINING_CAPACITY in data/shipClasses.js, 5 -> 15) so every other
-// ship's hold keeps scaling off that same new base rather than drifting back
-// down toward the old floor.
-const MINING_HOLD_MIN = 30
+// 3× prior floor (was 30) — mining holds increased by 300% / triple.
+const MINING_HOLD_MIN = 90
 
 // Every ship has a dedicated mining hold for mined ore, sized off price and
 // role (traders lean into hauling ore, fighters carry the least) and kept
 // separate from cargoCapacity. The starter ship is hard-set below this floor
 // in data/shipClasses.js, so it's always the smallest hold in the game.
 export function computeMiningCapacity(price, role) {
-  return Math.max(MINING_HOLD_MIN, Math.round((price / 500) * MINING_HOLD_ROLE_MULTIPLIER[role]))
+  // ×3 on the prior price formula (was price/500) so all ships triple together.
+  return Math.max(MINING_HOLD_MIN, Math.round((price / 500) * MINING_HOLD_ROLE_MULTIPLIER[role] * 3))
 }
 
 export function generateShipClassRoster(rng, count) {
@@ -140,7 +243,14 @@ export function generateShipClassRoster(rng, count) {
 
     const hull = generateHullSilhouette(rng, role)
     const [hueMin, hueMax] = ROLE_HUE_RANGES[role]
-    hull.color = hslToHex(range(rng, hueMin, hueMax), range(rng, 0.35, 0.65), range(rng, 0.45, 0.7))
+    const [satMin, satMax] = ROLE_SAT_RANGES[role]
+    const [litMin, litMax] = ROLE_LIGHT_RANGES[role]
+    // Occasional high-vis hazard stripe orange on traders; otherwise dull metal.
+    if (role === 'trader' && rng() < 0.18) {
+      hull.color = hslToHex(range(rng, 22, 38), range(rng, 0.45, 0.7), range(rng, 0.4, 0.55))
+    } else {
+      hull.color = hslToHex(range(rng, hueMin, hueMax), range(rng, satMin, satMax), range(rng, litMin, litMax))
+    }
 
     const name = generateShipModelName(rng, usedNames)
     const id = `gen_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${i}`

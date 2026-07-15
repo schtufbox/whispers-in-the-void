@@ -80,23 +80,31 @@ export function rockDisplayName(system) {
   return `${getGood(oreTierForSystem(system)).name} Deposit`
 }
 
-// Mines one unit from a specific rock — identified the same way Tab-
-// targeting already does, by (fieldId, index) — rather than the whole field,
-// since ore is now a finite, depletable, per-rock resource instead of an
-// unlimited field-wide tap. destroyed=true the instant this hit empties it,
-// so the caller (game/combat.js, main.js's mining-beam tick) can trigger the
-// "explosion" (VFX/sound, hiding the mesh) exactly once.
+// Hits a specific rock with a mining weapon. Ore is always stripped from the
+// rock (so a full hold still lets you exhaust and explode it); scoop into the
+// mining hold only when there is free capacity.
+//
+// mined: rock took a mining hit (ore reduced)
+// scooped: 1 unit landed in the hold
+// destroyed: this hit emptied the rock
 export function mineRock(gameState, shipClass, system, fieldId, index) {
   const goodId = oreTierForSystem(system)
-  const hold = gameState.player.ship.miningHold
-  const used = Object.values(hold).reduce((a, b) => a + b, 0)
-  if (used >= shipClass.stats.miningCapacity) return { goodId, mined: false, destroyed: false }
-  if (!isRockAlive(gameState, fieldId, index)) return { goodId, mined: false, destroyed: false }
+  if (!isRockAlive(gameState, fieldId, index)) {
+    return { goodId, mined: false, scooped: false, destroyed: false }
+  }
 
   const state = rockState(gameState, fieldId, index)
-  hold[goodId] = (hold[goodId] ?? 0) + MINE_YIELD
   state.ore -= MINE_YIELD
   const destroyed = state.ore <= 0
   if (destroyed) state.destroyedAt = gameState.simTime
-  return { goodId, mined: true, destroyed }
+
+  const hold = gameState.player.ship.miningHold
+  const used = Object.values(hold).reduce((a, b) => a + b, 0)
+  let scooped = false
+  if (used < shipClass.stats.miningCapacity) {
+    hold[goodId] = (hold[goodId] ?? 0) + MINE_YIELD
+    scooped = true
+  }
+
+  return { goodId, mined: true, scooped, destroyed }
 }

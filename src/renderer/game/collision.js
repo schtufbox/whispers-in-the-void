@@ -2,12 +2,13 @@ import * as THREE from 'three'
 
 // Stations/settlements never vary in size, so a fixed radius per kind is
 // enough — unlike planets/moons/asteroid fields, which store their own
-// per-instance radius on the body (see procgen/galaxy.js). Scaled 11.25x to
-// match main.js's STATION_SCALE render multiplier (main.js also layers a
-// small +/-15% per-body render variance on top that isn't mirrored here —
-// the DOCK_RANGE_COLLISION_MARGIN buffer comfortably absorbs that).
-const STATION_COLLISION_RADIUS = 225
-const SETTLEMENT_COLLISION_RADIUS = 123.75
+// per-instance radius on the body (see procgen/galaxy.js). Matches
+// main.js STATION_SCALE (16.875 = prior 11.25 × 1.5); main.js also layers a
+// small +/-15% per-body render variance that isn't mirrored here —
+// the DOCK_RANGE_COLLISION_MARGIN buffer comfortably absorbs that.
+const STATION_COLLISION_RADIUS = 337.5
+// Surface bases sit on the crust with a modest shell (+50% with station pass).
+const SETTLEMENT_COLLISION_RADIUS = 72
 
 export function collisionRadiusFor(body) {
   if (body.kind === 'planet' || body.kind === 'moon' || body.kind === 'asteroidField') return body.radius
@@ -47,9 +48,17 @@ export function resolveBodyCollisions(shipState, bodies, shipRadius) {
 }
 
 // Supercruise: instead of bouncing off a body, tunnel straight through along
-// travel direction and exit the far side. Destination body is left alone so
-// normal arrival still works. Returns event info for VFX/SFX, or null.
-export function trySupercruiseTunnel(shipState, bodies, shipRadius, destinationBodyId = null) {
+// travel direction and exit the far side. Destination body (and host shells
+// that contain it — surface settlements) are left alone so arrival works.
+// Returns event info for VFX/SFX, or null.
+// ignoreBodyIds: optional Set of body ids to never tunnel through.
+export function trySupercruiseTunnel(
+  shipState,
+  bodies,
+  shipRadius,
+  destinationBodyId = null,
+  ignoreBodyIds = null
+) {
   const shipPos = new THREE.Vector3().fromArray(shipState.position)
   const velocity = new THREE.Vector3().fromArray(shipState.velocity)
   let dir = velocity.lengthSq() > 1e-4
@@ -58,6 +67,7 @@ export function trySupercruiseTunnel(shipState, bodies, shipRadius, destinationB
 
   for (const body of bodies) {
     if (destinationBodyId && body.id === destinationBodyId) continue
+    if (ignoreBodyIds?.has(body.id)) continue
     const bodyRadius = collisionRadiusFor(body)
     if (bodyRadius == null) continue
 

@@ -57,3 +57,11 @@ test('supercruise tunnel ignores the destination body', () => {
   assert.equal(event, null)
   assert.deepEqual(shipState.position, [0, 0, 70])
 })
+
+test('supercruise tunnel ignores explicit host body ids (surface settlement parent)', () => {
+  const planet = { id: 'host', kind: 'planet', position: [0, 0, 100], radius: 40 }
+  const shipState = { position: [0, 0, 70], velocity: [0, 0, 80], quaternion: [0, 0, 0, 1] }
+  const event = trySupercruiseTunnel(shipState, [planet], 5, 'settlement', new Set(['host']))
+  assert.equal(event, null)
+  assert.deepEqual(shipState.position, [0, 0, 70])
+})
