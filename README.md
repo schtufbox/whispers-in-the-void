@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/schtufbox/whispers-in-the-void/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/schtufbox/whispers-in-the-void?style=flat-square" /></a>
+  <a href="https://github.com/LaughingInPurgatory/whispers-in-the-void/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/LaughingInPurgatory/whispers-in-the-void?style=flat-square" /></a>
 </p>
 
 ---
@@ -57,7 +57,7 @@ npm run package   # build + electron-builder --dir (unpacked)
 npm run make      # build + electron-builder (installer for the current platform)
 ```
 
-Prebuilt installers (macOS arm64/x64, Linux AppImage arm64/x64, Windows arm64/x64) are on the [Releases](https://github.com/schtufbox/whispers-in-the-void/releases) page.
+Prebuilt installers (macOS arm64/x64, Linux AppImage arm64/x64, Windows arm64/x64) are on the [Releases](https://github.com/LaughingInPurgatory/whispers-in-the-void/releases) page.
 
 ### Testing
 
