@@ -30,6 +30,7 @@ export function deserializeGameState(data) {
   // swappable — every hardpoint just defaults to its category's free base
   // weapon, matching how it already behaved.
   gameState.player.ship.equippedWeapons ??= defaultLoadoutFor(getShipClass(gameState.player.ship.classId))
+  gameState.player.ship.spareWeapons ??= {}
   gameState.stationStorage ??= {}
   // startingSystemId/startingSystemPeaceBroken fall back for saves written
   // before the starting-system peace existed — null just means that save

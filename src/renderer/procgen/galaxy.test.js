@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { generateGalaxy, canJumpTo } from './galaxy.js'
+import { generateGalaxy, canJumpTo, ensureStartingSystemFacilities } from './galaxy.js'
+import { mulberry32 } from './prng.js'
 
 function allBodies(galaxy) {
   return galaxy.systems.flatMap((s) => s.bodies)
@@ -87,4 +88,47 @@ test('every system has hyperspace neighbors, and the jump lanes are symmetric', 
       assert.ok(canJumpTo(byId.get(neighborId), system.id), `${neighborId} should list ${system.id} back (symmetric lanes)`)
     }
   }
+})
+
+test('stations orbit a host (planet/moon/star) except a rare free-drifter fraction', () => {
+  const galaxy = generateGalaxy(42)
+  const stations = allBodies(galaxy).filter((b) => b.kind === 'station')
+  const free = stations.filter((s) => !s.parentId && !s.orbitsStar)
+  const freeRate = free.length / stations.length
+  assert.ok(freeRate < 0.02, `free-drifting stations should be rare, got ${(freeRate * 100).toFixed(2)}%`)
+  for (const s of stations) {
+    if (s.parentId) {
+      const parent = allBodies(galaxy).find((b) => b.id === s.parentId)
+      assert.ok(parent && (parent.kind === 'planet' || parent.kind === 'moon'), 'station parent is planet or moon')
+    }
+  }
+})
+
+test('settlements sit on a planet surface only', () => {
+  const galaxy = generateGalaxy(42)
+  for (const system of galaxy.systems) {
+    for (const s of system.bodies.filter((b) => b.kind === 'settlement')) {
+      assert.ok(s.parentId, 'settlement needs a planet parent')
+      assert.ok(s.surfaceOffset, 'settlement needs surfaceOffset')
+      const planet = system.bodies.find((b) => b.id === s.parentId)
+      assert.equal(planet?.kind, 'planet')
+      const dist = Math.hypot(
+        s.position[0] - planet.position[0],
+        s.position[1] - planet.position[1],
+        s.position[2] - planet.position[2]
+      )
+      assert.ok(dist >= planet.radius, `settlement should be outside planet radius (dist ${dist}, r ${planet.radius})`)
+    }
+  }
+})
+
+test('ensureStartingSystemFacilities adds at least 1 station and 2 settlements', () => {
+  const galaxy = generateGalaxy(7)
+  // Pick a sparse system if possible
+  const system = galaxy.systems.find((s) => s.bodies.filter((b) => b.kind === 'planet').length >= 1) ?? galaxy.systems[0]
+  // Strip facilities
+  system.bodies = system.bodies.filter((b) => b.kind === 'planet' || b.kind === 'moon')
+  ensureStartingSystemFacilities(system, mulberry32(99), galaxy._nextBodyId ?? 0)
+  assert.ok(system.bodies.filter((b) => b.kind === 'station').length >= 1)
+  assert.ok(system.bodies.filter((b) => b.kind === 'settlement').length >= 2)
 })

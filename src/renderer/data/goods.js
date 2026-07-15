@@ -23,10 +23,18 @@ export const GOODS = [
 // simple count on the ship (game/economy.js's useShipPart), not a cargo slot.
 export const SHIP_PARTS_GOOD_ID = 'ship_parts'
 
+// Obtained only by probing (game/probe.js). Stations will buy it, never sell it.
+export const SURVEY_DATA_GOOD_ID = 'survey_data'
+
 // Ids mined from asteroid fields (game/mining.js), kept distinct from the
 // pre-existing 'ore' good (an ordinary bulk trade commodity) so the two
 // never share a cargo pool: mined ore lives in ship.miningHold, not cargo.
 export const MINED_ORE_GOOD_IDS = ['raw_ore', 'rich_ore', 'exotic_ore', 'quantum_ore']
+
+// Not station-stocked (no Buy). Still appear in trade for Sell when held.
+export function isBuyableTradeGood(id) {
+  return id !== SHIP_PARTS_GOOD_ID && id !== SURVEY_DATA_GOOD_ID && !MINED_ORE_GOOD_IDS.includes(id)
+}
 
 export function getGood(id) {
   const good = GOODS.find((g) => g.id === id)

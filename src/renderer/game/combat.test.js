@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { applyDamage, fireProjectile, updateProjectiles, updateNpcAI } from './combat.js'
+import { applyDamage, fireProjectile, updateProjectiles, updateNpcAI, regenShields } from './combat.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
 
@@ -31,6 +31,27 @@ test('applyDamage marks entity destroyed when hull drops to zero or below', () =
   applyDamage(entity, 20)
   assert.ok(entity.hull <= 0)
   assert.equal(entity.destroyed, true)
+})
+
+test('player shields regen ~1% of max per 10s out of combat', () => {
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  const max = shipClass.stats.shields
+  const ship = { shields: 0, lastHitAt: -Infinity }
+  // 10 seconds of sim time
+  for (let i = 0; i < 600; i++) {
+    regenShields(ship, shipClass, 100 + i * DT, DT, { player: true, inCombat: false })
+  }
+  const expected = max * 0.01
+  assert.ok(Math.abs(ship.shields - expected) < 0.05, `got ${ship.shields}, expected ~${expected}`)
+})
+
+test('player shields do not regen while in combat', () => {
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  const ship = { shields: 0, lastHitAt: -Infinity }
+  for (let i = 0; i < 600; i++) {
+    regenShields(ship, shipClass, 100 + i * DT, DT, { player: true, inCombat: true })
+  }
+  assert.equal(ship.shields, 0)
 })
 
 test('fireProjectile spawns a projectile per hardpoint that travels and can hit a target', () => {

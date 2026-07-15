@@ -122,9 +122,15 @@ export function updateSupercruise(
 
   const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat)
   const velocity = new THREE.Vector3().fromArray(shipState.velocity)
-  velocity.addScaledVector(forward, shipClass.stats.accel * SUPERCRUISE_MULTIPLIER * dt)
-  velocity.multiplyScalar(Math.pow(DAMPING_PER_SECOND, dt))
-  const maxSpeed = shipClass.stats.speed * SUPERCRUISE_MULTIPLIER
+  // Cruise top speed = SUPERCRUISE_MULTIPLIER × ship max; ease down on final
+  // approach so we don't overshoot the arrival sphere (or skirt forever).
+  const dist = toTarget.length()
+  const approachFactor = Math.min(1, Math.max(0.22, dist / Math.max(arrivalRange * 10, 350)))
+  const maxSpeed = shipClass.stats.speed * SUPERCRUISE_MULTIPLIER * approachFactor
+  const cruiseAccel = shipClass.stats.accel * SUPERCRUISE_MULTIPLIER * 2.5
+  velocity.addScaledVector(forward, cruiseAccel * dt)
+  const dragK = cruiseAccel / Math.max(1e-3, shipClass.stats.speed * SUPERCRUISE_MULTIPLIER)
+  velocity.multiplyScalar(1 / (1 + dragK * dt))
   if (velocity.length() > maxSpeed) velocity.setLength(maxSpeed)
 
   const position = shipPos.addScaledVector(velocity, dt)

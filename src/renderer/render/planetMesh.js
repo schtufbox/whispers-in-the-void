@@ -233,10 +233,18 @@ export function buildPlanetMesh(body) {
   // convention as archetype/color selection above.
   if (body.kind === 'planet' && rng() < 0.03) mesh.add(buildRing(radius, rng))
 
-  // Slow seeded axial spin — picked up generically by main.js's per-frame
-  // body-mesh update loop (see stationMesh.js's updateStationMesh, which
-  // just checks userData.spinSpeed regardless of body kind).
-  mesh.userData.spinSpeed = range(rng, 0.015, 0.05) * (rng() < 0.5 ? 1 : -1)
+  // Axial tilt (some worlds spin well off the system plane).
+  const axialTilt = body.kind === 'planet' ? range(rng, 0, 0.55) * (rng() < 0.5 ? 1 : -1) : range(rng, 0, 0.2) * (rng() < 0.5 ? 1 : -1)
+  mesh.rotation.z = axialTilt
+  mesh.userData.axialTilt = axialTilt
+
+  // ~55% of moons are tidally locked (main.js aims them at their parent);
+  // the rest and all planets get a slow axial spin.
+  const tidallyLocked = body.kind === 'moon' && rng() < 0.55
+  mesh.userData.tidallyLocked = tidallyLocked
+  mesh.userData.parentId = body.parentId
+  // Slower than the old 0.015–0.05 so rotation reads as planetary, not a top.
+  mesh.userData.spinSpeed = tidallyLocked ? 0 : range(rng, 0.004, 0.014) * (rng() < 0.5 ? 1 : -1)
 
   return mesh
 }

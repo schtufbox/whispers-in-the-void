@@ -1,4 +1,4 @@
-import { GOODS, getGood, SHIP_PARTS_GOOD_ID } from '../data/goods.js'
+import { GOODS, getGood, SHIP_PARTS_GOOD_ID, isBuyableTradeGood } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { findBody } from '../procgen/galaxy.js'
 import { getWeapon, BASE_WEAPON_ID, defaultLoadoutFor } from '../data/weapons.js'
@@ -29,6 +29,7 @@ function cargoLoad(cargo) {
 }
 
 export function buyGood(gameState, bodyId, goodId, quantity) {
+  if (!isBuyableTradeGood(goodId)) throw new Error('This good cannot be bought here — obtain it by probing')
   const shipClass = getShipClass(gameState.player.ship.classId)
   const cargo = gameState.player.ship.cargo
   if (cargoLoad(cargo) + quantity > shipClass.stats.cargoCapacity) throw new Error('Not enough cargo space')
@@ -307,9 +308,8 @@ export function sellStoredWeapon(gameState, bodyId, weaponId) {
 }
 
 // Swaps whatever's equipped at this hardpoint for a weapon sitting in this
-// same station's storage — the weapon that was equipped goes back into
-// storage (never destroyed), the same swap-not-discard pattern
-// activateStoredShip uses for ships.
+// station's storage *or* the ship's spareWeapons (wreck salvage). The weapon
+// that was equipped goes into station storage (never destroyed).
 export function equipWeapon(gameState, bodyId, hardpointId, weaponId) {
   const ship = gameState.player.ship
   const shipClass = getShipClass(ship.classId)
@@ -320,16 +320,46 @@ export function equipWeapon(gameState, bodyId, hardpointId, weaponId) {
   if (weapon.category !== mountType) throw new Error('That weapon does not fit this hardpoint')
 
   const storage = storageFor(gameState, bodyId)
-  if (!(storage.weapons[weaponId] > 0)) throw new Error('That weapon is not in storage here')
-
+  ship.spareWeapons ??= {}
   ship.equippedWeapons ??= {}
   const previousId = ship.equippedWeapons[hardpointId] ?? BASE_WEAPON_ID[mountType]
+  if (previousId === weaponId) return
 
-  storage.weapons[weaponId] -= 1
-  if (storage.weapons[weaponId] <= 0) delete storage.weapons[weaponId]
+  const fromStorage = (storage.weapons[weaponId] ?? 0) > 0
+  const fromSpare = (ship.spareWeapons[weaponId] ?? 0) > 0
+  if (!fromStorage && !fromSpare) throw new Error('That weapon is not available here')
+
+  if (fromStorage) {
+    storage.weapons[weaponId] -= 1
+    if (storage.weapons[weaponId] <= 0) delete storage.weapons[weaponId]
+  } else {
+    ship.spareWeapons[weaponId] -= 1
+    if (ship.spareWeapons[weaponId] <= 0) delete ship.spareWeapons[weaponId]
+  }
   storage.weapons[previousId] = (storage.weapons[previousId] ?? 0) + 1
-
   ship.equippedWeapons[hardpointId] = weaponId
+}
+
+// Sell a salvaged spare weapon from the ship (shipyard only in the UI).
+export function sellCarriedWeapon(gameState, weaponId) {
+  const ship = gameState.player.ship
+  ship.spareWeapons ??= {}
+  if (!(ship.spareWeapons[weaponId] > 0)) throw new Error('No such weapon on board')
+  ship.spareWeapons[weaponId] -= 1
+  if (ship.spareWeapons[weaponId] <= 0) delete ship.spareWeapons[weaponId]
+  gameState.player.credits += Math.round(getWeapon(weaponId).price * WEAPON_RESALE_FRACTION)
+}
+
+// Move all spare weapons into this station's storage (optional stash).
+export function storeCarriedWeapons(gameState, bodyId) {
+  const ship = gameState.player.ship
+  ship.spareWeapons ??= {}
+  const storage = storageFor(gameState, bodyId)
+  for (const [weaponId, qty] of Object.entries(ship.spareWeapons)) {
+    if (qty <= 0) continue
+    storage.weapons[weaponId] = (storage.weapons[weaponId] ?? 0) + qty
+  }
+  ship.spareWeapons = {}
 }
 
 export { GOODS }

@@ -75,7 +75,7 @@ export function createInventoryUI(container, gameState) {
       <h3>Mining Hold (${oreRows.reduce((a, [, q]) => a + q, 0)}/${shipClass.stats.miningCapacity})</h3>
       ${oreRows.length ? `<table><tbody>${oreRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Empty</div>'}
       <h3>Ship Parts</h3>
-      <p>Carried: ${ship.shipParts ?? 0} — each repairs 10% of max hull/armor. Usable anywhere, unlike station repair.</p>
+      <p>Carried: ${ship.shipParts ?? 0} — each repairs 10% of max hull/armour. Usable anywhere, unlike station repair.</p>
       <button class="use-part" ${(ship.shipParts ?? 0) <= 0 ? 'disabled' : ''}>Use 1 Ship Part</button>
       <h3>Remote Assets</h3>
       ${remoteEntries.length ? remoteEntries.map(([bodyId, s]) => {

@@ -8,7 +8,11 @@ import { getWeapon, BASE_WEAPON_ID } from '../data/weapons.js'
 
 const HIT_RADIUS = 1.5
 const SHIELD_REGEN_DELAY_S = 4
+// NPC combat regen (points per second after idle delay).
 const SHIELD_REGEN_RATE = 10
+// Player: 1% of max shields every 10s while out of combat.
+const PLAYER_SHIELD_REGEN_FRACTION = 0.01
+const PLAYER_SHIELD_REGEN_PERIOD_S = 10
 
 const ATTACK_RANGE = 250
 const DISENGAGE_RANGE = 375
@@ -53,11 +57,17 @@ export function applyDamage(entity, amount, simTime = null) {
   if (entity.hull <= 0 && 'destroyed' in entity) entity.destroyed = true
 }
 
-export function regenShields(entity, shipClass, simTime, dt) {
+// opts.player + opts.inCombat: player only regens out of combat at 1%/10s.
+// NPCs keep the faster point-based combat regen.
+export function regenShields(entity, shipClass, simTime, dt, { player = false, inCombat = false } = {}) {
+  if (player && inCombat) return
   const idleSeconds = simTime - (entity.lastHitAt ?? -Infinity)
-  if (idleSeconds > SHIELD_REGEN_DELAY_S) {
-    entity.shields = Math.min(shipClass.stats.shields, entity.shields + SHIELD_REGEN_RATE * dt)
-  }
+  if (idleSeconds <= SHIELD_REGEN_DELAY_S) return
+  const max = shipClass.stats.shields
+  const rate = player
+    ? (max * PLAYER_SHIELD_REGEN_FRACTION) / PLAYER_SHIELD_REGEN_PERIOD_S
+    : SHIELD_REGEN_RATE
+  entity.shields = Math.min(max, entity.shields + rate * dt)
 }
 
 // weaponTypeFilter (optional) restricts firing to hardpoints of that type —
@@ -176,7 +186,9 @@ export function updateProjectiles(gameState, dt, onHit) {
         // projectile) leaves a lootable wreck — an NPC-vs-NPC kill or a
         // suicide ram don't count, per its own design.
         if (proj.ownerId === 'player' && target.destroyed) {
-          gameState.wrecks.push(spawnWreck(newPos.toArray(), gameState.simTime, Math.random))
+          gameState.wrecks.push(
+            spawnWreck(newPos.toArray(), gameState.simTime, Math.random, target.shipClassId ?? target.classId)
+          )
         }
         onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, weaponId: proj.weaponId, destroyed: !!target.destroyed })
         hit = true

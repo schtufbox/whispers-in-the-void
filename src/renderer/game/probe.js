@@ -1,5 +1,7 @@
+import { SURVEY_DATA_GOOD_ID } from '../data/goods.js'
+
 export const PROBE_FIND_CHANCE = 0.08
-export const SURVEY_DATA_GOOD_ID = 'survey_data'
+export { SURVEY_DATA_GOOD_ID }
 
 // A find still respects cargo capacity like any other good, so a full hold
 // can miss out on a discovery rather than silently exceeding capacity.

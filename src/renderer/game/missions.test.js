@@ -5,10 +5,13 @@ import {
   missionNavTarget,
   missionMarkedSystemIds,
   setWaypointForMission,
-  updateMissionProgress
+  updateMissionProgress,
+  resolveInvestigationProbe,
+  ensureBountyNpcsForSystem
 } from './missions.js'
 import { createGameState } from './state.js'
 import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
+import { findBody } from '../procgen/galaxy.js'
 
 function freshState(seed = 7) {
   return createGameState({
@@ -17,6 +20,13 @@ function freshState(seed = 7) {
     shipClassId: STARTER_SHIP_CLASS_ID,
     seed
   })
+}
+
+function acceptInvestigation(gs) {
+  const mission = gs.missions.available.find((m) => m.type === 'investigation')
+  assert.ok(mission, 'need an investigation mission in seed')
+  acceptMission(gs, mission.id, Math.random)
+  return mission
 }
 
 test('missionNavTarget points at objective body, then giver on complete', () => {
@@ -59,19 +69,75 @@ test('setWaypointForMission tracks body objectives', () => {
   assert.equal(gs.player.waypointBodyId, mission.target.bodyId)
   assert.equal(gs.player.waypointPosition, null)
 
-  // Force complete via visited so turn-in waypoint flips
-  if (!gs.visitedBodyIds.includes(mission.target.bodyId)) gs.visitedBodyIds.push(mission.target.bodyId)
-  updateMissionProgress(gs)
+  // Force complete per type so turn-in waypoint flips
   if (mission.type === 'probe') {
     if (!gs.probedBodyIds.includes(mission.target.bodyId)) gs.probedBodyIds.push(mission.target.bodyId)
-    updateMissionProgress(gs)
+  } else if (mission.type === 'investigation') {
+    mission.objectiveComplete = true
+  } else {
+    if (!gs.visitedBodyIds.includes(mission.target.bodyId)) gs.visitedBodyIds.push(mission.target.bodyId)
   }
-  // Exploration/investigation complete via visit; probe needs probe list
-  if (mission.type === 'exploration' || mission.type === 'investigation' || mission.objectiveComplete) {
-    // re-track
-    if (mission.objectiveComplete) {
-      setWaypointForMission(gs, mission.id)
-      assert.equal(gs.player.waypointBodyId, mission.giverStationId)
-    }
+  updateMissionProgress(gs)
+  if (mission.objectiveComplete) {
+    setWaypointForMission(gs, mission.id)
+    assert.equal(gs.player.waypointBodyId, mission.giverStationId)
   }
+})
+
+test('investigation intel probe completes the objective', () => {
+  const gs = freshState(13)
+  const mission = acceptInvestigation(gs)
+  const bodyId = mission.target.bodyId
+  // Always intel: roll 0 with leads=0 → intel branch
+  const result = resolveInvestigationProbe(gs, bodyId, () => 0)
+  assert.equal(result.kind, 'intel')
+  assert.equal(mission.objectiveComplete, true)
+})
+
+test('investigation hostile probe requires a kill', () => {
+  const gs = freshState(17)
+  const mission = acceptInvestigation(gs)
+  const bodyId = mission.target.bodyId
+  // roll in [0.4, 0.7) → hostile
+  const result = resolveInvestigationProbe(gs, bodyId, () => 0.5)
+  assert.equal(result.kind, 'hostile')
+  assert.equal(mission.objectiveComplete, false)
+  assert.equal(mission.target.kind, 'npcShip')
+  assert.ok(gs.npcs.some((n) => n.id === mission.target.npcId))
+
+  updateMissionProgress(gs)
+  assert.equal(mission.objectiveComplete, false)
+
+  const npc = gs.npcs.find((n) => n.id === mission.target.npcId)
+  npc.destroyed = true
+  updateMissionProgress(gs)
+  assert.equal(mission.objectiveComplete, true)
+})
+
+test('investigation lead retargets to another probeable body', () => {
+  const gs = freshState(19)
+  const mission = acceptInvestigation(gs)
+  const oldBodyId = mission.target.bodyId
+  const oldReward = mission.reward
+  // roll >= 0.7 → lead
+  const result = resolveInvestigationProbe(gs, oldBodyId, () => 0.85)
+  assert.equal(result.kind, 'lead')
+  assert.equal(mission.objectiveComplete, false)
+  assert.equal(mission.target.kind, 'body')
+  assert.notEqual(mission.target.bodyId, oldBodyId)
+  assert.ok(findBody(gs.galaxy, mission.target.bodyId))
+  assert.equal(mission.leads, 1)
+  assert.equal(mission.reward, Math.round(oldReward * 1.05))
+  assert.ok(mission.log?.some((e) => e.kind === 'lead'))
+})
+
+test('investigation hostiles re-materialize after system re-entry', () => {
+  const gs = freshState(23)
+  const mission = acceptInvestigation(gs)
+  resolveInvestigationProbe(gs, mission.target.bodyId, () => 0.5)
+  assert.equal(mission.target.kind, 'npcShip')
+  const systemId = mission.target.systemId
+  gs.npcs = []
+  ensureBountyNpcsForSystem(gs, systemId, Math.random)
+  assert.ok(gs.npcs.some((n) => n.id === mission.target.npcId))
 })

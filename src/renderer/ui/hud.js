@@ -131,13 +131,17 @@ const STYLE = `
 const HINTS = [
   ['Space', 'Flight Mode'],
   ['Tab', 'Target'],
-  ['R', 'Mining Mode'],
-  ['I', 'Inventory'],
+  ['W/S', 'Throttle'],
+  ['A/D', 'Strafe'],
+  ['X/Z', 'Up/Down'],
+  ['Q/E', 'Roll'],
+  ['R', 'Mining'],
+  ['I', 'Inv'],
   ['J', 'Missions'],
   ['F', 'Dock'],
   ['P', 'Probe'],
-  ['M', 'Navigation'],
-  ['C', 'Supercruise'],
+  ['M', 'Nav'],
+  ['C', 'Cruise'],
   ['Esc', 'Pause']
 ]
 
@@ -165,7 +169,7 @@ export function createHud(container) {
         <div class="bar"><div class="fill"></div></div>
       </div>
       <div class="row armor">
-        <div class="row-label"><span>Armor</span><span class="value"></span></div>
+        <div class="row-label"><span>Armour</span><span class="value"></span></div>
         <div class="bar"><div class="fill"></div></div>
       </div>
       <div class="row hull">

@@ -1,8 +1,8 @@
-import { GOODS, MINED_ORE_GOOD_IDS, SHIP_PARTS_GOOD_ID, getGood } from '../data/goods.js'
+import { GOODS, MINED_ORE_GOOD_IDS, SHIP_PARTS_GOOD_ID, SURVEY_DATA_GOOD_ID, getGood } from '../data/goods.js'
 import {
   getPrice, buyGood, sellGood, sellMinedOre, buyMinedOre, buyShipParts, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip, storeCargo, retrieveCargo, storeOre, retrieveOre, storeShipParts, retrieveShipParts,
-  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon
+  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon, sellCarriedWeapon, storeCarriedWeapons
 } from '../game/economy.js'
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
 import { WEAPONS, BASE_WEAPON_ID, getWeapon, weaponsForCategory } from '../data/weapons.js'
@@ -149,6 +149,14 @@ export function createDockingUI(container, gameState, rng) {
         <tbody>${GOODS.filter((g) => !MINED_ORE_GOOD_IDS.includes(g.id) && g.id !== SHIP_PARTS_GOOD_ID).map((g) => {
           const price = getPrice(gameState, currentBody.id, g.id)
           const held = gameState.player.ship.cargo[g.id] ?? 0
+          // Survey data: probe-only — show sell row only when carried, never Buy.
+          if (g.id === SURVEY_DATA_GOOD_ID) {
+            if (held <= 0) return ''
+            return `<tr>
+              <td>${g.name}</td><td>${price}cr</td><td>${held}</td>
+              <td><button class="sell" data-good="${g.id}">Sell 1</button></td>
+            </tr>`
+          }
           return `<tr>
             <td>${g.name}</td><td>${price}cr</td><td>${held}</td>
             <td><button class="buy" data-good="${g.id}">Buy 1</button><button class="sell" data-good="${g.id}">Sell 1</button></td>
@@ -170,7 +178,7 @@ export function createDockingUI(container, gameState, rng) {
       </table>
       ${currentBody.hasShipParts ? `
       <h3>Ship Parts</h3>
-      <p>Carried: ${ship.shipParts ?? 0} — repairs 10% of hull/armor damage each when used from the Inventory (I) screen.</p>
+      <p>Carried: ${ship.shipParts ?? 0} — repairs 10% of hull/armour damage each when used from the Inventory (I) screen.</p>
       <button class="buy-parts">Buy 1 (${getPrice(gameState, currentBody.id, SHIP_PARTS_GOOD_ID)}cr)</button>` : ''}
     `
     contentEl.querySelector('.buy-parts')?.addEventListener('click', () => {
@@ -228,7 +236,7 @@ export function createDockingUI(container, gameState, rng) {
   // between "browsing a ship for sale" and "the ship you currently fly" so
   // both read identically.
   const SHIP_STAT_ROWS = [
-    ['hull', 'Hull'], ['shields', 'Shields'], ['armor', 'Armor'],
+    ['hull', 'Hull'], ['shields', 'Shields'], ['armor', 'Armour'],
     ['cargoCapacity', 'Cargo Capacity'], ['miningCapacity', 'Mining Capacity'],
     ['speed', 'Speed'], ['turnRate', 'Turn Rate'], ['accel', 'Acceleration']
   ]
@@ -262,7 +270,7 @@ export function createDockingUI(container, gameState, rng) {
     const repairCostHere = canRepairHere ? repairCost(gameState, currentBody) : 0
     const repairSection = canRepairHere
       ? `<div class="repair-row">
-          Hull: ${Math.round(ship.hull)}/${shipClass.stats.hull} | Armor: ${Math.round(ship.armor)}/${shipClass.stats.armor}
+          Hull: ${Math.round(ship.hull)}/${shipClass.stats.hull} | Armour: ${Math.round(ship.armor)}/${shipClass.stats.armor}
           <button class="repair-btn" ${repairCostHere === 0 ? 'disabled' : ''}>${repairCostHere === 0 ? 'Fully Repaired' : `Repair Ship (${repairCostHere}cr)`}</button>
         </div>`
       : ''
@@ -271,9 +279,10 @@ export function createDockingUI(container, gameState, rng) {
     // gating as buying/selling ships — a settlement's repair bay doesn't
     // stock hardpoint weapons.
     const storageWeapons = currentBody.hasShipyard ? (gameState.stationStorage[currentBody.id]?.weapons ?? {}) : {}
+    const spareWeapons = ship.spareWeapons ?? {}
     const armorySection = currentBody.hasShipyard
       ? `
-        <h3>Armory</h3>
+        <h3>Armoury</h3>
         <table>
           <thead><tr><th>Weapon</th><th>Category</th><th>Damage</th><th>Price</th><th>In Storage</th><th></th></tr></thead>
           <tbody>${WEAPONS.map((w) => `
@@ -290,12 +299,14 @@ export function createDockingUI(container, gameState, rng) {
             const equippedId = ship.equippedWeapons?.[hp.id] ?? BASE_WEAPON_ID[mountType]
             const options = weaponsForCategory(mountType).map((w) => {
               const isEquipped = w.id === equippedId
-              const owned = isEquipped || (storageWeapons[w.id] ?? 0) > 0
-              const label = isEquipped
-                ? `${w.name} (equipped)`
-                : owned
-                  ? `${w.name} (${storageWeapons[w.id]} in storage)`
-                  : `${w.name} (none in storage)`
+              const inStorage = storageWeapons[w.id] ?? 0
+              const onShip = spareWeapons[w.id] ?? 0
+              const owned = isEquipped || inStorage > 0 || onShip > 0
+              const bits = []
+              if (isEquipped) bits.push('equipped')
+              if (inStorage > 0) bits.push(`${inStorage} storage`)
+              if (onShip > 0) bits.push(`${onShip} salvaged`)
+              const label = bits.length ? `${w.name} (${bits.join(', ')})` : `${w.name} (none available)`
               return `<option value="${w.id}" ${isEquipped ? 'selected' : ''} ${!owned ? 'disabled' : ''}>${label}</option>`
             }).join('')
             return `<tr>
@@ -398,6 +409,7 @@ export function createDockingUI(container, gameState, rng) {
     const cargoRows = Object.entries(storage.cargo).filter(([, qty]) => qty > 0)
     const oreRows = Object.entries(storage.miningHold).filter(([, qty]) => qty > 0)
     const weaponRows = Object.entries(storage.weapons ?? {}).filter(([, qty]) => qty > 0)
+    const spareWeaponRows = Object.entries(ship.spareWeapons ?? {}).filter(([, qty]) => qty > 0)
 
     contentEl.innerHTML = `
       <p style="opacity:0.7;font-size:12px;">Storage is per-station — anything left here can only be picked up again at ${currentBody.name}.</p>
@@ -412,7 +424,21 @@ export function createDockingUI(container, gameState, rng) {
       <h3>Ship Parts</h3>
       <div class="credits">Carried: ${ship.shipParts ?? 0} | In storage: ${storage.shipParts ?? 0}</div>
       <button class="store-parts">Store All</button><button class="retrieve-parts">Retrieve All</button>
-      <h3>Weapons</h3>
+      <h3>Salvaged Weapons (on ship)</h3>
+      ${spareWeaponRows.length ? `
+      <table>
+        <thead><tr><th>Weapon</th><th>Carried</th><th></th></tr></thead>
+        <tbody>${spareWeaponRows.map(([id, qty]) => `
+          <tr>
+            <td>${getWeapon(id).name}</td><td>${qty}</td>
+            <td>
+              <button class="sell-carried-weapon" data-weapon="${id}">Sell (${Math.round(getWeapon(id).price * 0.5)}cr)</button>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>
+      <button class="store-weapons">Store All Salvaged Weapons Here</button>
+      <p style="opacity:0.65;font-size:11px;">Equip salvaged weapons from the Shipyard Loadout tab.</p>` : '<p>No salvaged weapons on board. Rare wreck drops may yield hardpoint weapons.</p>'}
+      <h3>Weapons (station storage)</h3>
       ${weaponRows.length ? `
       <table>
         <thead><tr><th>Weapon</th><th>In Storage</th><th></th></tr></thead>
@@ -459,6 +485,20 @@ export function createDockingUI(container, gameState, rng) {
         renderStorage()
       })
     )
+    contentEl.querySelectorAll('.sell-carried-weapon').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        try {
+          sellCarriedWeapon(gameState, btn.dataset.weapon)
+        } catch (err) {
+          alert(err.message)
+        }
+        renderStorage()
+      })
+    )
+    contentEl.querySelector('.store-weapons')?.addEventListener('click', () => {
+      storeCarriedWeapons(gameState, currentBody.id)
+      renderStorage()
+    })
     contentEl.querySelectorAll('.rename-stored').forEach((btn) =>
       btn.addEventListener('click', () => {
         const index = Number(btn.dataset.index)

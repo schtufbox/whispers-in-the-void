@@ -95,8 +95,8 @@ export function createNavMap(container, gameState) {
         <button class="close">Close</button>
       </div>
       <div class="tabs">
-        <button data-tab="galaxy" class="tab active">Galaxy Map</button>
-        <button data-tab="system" class="tab">Current System</button>
+        <button data-tab="system" class="tab active">Current System</button>
+        <button data-tab="galaxy" class="tab">Galaxy Map</button>
       </div>
       <div class="tab-content"></div>
     </div>
@@ -105,7 +105,7 @@ export function createNavMap(container, gameState) {
 
   const contentEl = root.querySelector('.tab-content')
   const tabButtons = [...root.querySelectorAll('.tab')]
-  let currentTab = 'galaxy'
+  let currentTab = 'system'
   let selectedSystemId = null
   let hoveredSystemId = null
 
@@ -352,9 +352,9 @@ export function createNavMap(container, gameState) {
       onJumpCallback = onJump
       onCloseCallback = onClose
       selectedSystemId = null
-      currentTab = 'galaxy'
-      tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'galaxy'))
-      renderGalaxyTab()
+      currentTab = 'system'
+      tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'system'))
+      renderSystemTab()
       root.style.display = 'flex'
     },
     hide() {

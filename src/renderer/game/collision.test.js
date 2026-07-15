@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveBodyCollisions } from './collision.js'
+import { resolveBodyCollisions, trySupercruiseTunnel } from './collision.js'
 
 test('flying into a planet pushes the ship back to the surface and cancels inward velocity', () => {
   const planet = { kind: 'planet', position: [0, 0, 100], radius: 20 }
@@ -34,4 +34,26 @@ test('kinds without a defined collision radius (e.g. asteroid fields missing rad
   const shipState = { position: [0, 0, 0], velocity: [0, 0, 1] }
   resolveBodyCollisions(shipState, [weird], 5)
   assert.deepEqual(shipState.position, [0, 0, 0])
+})
+
+test('supercruise tunnel exits the far side of a body along travel direction', () => {
+  const planet = { id: 'p1', kind: 'planet', position: [0, 0, 100], radius: 40 }
+  const shipState = {
+    position: [0, 0, 70],
+    velocity: [0, 0, 80],
+    quaternion: [0, 0, 0, 1]
+  }
+  const event = trySupercruiseTunnel(shipState, [planet], 5)
+  assert.ok(event, 'should tunnel when overlapping')
+  assert.ok(shipState.position[2] > planet.position[2], 'exit should be past the body center')
+  const dist = Math.hypot(...shipState.position.map((v, i) => v - planet.position[i]))
+  assert.ok(dist >= planet.radius + 5, 'exit should clear the collision shell')
+})
+
+test('supercruise tunnel ignores the destination body', () => {
+  const planet = { id: 'dest', kind: 'planet', position: [0, 0, 100], radius: 40 }
+  const shipState = { position: [0, 0, 70], velocity: [0, 0, 80], quaternion: [0, 0, 0, 1] }
+  const event = trySupercruiseTunnel(shipState, [planet], 5, 'dest')
+  assert.equal(event, null)
+  assert.deepEqual(shipState.position, [0, 0, 70])
 })

@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnWreck, pruneWrecks, lootWreck, WRECK_DESPAWN_S } from './wrecks.js'
+import { spawnWreck, pruneWrecks, lootWreck, WRECK_DESPAWN_S, WEAPON_DROP_CHANCE } from './wrecks.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
+import { WEAPONS } from '../data/weapons.js'
 
 test('spawnWreck rolls a small cargo drop, and rarely a ship part', () => {
   const wreck = spawnWreck([1, 2, 3], 0, () => 0.99) // high roll: last good, no ship part
@@ -13,21 +14,46 @@ test('spawnWreck rolls a small cargo drop, and rarely a ship part', () => {
   assert.equal(luckyWreck.loot.shipParts, 1)
 })
 
+test('spawnWreck can drop a paid weapon matching the destroyed ship class', () => {
+  // rng: first call cargo pick, second ship parts (>=0.15 skip), third weapon drop (<0.12), fourth pick weapon
+  let i = 0
+  const rolls = [0, 0.5, 0.01, 0.0]
+  const rng = () => rolls[Math.min(i++, rolls.length - 1)]
+  const wreck = spawnWreck([0, 0, 0], 0, rng, 'interceptor')
+  assert.ok(wreck.loot.weapons, 'expected weapon drop')
+  const [weaponId] = Object.keys(wreck.loot.weapons)
+  const weapon = WEAPONS.find((w) => w.id === weaponId)
+  assert.ok(weapon && weapon.price > 0, 'salvaged weapon should be a paid model')
+})
+
+test('spawnWreck weapon drop is rare without a lucky roll', () => {
+  // Always high rolls after cargo: no part, no weapon
+  const wreck = spawnWreck([0, 0, 0], 0, () => 0.99, 'interceptor')
+  assert.equal(wreck.loot.weapons, undefined)
+  assert.ok(WEAPON_DROP_CHANCE < 0.2)
+})
+
 test('pruneWrecks removes wrecks older than WRECK_DESPAWN_S', () => {
   const gameState = { simTime: WRECK_DESPAWN_S + 1, wrecks: [{ id: 'a', spawnedAt: 0 }, { id: 'b', spawnedAt: WRECK_DESPAWN_S + 0.5 }] }
   pruneWrecks(gameState)
   assert.deepEqual(gameState.wrecks.map((w) => w.id), ['b'])
 })
 
-test('lootWreck adds loot to cargo (capped by cargoCapacity) and removes the wreck', () => {
+test('lootWreck adds loot to cargo, spare weapons, and removes the wreck', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const gameState = {
-    player: { ship: { classId: STARTER_SHIP_CLASS_ID, cargo: {}, shipParts: 0 } },
-    wrecks: [{ id: 'w-1', position: [0, 0, 0], spawnedAt: 0, loot: { cargo: { grain: 2 }, shipParts: 1 } }]
+    player: { ship: { classId: STARTER_SHIP_CLASS_ID, cargo: {}, shipParts: 0, spareWeapons: {} } },
+    wrecks: [{
+      id: 'w-1',
+      position: [0, 0, 0],
+      spawnedAt: 0,
+      loot: { cargo: { grain: 2 }, shipParts: 1, weapons: { rapid_laser: 1 } }
+    }]
   }
   lootWreck(gameState, shipClass, 'w-1')
   assert.equal(gameState.player.ship.cargo.grain, 2)
   assert.equal(gameState.player.ship.shipParts, 1)
+  assert.equal(gameState.player.ship.spareWeapons.rapid_laser, 1)
   assert.equal(gameState.wrecks.length, 0)
 
   assert.throws(() => lootWreck(gameState, shipClass, 'w-1'), /no longer there/)

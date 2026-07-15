@@ -1,4 +1,16 @@
-import { spawnNpcWithClass } from './spawner.js'
+import { spawnNpc, spawnNpcWithClass } from './spawner.js'
+import { pick } from '../procgen/prng.js'
+import { coreFraction, findBody, getSystem } from '../procgen/galaxy.js'
+
+const PROBEABLE_KINDS = ['planet', 'moon', 'asteroidField']
+// ponytail: hard cap so a lead chain always terminates; raise only if trails feel short
+const MAX_INVESTIGATION_LEADS = 2
+const LEAD_REWARD_MULT = 1.05
+
+function pushMissionLog(mission, gameState, kind, text) {
+  mission.log ??= []
+  mission.log.push({ kind, text, simTime: gameState.simTime ?? 0 })
+}
 
 export function acceptMission(gameState, missionId, rng) {
   const mission = gameState.missions.available.find((m) => m.id === missionId)
@@ -20,13 +32,12 @@ export function acceptMission(gameState, missionId, rng) {
   }
 }
 
-// Bounty target ships are never persisted or carried between systems (NPCs
-// are ephemeral, per the save/encounter design) — this re-materializes the
-// target for any active, incomplete bounty whose system the player has just
-// entered (via load or hyperspace), so leaving and coming back still works.
+// Re-materialize any incomplete mission with an npcShip target in this system
+// (bounties + investigation hostiles). NPCs are never persisted.
 export function ensureBountyNpcsForSystem(gameState, systemId, rng) {
   for (const mission of gameState.missions.active) {
-    if (mission.type !== 'bounty' || mission.objectiveComplete) continue
+    if (mission.objectiveComplete) continue
+    if (mission.target.kind !== 'npcShip') continue
     if (mission.target.systemId !== systemId) continue
     if (gameState.npcs.some((n) => n.id === mission.target.npcId)) continue
 
@@ -51,17 +62,132 @@ export function markBodyProbed(gameState, bodyId) {
   if (!gameState.probedBodyIds.includes(bodyId)) gameState.probedBodyIds.push(bodyId)
 }
 
+function pickInvestigationLead(gameState, mission, rng) {
+  const currentSystem = getSystem(gameState.galaxy, mission.target.systemId)
+  if (!currentSystem) return null
+
+  const candidates = []
+  for (const body of currentSystem.bodies) {
+    if (!PROBEABLE_KINDS.includes(body.kind)) continue
+    if (body.id === mission.target.bodyId) continue
+    candidates.push({ system: currentSystem, body })
+  }
+
+  // Same-system trail first; spill into neighbors only if this system is dry.
+  if (!candidates.length) {
+    for (const neighborId of currentSystem.neighborIds) {
+      const system = getSystem(gameState.galaxy, neighborId)
+      if (!system) continue
+      for (const body of system.bodies) {
+        if (!PROBEABLE_KINDS.includes(body.kind)) continue
+        candidates.push({ system, body })
+      }
+    }
+  }
+
+  if (!candidates.length) return null
+  return pick(rng, candidates)
+}
+
+// Probe hit an active investigation body objective. Outcomes: intel (done),
+// hostile (kill to finish), or lead (retarget body). Returns null if this
+// body isn't an open investigation target.
+export function resolveInvestigationProbe(gameState, bodyId, rng) {
+  const mission = gameState.missions.active.find(
+    (m) =>
+      m.type === 'investigation' &&
+      !m.objectiveComplete &&
+      m.target.kind === 'body' &&
+      m.target.bodyId === bodyId
+  )
+  if (!mission) return null
+
+  const leads = mission.leads ?? 0
+  const roll = rng()
+  // After the lead cap, always terminate (intel or hostile).
+  let kind
+  if (leads >= MAX_INVESTIGATION_LEADS) {
+    kind = roll < 0.5 ? 'intel' : 'hostile'
+  } else if (roll < 0.4) {
+    kind = 'intel'
+  } else if (roll < 0.7) {
+    kind = 'hostile'
+  } else {
+    kind = 'lead'
+  }
+
+  if (kind === 'lead') {
+    const next = pickInvestigationLead(gameState, mission, rng)
+    if (!next) {
+      kind = 'intel' // nowhere left to trail
+    } else {
+      mission.leads = leads + 1
+      mission.reward = Math.round(mission.reward * LEAD_REWARD_MULT)
+      mission.target = { kind: 'body', systemId: next.system.id, bodyId: next.body.id }
+      mission.title = `Investigate the signal near ${next.body.name} in ${next.system.name}`
+      if (gameState.player.waypointBodyId === bodyId) {
+        gameState.player.waypointBodyId = next.body.id
+      }
+      pushMissionLog(
+        mission,
+        gameState,
+        'lead',
+        `Signal relocated → ${next.body.name} · ${next.system.name} (+5% reward)`
+      )
+      return {
+        kind: 'lead',
+        mission,
+        bodyName: next.body.name,
+        systemName: next.system.name
+      }
+    }
+  }
+
+  if (kind === 'hostile') {
+    const system = getSystem(gameState.galaxy, mission.target.systemId)
+    const body = findBody(gameState.galaxy, bodyId)
+    const base = body?.position ?? gameState.player.ship.position
+    // Offset so the contact isn't buried in the body mesh.
+    const position = [base[0] + 80, base[1] + 20, base[2] + 40]
+    const npc = spawnNpc(rng, {
+      position,
+      faction: 'pirate',
+      coreFraction: system ? coreFraction(system) : 0
+    })
+    npc.missionId = mission.id
+    gameState.npcs.push(npc)
+    mission.target = {
+      kind: 'npcShip',
+      systemId: mission.target.systemId,
+      locationHint: [...position],
+      npcId: npc.id,
+      shipClassId: npc.shipClassId
+    }
+    if (gameState.player.waypointBodyId === bodyId) {
+      gameState.player.waypointBodyId = null
+      gameState.player.waypointPosition = [...position]
+    }
+    pushMissionLog(mission, gameState, 'hostile', 'Hostile contact stirred by the probe — eliminate to proceed')
+    return { kind: 'hostile', mission }
+  }
+
+  mission.objectiveComplete = true
+  pushMissionLog(mission, gameState, 'intel', 'Investigation data recovered — return to the mission giver')
+  return { kind: 'intel', mission }
+}
+
 export function updateMissionProgress(gameState) {
   for (const mission of gameState.missions.active) {
     if (mission.objectiveComplete) continue
-    if (mission.type === 'bounty') {
+    if (mission.target.kind === 'npcShip') {
       const npc = gameState.npcs.find((n) => n.id === mission.target.npcId)
       if (npc?.destroyed) mission.objectiveComplete = true
     } else if (mission.type === 'probe') {
       if (gameState.probedBodyIds.includes(mission.target.bodyId)) mission.objectiveComplete = true
-    } else {
+    } else if (mission.type === 'exploration') {
       if (gameState.visitedBodyIds.includes(mission.target.bodyId)) mission.objectiveComplete = true
     }
+    // investigation body phase: only resolveInvestigationProbe sets complete
   }
 }
 
@@ -78,8 +204,8 @@ export function turnInMission(gameState, missionId) {
 
 // Where the player should go next for an active mission: the objective
 // system/body while incomplete, or the giver station once ready to turn in.
-// Bounty objectives have no body — only a system + world position (live NPC
-// if spawned, else the original locationHint).
+// Bounty / investigation-hostile objectives have no body — only a system +
+// world position (live NPC if spawned, else the original locationHint).
 export function missionNavTarget(mission, gameState) {
   if (mission.objectiveComplete) {
     return {
@@ -97,7 +223,7 @@ export function missionNavTarget(mission, gameState) {
       position: null
     }
   }
-  // bounty
+  // npcShip (bounty or investigation hostile)
   let position = mission.target.locationHint
   if (mission.target.npcId && gameState.player.currentSystemId === mission.target.systemId) {
     const npc = gameState.npcs.find((n) => n.id === mission.target.npcId && !n.destroyed)

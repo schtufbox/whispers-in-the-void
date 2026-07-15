@@ -203,6 +203,6 @@ test('equipWeapon swaps a hardpoint\'s weapon with one in storage, returning the
   buyWeapon(gameState, 'agri-world', 'rocket_pod')
   assert.throws(() => equipWeapon(gameState, 'agri-world', hardpointId, 'rocket_pod'), /does not fit/)
 
-  // Equipping something not actually in storage here throws too.
-  assert.throws(() => equipWeapon(gameState, 'agri-world', hardpointId, 'plasma_cannon'), /not in storage/)
+  // Equipping something not in storage or salvage throws.
+  assert.throws(() => equipWeapon(gameState, 'agri-world', hardpointId, 'plasma_cannon'), /not available/)
 })

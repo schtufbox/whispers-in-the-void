@@ -54,6 +54,11 @@ const STYLE = `
   -webkit-background-clip: text; background-clip: text; color: transparent;
   animation: titleShift 6s linear infinite, titleGlow 5s ease-in-out infinite;
 }
+/* Second line sits under WHISPERS a bit smaller so the hierarchy reads clearly. */
+#main-menu h1 .line.line-sub {
+  font-size: 28px; letter-spacing: 8px; margin-top: 6px;
+  opacity: 0.92;
+}
 @keyframes titleShift { to { background-position: 300% center; } }
 /* A slow, shifting multi-color halo (nebula-gas feel) instead of a single
    static color pulse — drop-shadow (not box-shadow) so it hugs the glyphs. */
@@ -216,7 +221,7 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     </div>
     <div class="footer">DEEP-SPACE NAVIGATION INTERFACE // SIGNAL ACQUIRED</div>
     <div class="panel main-view">
-      <h1><span class="line" data-text="Whispers In The">Whispers In The</span><span class="line" data-text="Void">Void</span></h1>
+      <h1><span class="line" data-text="Whispers">Whispers</span><span class="line line-sub" data-text="In The Void">In The Void</span></h1>
       <div class="subtitle">A PROCEDURALLY GENERATED GALAXY</div>
       <button class="new-game menu-link"><span class="glitch-text" data-text="New Game">New Game</span></button>
       <button class="load-game menu-link"><span class="glitch-text" data-text="Load Game">Load Game</span></button>

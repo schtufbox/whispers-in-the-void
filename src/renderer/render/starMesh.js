@@ -101,27 +101,48 @@ const STAR_TYPE_PARAMS = {
 // as too small.)
 const STAR_SIZE_SCALE = 37.5
 
-// A big soft camera-facing glow — this, more than the corona shells, is what
-// makes a star read as blindingly bright rather than a lit ball. One shared
-// radial-gradient texture (lazy, same canvas technique as nebula.js — and
-// lazy for the same reason render/textures.js is: this module is imported
-// under plain no-DOM Node by test suites, which never build a mesh).
+// Soft multi-stop radial glow (lazy — tests import this module with no DOM).
+// Wider falloff than a hard disc so the corona reads as real solar atmosphere
+// rather than a flat billboard circle.
 let haloTexture = null
 function getHaloTexture() {
   if (haloTexture) return haloTexture
-  const size = 256
+  const size = 512
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = size
   const ctx = canvas.getContext('2d')
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
-  g.addColorStop(0, 'rgba(255,255,255,0.9)')
-  g.addColorStop(0.15, 'rgba(255,255,255,0.5)')
-  g.addColorStop(0.4, 'rgba(255,255,255,0.15)')
-  g.addColorStop(1, 'rgba(255,255,255,0)')
+  const c = size / 2
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c)
+  g.addColorStop(0, 'rgba(255,255,255,1)')
+  g.addColorStop(0.08, 'rgba(255,252,240,0.85)')
+  g.addColorStop(0.2, 'rgba(255,240,200,0.45)')
+  g.addColorStop(0.4, 'rgba(255,200,120,0.18)')
+  g.addColorStop(0.65, 'rgba(255,160,80,0.06)')
+  g.addColorStop(1, 'rgba(255,120,40,0)')
   ctx.fillStyle = g
   ctx.fillRect(0, 0, size, size)
   haloTexture = new THREE.CanvasTexture(canvas)
   return haloTexture
+}
+
+// Elongated soft streak for coronal streamers (drawn once, reused).
+let streamerTexture = null
+function getStreamerTexture() {
+  if (streamerTexture) return streamerTexture
+  const w = 64
+  const h = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  const g = ctx.createRadialGradient(w / 2, h * 0.15, 0, w / 2, h * 0.4, h * 0.55)
+  g.addColorStop(0, 'rgba(255,255,255,0.7)')
+  g.addColorStop(0.35, 'rgba(255,220,160,0.25)')
+  g.addColorStop(1, 'rgba(255,180,80,0)')
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, w, h)
+  streamerTexture = new THREE.CanvasTexture(canvas)
+  return streamerTexture
 }
 
 // Builds one star's core + corona shells inside its own group (so a binary
@@ -157,36 +178,109 @@ function buildSingleStar(type, rng) {
     buildTurbulentSurface(radius, offsets, coreColor, hotColor),
     new THREE.MeshBasicMaterial({ vertexColors: true, map: coreMap })
   )
+  core.frustumCulled = false
   group.add(core)
 
-  // Slightly tinted toward the star's own hue but mostly white-hot at the
-  // center (the sprite texture's core is near-white), sized well past the
-  // corona shells. A Sprite always faces the camera for free.
+  // Multi-layer soft glow: inner hot disc + wide outer atmosphere falloff.
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({
     map: getHaloTexture(),
     color,
     transparent: true,
-    opacity: 0.85,
+    opacity: 0.9,
     blending: THREE.AdditiveBlending,
-    depthWrite: false
+    depthWrite: false,
+    depthTest: true
   }))
-  halo.scale.setScalar(radius * 5)
+  const haloBase = radius * 4.2
+  halo.scale.setScalar(haloBase)
+  halo.frustumCulled = false
   group.add(halo)
 
-  // Corona shells need enough subdivision that the rim doesn't read as an
-  // octagon at STAR_SIZE_SCALE (detail 3 still showed clear facets on screen).
-  const coronaDetail = Math.max(4, detailForRadius(radius))
-  const corona1 = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(radius * params.corona1Scale, coronaDetail),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: params.corona1Opacity, blending: THREE.AdditiveBlending, depthWrite: false })
-  )
-  group.add(corona1)
+  const haloOuter = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: getHaloTexture(),
+    color: color.clone().lerp(new THREE.Color(1, 0.7, 0.35), 0.35),
+    transparent: true,
+    opacity: 0.35,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: true
+  }))
+  const haloOuterBase = radius * 7.5
+  haloOuter.scale.setScalar(haloOuterBase)
+  haloOuter.frustumCulled = false
+  group.add(haloOuter)
 
-  const corona2 = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(radius * params.corona2Scale, coronaDetail),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: params.corona2Opacity, blending: THREE.AdditiveBlending, depthWrite: false })
-  )
+  // Always-readable distant sun: a tight white-hot disc with a floor on
+  // angular size so the star stays a bright pinprick from the system rim.
+  const distantSpot = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: getHaloTexture(),
+    color: new THREE.Color(1, 0.98, 0.9),
+    transparent: true,
+    opacity: 1,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: true
+  }))
+  const distantSpotBase = radius * 1.6
+  distantSpot.scale.setScalar(distantSpotBase)
+  distantSpot.frustumCulled = false
+  group.add(distantSpot)
+
+  // Corona shells: higher detail + slight noise-scale so the rim isn't a
+  // perfect circle (real corona is structured, not a uniform bubble).
+  const coronaDetail = Math.max(5, detailForRadius(radius))
+  function buildCoronaShell(scale, opacity, colorMul) {
+    const geo = new THREE.IcosahedronGeometry(radius * scale, coronaDetail)
+    const pos = geo.attributes.position
+    const v = new THREE.Vector3()
+    for (let i = 0; i < pos.count; i++) {
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i))
+      const n = surfaceNoise(v.x / radius, v.y / radius, v.z / radius, offsets)
+      // Uneven limb: streamers bulge more at mid-latitudes of each facet.
+      const bump = 1 + n * 0.06 + Math.abs(v.y / (radius * scale)) * 0.03
+      v.multiplyScalar(bump)
+      pos.setXYZ(i, v.x, v.y, v.z)
+    }
+    pos.needsUpdate = true
+    geo.computeVertexNormals()
+    const mat = new THREE.MeshBasicMaterial({
+      color: color.clone().multiplyScalar(colorMul),
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+    return new THREE.Mesh(geo, mat)
+  }
+
+  const corona1 = buildCoronaShell(params.corona1Scale, params.corona1Opacity * 1.15, 1.05)
+  group.add(corona1)
+  const corona2 = buildCoronaShell(params.corona2Scale, params.corona2Opacity * 1.1, 0.95)
   group.add(corona2)
+  const corona3 = buildCoronaShell(params.corona2Scale * 1.22, params.corona2Opacity * 0.45, 0.75)
+  group.add(corona3)
+
+  // Coronal streamers — long soft sprites around the equator, slight random tilt.
+  const streamers = []
+  const streamerCount = 6 + Math.floor(rng() * 4)
+  for (let i = 0; i < streamerCount; i++) {
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: getStreamerTexture(),
+      color: color.clone().lerp(new THREE.Color(1, 0.85, 0.5), 0.4),
+      transparent: true,
+      opacity: 0.22 + rng() * 0.12,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    }))
+    const ang = (i / streamerCount) * Math.PI * 2 + rng() * 0.3
+    const reach = radius * (1.6 + rng() * 0.9)
+    spr.position.set(Math.cos(ang) * reach * 0.55, (rng() - 0.5) * radius * 0.35, Math.sin(ang) * reach * 0.55)
+    spr.scale.set(radius * (0.35 + rng() * 0.25), radius * (1.4 + rng() * 0.9), 1)
+    spr.material.rotation = ang + Math.PI / 2
+    group.add(spr)
+    streamers.push({ mesh: spr, phase: rng() * Math.PI * 2, speed: 0.15 + rng() * 0.2 })
+  }
 
   // Added at the star's local origin initially; updateStarMesh repositions
   // it every frame to just outside the core's near surface facing the
@@ -195,6 +289,7 @@ function buildSingleStar(type, rng) {
   const flare = buildLensFlare(color)
   group.add(flare)
 
+  group.frustumCulled = false
   return {
     group,
     radius,
@@ -203,8 +298,15 @@ function buildSingleStar(type, rng) {
     pulsePhase: rng() * Math.PI * 2,
     corona1,
     corona2,
+    corona3,
+    streamers,
     flare,
     halo,
+    haloOuter,
+    distantSpot,
+    haloBase,
+    haloOuterBase,
+    distantSpotBase,
     coreMap,
     // Slow, slightly diagonal texture drift — see updateStarMesh.
     mapDrift: [0.004 + rng() * 0.004, 0.002 + rng() * 0.003]
@@ -368,6 +470,7 @@ export function buildStarMesh(system, forceType = null) {
     group.userData.stars.push(star)
   }
 
+  group.frustumCulled = false
   return group
 }
 
@@ -376,6 +479,9 @@ export function buildStarMesh(system, forceType = null) {
 const flareWorldPos = new THREE.Vector3()
 const flareWorldScale = new THREE.Vector3()
 const flareTargetWorld = new THREE.Vector3()
+// Minimum angular size (radians) for the distant-sun spot so a star never
+// shrinks below a readable bright pinprick at the system rim.
+const DISTANT_SUN_MIN_ANGLE = 0.014
 
 // Slow rotation plus a gentle breathing pulse on the corona shells for every
 // star in the system (1, or 2 for a binary) — driven by gameState.simTime
@@ -397,6 +503,7 @@ export function updateStarMesh(mesh, elapsed, dt, camera) {
     star.group.rotation.y += star.spinSpeed * dt
     star.corona1.scale.setScalar(1 + Math.sin(elapsed * 0.6 + star.pulsePhase) * 0.07)
     star.corona2.scale.setScalar(1 + Math.sin(elapsed * 0.4 + star.pulsePhase + 1) * 0.11)
+    if (star.corona3) star.corona3.scale.setScalar(1 + Math.sin(elapsed * 0.28 + star.pulsePhase + 2) * 0.09)
     // Boiling-surface motion: this star's own cloned map drifts slowly, on
     // top of the group's spin — the two motions layered read as convecting
     // plasma rather than a static skin rotating.
@@ -404,22 +511,51 @@ export function updateStarMesh(mesh, elapsed, dt, camera) {
       star.coreMap.offset.x = elapsed * star.mapDrift[0]
       star.coreMap.offset.y = elapsed * star.mapDrift[1]
     }
-    // The halo breathes slightly out of phase with the coronas so the whole
-    // glow shimmers rather than pumping in lockstep.
-    if (star.halo) star.halo.material.opacity = 0.75 + 0.2 * Math.sin(elapsed * 1.3 + star.pulsePhase)
+    // Halo layers breathe out of phase so the atmosphere shimmers.
+    if (star.halo) star.halo.material.opacity = 0.78 + 0.18 * Math.sin(elapsed * 1.3 + star.pulsePhase)
+    if (star.haloOuter) star.haloOuter.material.opacity = 0.28 + 0.1 * Math.sin(elapsed * 0.7 + star.pulsePhase + 1)
+    if (star.streamers) {
+      for (const s of star.streamers) {
+        s.mesh.material.opacity = 0.14 + 0.12 * (0.5 + 0.5 * Math.sin(elapsed * s.speed + s.phase))
+        s.mesh.material.rotation += dt * 0.05
+      }
+    }
     if (star.orbit) {
       const angle = star.orbit.angle0 + elapsed * star.orbit.speed
       star.group.position.x = Math.cos(angle) * star.orbit.radius
       star.group.position.z = Math.sin(angle) * star.orbit.radius
     }
 
-    if (camera && star.flare) {
+    if (camera) {
       star.group.getWorldPosition(flareWorldPos)
-      star.group.getWorldScale(flareWorldScale)
-      flareTargetWorld.copy(camera.position).sub(flareWorldPos).normalize()
-      flareTargetWorld.multiplyScalar(star.radius * flareWorldScale.x * 1.02).add(flareWorldPos)
-      star.group.worldToLocal(flareTargetWorld)
-      star.flare.position.copy(flareTargetWorld)
+      const dist = Math.max(1, camera.position.distanceTo(flareWorldPos))
+      // Grow the distant spot so angular size never drops below the floor —
+      // reads as a bright pinprick that swells as you approach.
+      if (star.distantSpot) {
+        const minSize = dist * DISTANT_SUN_MIN_ANGLE
+        const size = Math.max(star.distantSpotBase ?? star.radius * 1.6, minSize)
+        star.distantSpot.scale.setScalar(size)
+        // Dim slightly when close so the real corona reads; full when far.
+        const close = Math.min(1, (star.radius * 8) / dist)
+        star.distantSpot.material.opacity = 0.55 + 0.45 * (1 - close * 0.7)
+      }
+      // Soft floor on main halo too so the star glow never fully vanishes.
+      if (star.halo && star.haloBase) {
+        const minHalo = dist * DISTANT_SUN_MIN_ANGLE * 2.2
+        star.halo.scale.setScalar(Math.max(star.haloBase, minHalo))
+      }
+      if (star.haloOuter && star.haloOuterBase) {
+        const minOuter = dist * DISTANT_SUN_MIN_ANGLE * 3.5
+        star.haloOuter.scale.setScalar(Math.max(star.haloOuterBase, minOuter))
+      }
+
+      if (star.flare) {
+        star.group.getWorldScale(flareWorldScale)
+        flareTargetWorld.copy(camera.position).sub(flareWorldPos).normalize()
+        flareTargetWorld.multiplyScalar(star.radius * flareWorldScale.x * 1.02).add(flareWorldPos)
+        star.group.worldToLocal(flareTargetWorld)
+        star.flare.position.copy(flareTargetWorld)
+      }
     }
   }
 

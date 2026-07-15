@@ -5,7 +5,7 @@ import { escapeHtml } from './escapeHtml.js'
 const STYLE = `
 #missions-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
 #missions-ui .panel {
-  width: 640px; max-height: 80vh; overflow-y: auto; padding: 18px 22px;
+  width: 700px; max-height: 80vh; overflow-y: auto; padding: 18px 22px;
   background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
   border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #ff8a3d;
   box-shadow: 0 0 26px rgba(255,138,61,0.18), inset 0 0 26px rgba(79,195,217,0.05);
@@ -16,7 +16,7 @@ const STYLE = `
 #missions-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 #missions-ui .empty { opacity: 0.5; font-size: 13px; line-height: 1.5; }
 #missions-ui .mission {
-  margin-bottom: 12px; padding: 12px 14px;
+  margin-bottom: 14px; padding: 12px 14px;
   background: rgba(8,12,22,0.55); border: 1px solid rgba(255,138,61,0.25);
   border-left: 3px solid #ff8a3d;
 }
@@ -26,6 +26,37 @@ const STYLE = `
 #missions-ui .mission .status { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin: 8px 0; }
 #missions-ui .mission .status.progress { color: #ffb07a; }
 #missions-ui .mission .status.ready { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
+#missions-ui .log {
+  margin: 10px 0 6px; padding: 8px 0 8px 12px;
+  border-left: 1px solid rgba(111,216,242,0.25);
+  position: relative;
+}
+#missions-ui .log-title {
+  font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+  color: #6fd8f2; opacity: 0.85; margin-bottom: 8px;
+}
+#missions-ui .log-entry {
+  position: relative; font-size: 11px; line-height: 1.45;
+  margin: 0 0 8px; padding-left: 14px; color: #b8d0e8;
+}
+#missions-ui .log-entry::before {
+  content: ''; position: absolute; left: -13px; top: 5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #4fc3d9; box-shadow: 0 0 6px rgba(79,195,217,0.7);
+}
+#missions-ui .log-entry.lead::before { background: #ffb07a; box-shadow: 0 0 6px rgba(255,176,122,0.7); }
+#missions-ui .log-entry.hostile::before { background: #e05a5a; box-shadow: 0 0 6px rgba(224,90,90,0.7); }
+#missions-ui .log-entry.intel::before { background: #7fe0a0; box-shadow: 0 0 6px rgba(127,224,160,0.7); }
+#missions-ui .log-entry .tag {
+  display: inline-block; font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  margin-right: 6px; opacity: 0.7;
+}
+#missions-ui .chain-badge {
+  display: inline-block; margin-left: 8px; padding: 1px 7px;
+  font-size: 10px; letter-spacing: 1px; color: #ffd0a8;
+  border: 1px solid rgba(255,138,61,0.45); border-radius: 2px;
+  background: rgba(255,138,61,0.1);
+}
 #missions-ui button.close {
   background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
   padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
@@ -54,6 +85,21 @@ function describeTarget(mission, gameState) {
     return `Objective: ${body?.name ?? t.bodyId} · ${systemName}`
   }
   return `Objective: hostile target · ${systemName}`
+}
+
+function renderLog(mission) {
+  const log = mission.log
+  if (!log?.length) return ''
+  return `
+    <div class="log">
+      <div class="log-title">Mission log</div>
+      ${log.map((e) => `
+        <div class="log-entry ${escapeHtml(e.kind)}">
+          <span class="tag">${escapeHtml(e.kind)}</span>${escapeHtml(e.text)}
+        </div>
+      `).join('')}
+    </div>
+  `
 }
 
 export function createMissionsUI(container, gameState) {
@@ -90,17 +136,22 @@ export function createMissionsUI(container, gameState) {
       <h3>Active (${active.length})</h3>
       ${active.map((m) => {
         const ready = m.objectiveComplete
+        const leads = m.leads ?? 0
+        const chain = m.type === 'investigation' && leads > 0
+          ? `<span class="chain-badge">Chain ×${leads}</span>`
+          : ''
         return `
           <div class="mission ${ready ? 'ready' : ''}">
-            <div class="title">${escapeHtml(m.title)}</div>
+            <div class="title">${escapeHtml(m.title)}${chain}</div>
             <div class="meta">${escapeHtml(m.type)} · Reward ${m.reward}cr</div>
             <div class="meta">${escapeHtml(describeTarget(m, gameState))}</div>
+            ${renderLog(m)}
             <div class="status ${ready ? 'ready' : 'progress'}">${ready ? 'Ready to turn in' : 'In progress'}</div>
             <button class="track" data-id="${m.id}">${ready ? 'Waypoint: Turn-In' : 'Set Waypoint'}</button>
           </div>
         `
       }).join('')}
-      <div class="footer-note">Galaxy map: orange ring on the objective system (or turn-in system when complete). In-system bodies are marked on the Current System list and radar.</div>
+      <div class="footer-note">Investigations: probe the target (P). Logs track leads, hostiles, and intel. Each lead raises the payout 5%.</div>
     `
 
     contentEl.querySelectorAll('.track').forEach((btn) =>

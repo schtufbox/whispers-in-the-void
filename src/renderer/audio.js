@@ -259,9 +259,18 @@ export function playClick() {
   tone({ type: 'square', freq: 700, duration: 0.05, peak: 0.08 })
 }
 
+// Long wind-up while "Hyperdrive engaged" speech plays — rising charge.
+export function playHyperspaceWindup() {
+  tone({ type: 'sine', freq: 90, freqEnd: 420, duration: 2.2, attack: 0.4, peak: 0.18 })
+  tone({ type: 'sawtooth', freq: 60, freqEnd: 280, duration: 2.0, attack: 0.5, peak: 0.08 })
+  noiseBurst({ duration: 2.0, filterFreq: 900, peak: 0.06 })
+  // Late punch into the jump corridor.
+  tone({ type: 'sine', freq: 200, freqEnd: 1800, duration: 0.85, attack: 0.05, peak: 0.26, delay: 2.0 })
+  noiseBurst({ duration: 0.7, filterFreq: 2400, peak: 0.16, delay: 2.05 })
+}
+
 export function playHyperspace() {
-  tone({ type: 'sine', freq: 200, freqEnd: 1600, duration: 0.9, attack: 0.3, peak: 0.22 })
-  noiseBurst({ duration: 0.9, filterFreq: 2200, peak: 0.12 })
+  playHyperspaceWindup()
 }
 
 // The mirror of playHyperspace — a high-to-low settling sweep plus a bassy
@@ -271,6 +280,47 @@ export function playHyperspaceArrival() {
   tone({ type: 'sine', freq: 1200, freqEnd: 150, duration: 0.5, attack: 0.02, peak: 0.24 })
   tone({ type: 'sine', freq: 70, freqEnd: 32, duration: 0.6, peak: 0.35 })
   noiseBurst({ duration: 0.4, filterFreq: 1800, peak: 0.15 })
+}
+
+// Supercruise body tunnel — Doppler warp whoosh as you punch through.
+export function playSupercruiseTunnel() {
+  tone({ type: 'sine', freq: 900, freqEnd: 180, duration: 0.45, attack: 0.01, peak: 0.28 })
+  tone({ type: 'sawtooth', freq: 1400, freqEnd: 220, duration: 0.35, peak: 0.12 })
+  noiseBurst({ duration: 0.35, filterFreq: 3200, peak: 0.22 })
+  noiseBurst({ duration: 0.15, filterFreq: 6000, peak: 0.18, drive: 2 })
+}
+
+// Side/vertical thruster chirp while strafing in 6DOF.
+let strafeNodes = null
+let strafeWanted = false
+
+export function setStrafeActive(active) {
+  ensureSfx()
+  if (active === strafeWanted) return
+  strafeWanted = active
+  if (!active) {
+    if (strafeNodes) {
+      stopSampleNodes(strafeNodes, 0.08)
+      strafeNodes = null
+    }
+    return
+  }
+  const nodes = playSample('thrust.ogg', { volume: 0.22, rate: 1.35, loop: true, fadeIn: 0.06 })
+  if (nodes) {
+    strafeNodes = nodes
+    return
+  }
+  // Synth fallback: short bright thruster hum.
+  const audioCtx = getContext()
+  const source = audioCtx.createOscillator()
+  const gain = audioCtx.createGain()
+  source.type = 'square'
+  source.frequency.value = 110
+  gain.gain.setValueAtTime(0, audioCtx.currentTime)
+  gain.gain.linearRampToValueAtTime(0.04, audioCtx.currentTime + 0.05)
+  source.connect(gain).connect(audioCtx.destination)
+  source.start()
+  strafeNodes = { source, gain, volume: 0.04 }
 }
 
 // Dock: metal clamp + bay door close + soft seal. Undock reverses the order.

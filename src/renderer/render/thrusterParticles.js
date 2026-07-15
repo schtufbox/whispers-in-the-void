@@ -71,6 +71,22 @@ export function createPuffEmitter(count, color, size, texture) {
         positions[i * 3 + 2] += velocities[i].z * dt
       }
       geometry.attributes.position.needsUpdate = true
+    },
+    // One-shot burst (supercruise tunnel, etc.) — fills several slots at once.
+    burst(originWorld, dirWorld, countBurst, speed, spread) {
+      points.visible = true
+      for (let n = 0; n < countBurst; n++) {
+        const i = nextIndex
+        nextIndex = (nextIndex + 1) % count
+        positions[i * 3] = originWorld.x + (Math.random() - 0.5) * spread
+        positions[i * 3 + 1] = originWorld.y + (Math.random() - 0.5) * spread
+        positions[i * 3 + 2] = originWorld.z + (Math.random() - 0.5) * spread
+        velocities[i]
+          .copy(dirWorld)
+          .multiplyScalar(speed * (0.5 + Math.random()))
+          .add(new THREE.Vector3((Math.random() - 0.5) * spread * 2, (Math.random() - 0.5) * spread * 2, (Math.random() - 0.5) * spread * 2))
+      }
+      geometry.attributes.position.needsUpdate = true
     }
   }
 }
@@ -104,8 +120,13 @@ function createStreakEmitter(count, color, length, radius) {
   return {
     mesh: group,
     update(dt, active, shipPos, shipQuat, rearZ, speed, travel, spreadRadius) {
-      group.visible = active
-      if (!active) return
+      if (!active) {
+        group.visible = false
+        // Reset so re-engage doesn't flash old trail positions.
+        for (let i = 0; i < meshes.length; i++) distances[i] = Math.random() * travel
+        return
+      }
+      group.visible = true
       for (let i = 0; i < meshes.length; i++) {
         distances[i] += dt * speed
         if (distances[i] > travel) {
@@ -116,41 +137,80 @@ function createStreakEmitter(count, color, length, radius) {
         meshes[i].position.copy(localPos).applyQuaternion(shipQuat).add(shipPos)
         meshes[i].quaternion.copy(shipQuat)
       }
+    },
+    stop() {
+      group.visible = false
     }
   }
 }
 
 // Three visually distinct effects sharing one group: a warm rear exhaust
 // puff while accelerating, a smaller cool-toned puff at the nose while
-// braking (a "front thruster fired to slow down" read), and elongated cyan
-// streaks trailing from the rear during supercruise — deliberately a
-// different technique (stretched cylinders, not round points) so it reads
-// as a different kind of effect, not just a recolored puff.
+// braking, side/vertical thruster jets (6DOF), elongated cyan streaks during
+// supercruise, and a one-shot tunnel burst for body pass-through.
 export function createThrusterEffects() {
   const texture = buildGlowTexture()
   const rearPuff = createPuffEmitter(28, 0xff8a3d, 2.6, texture)
   const frontPuff = createPuffEmitter(14, 0x7fe6ff, 1.6, texture)
+  const sidePuff = createPuffEmitter(20, 0xa0e8ff, 2.0, texture)
+  // Normal forward: short amber engine trails. Supercruise: long cyan rush.
+  const thrustStreaks = createStreakEmitter(8, 0xffa040, 7, 0.28)
   const cruiseStreaks = createStreakEmitter(10, 0x7fe6ff, 14, 0.35)
+  const tunnelBurst = createPuffEmitter(48, 0xc8f0ff, 8, texture)
 
   const group = new THREE.Group()
-  group.add(rearPuff.mesh, frontPuff.mesh, cruiseStreaks.mesh)
+  group.add(rearPuff.mesh, frontPuff.mesh, sidePuff.mesh, thrustStreaks.mesh, cruiseStreaks.mesh, tunnelBurst.mesh)
 
   const forward = new THREE.Vector3()
+  const right = new THREE.Vector3()
+  const up = new THREE.Vector3()
   const rearOrigin = new THREE.Vector3()
   const frontOrigin = new THREE.Vector3()
+  const sideOrigin = new THREE.Vector3()
+  const sideDir = new THREE.Vector3()
 
   return {
     group,
-    update(dt, { accelActive, brakeActive, cruiseActive, shipPos, shipQuat, hullLength }) {
+    update(dt, { accelActive, brakeActive, cruiseActive, strafeX = 0, strafeY = 0, shipPos, shipQuat, hullLength }) {
       const rearZ = -hullLength / 2
       const frontZ = hullLength / 2
+      const halfW = hullLength * 0.12
       forward.set(0, 0, 1).applyQuaternion(shipQuat)
+      right.set(1, 0, 0).applyQuaternion(shipQuat)
+      up.set(0, 1, 0).applyQuaternion(shipQuat)
       rearOrigin.set(0, 0, rearZ).applyQuaternion(shipQuat).add(shipPos)
       frontOrigin.set(0, 0, frontZ).applyQuaternion(shipQuat).add(shipPos)
 
       rearPuff.update(dt, accelActive, rearOrigin, forward.clone().negate(), 40, 20, 3)
       frontPuff.update(dt, brakeActive, frontOrigin, forward, 24, 12, 2)
-      cruiseStreaks.update(dt, cruiseActive, shipPos, shipQuat, rearZ, 70, 40, 2.5)
+      thrustStreaks.update(dt, accelActive && !cruiseActive, shipPos, shipQuat, rearZ, 40, 18, 1.6)
+      cruiseStreaks.update(dt, cruiseActive, shipPos, shipQuat, rearZ, 140, 70, 5)
+
+      const strafing = strafeX !== 0 || strafeY !== 0
+      if (strafing) {
+        sideDir.set(0, 0, 0)
+        if (strafeX) sideDir.addScaledVector(right, -strafeX)
+        if (strafeY) sideDir.addScaledVector(up, -strafeY)
+        if (sideDir.lengthSq() > 1e-6) sideDir.normalize()
+        sideOrigin.copy(shipPos).addScaledVector(right, strafeX * halfW).addScaledVector(up, strafeY * halfW * 0.6)
+      }
+      sidePuff.update(dt, strafing, sideOrigin, sideDir, 50, 28, 2.5)
+
+      // Keep tunnel particles drifting even when idle.
+      tunnelBurst.update(dt, false, shipPos, forward, 0, 0, 0)
+    },
+    stopCruiseStreaks() {
+      cruiseStreaks.stop()
+    },
+    playTunnelBurst(fromPos, toPos) {
+      const from = new THREE.Vector3(...fromPos)
+      const to = new THREE.Vector3(...toPos)
+      const dir = to.clone().sub(from)
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1)
+      else dir.normalize()
+      const mid = from.clone().lerp(to, 0.5)
+      tunnelBurst.burst(mid, dir, 36, 90, 18)
+      tunnelBurst.burst(from, dir, 12, 40, 10)
     }
   }
 }

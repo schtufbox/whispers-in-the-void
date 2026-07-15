@@ -45,3 +45,39 @@ export function resolveBodyCollisions(shipState, bodies, shipRadius) {
     }
   }
 }
+
+// Supercruise: instead of bouncing off a body, tunnel straight through along
+// travel direction and exit the far side. Destination body is left alone so
+// normal arrival still works. Returns event info for VFX/SFX, or null.
+export function trySupercruiseTunnel(shipState, bodies, shipRadius, destinationBodyId = null) {
+  const shipPos = new THREE.Vector3().fromArray(shipState.position)
+  const velocity = new THREE.Vector3().fromArray(shipState.velocity)
+  let dir = velocity.lengthSq() > 1e-4
+    ? velocity.clone().normalize()
+    : new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion().fromArray(shipState.quaternion))
+
+  for (const body of bodies) {
+    if (destinationBodyId && body.id === destinationBodyId) continue
+    const bodyRadius = collisionRadiusFor(body)
+    if (bodyRadius == null) continue
+
+    const bodyPos = new THREE.Vector3(...body.position)
+    const offset = shipPos.clone().sub(bodyPos)
+    const dist = offset.length()
+    const minDist = bodyRadius + shipRadius
+    if (dist >= minDist || dist === 0) continue
+
+    // Exit just past the far shell along travel dir.
+    const exitDist = bodyRadius + shipRadius + 24
+    const exit = bodyPos.clone().addScaledVector(dir, exitDist)
+    const from = shipPos.toArray()
+    shipState.position = exit.toArray()
+    // Keep cruise velocity; slight boost so you don't re-intersect next frame.
+    if (velocity.lengthSq() > 1e-4) {
+      velocity.setLength(Math.max(velocity.length(), 40))
+      shipState.velocity = velocity.toArray()
+    }
+    return { body, from, to: exit.toArray() }
+  }
+  return null
+}

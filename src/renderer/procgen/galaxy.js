@@ -8,47 +8,26 @@ const MAX_RADIUS = GALAXY_MAX_RADIUS
 const ARM_TWIST = 2.5
 const JITTER_ANGLE = 0.5
 const DISK_THICKNESS = 120
-// "~400% larger" solar systems per user request — one scale factor so the
-// local scatter radius and the arrival distance below stay consistent.
-// Bumped twice since (5 -> 7 -> 9) to give the increasingly bigger
-// planets/stars below more room to spread out without visually crowding.
-const SYSTEM_SIZE_SCALE = 9
-const SYSTEM_LOCAL_MIN_RADIUS = 300 * SYSTEM_SIZE_SCALE
-const SYSTEM_LOCAL_MAX_RADIUS = 1600 * SYSTEM_SIZE_SCALE
-// Planets/suns "400% bigger", then "another 200% bigger" (3x on top) per two
-// rounds of user request, moons scaled to suit both times — applied once
-// here since body.radius is both the render and collision size (see
-// game/collision.js). (Was 2.5/1.65, then 12.5/8.25 — each pass still read
-// as too small next to the ships/stations flying through it.)
+// Local system scatter. STAR_SIZE_SCALE (37.5) makes giants ~7500 radius with
+// corona ~1.9× — min orbit must clear that or planets spawn inside the sun.
+const SYSTEM_SIZE_SCALE = 18
+const SYSTEM_LOCAL_MIN_RADIUS = 900 * SYSTEM_SIZE_SCALE
+const SYSTEM_LOCAL_MAX_RADIUS = 2800 * SYSTEM_SIZE_SCALE
 const PLANET_SIZE_SCALE = 37.5
 const MOON_SIZE_SCALE = 24.75
-// Per-system variety so systems aren't all uniformly sized — drawn once per
-// system in generateGalaxy and threaded through to every body it contains
-// (planets, moons, and anything placed into it afterward: stations/
-// settlements/asteroid fields), plus the local scatter radius itself.
 const SYSTEM_SCALE_VARIANCE = [0.85, 1.15]
 const MOON_CHANCE = 0.23
 const MOON_ORBIT_MIN_RADIUS = 18
 const MOON_ORBIT_MAX_RADIUS = 45
-// Extra breathing room beyond the parent's + moon's own physical radii, so a
-// moon's orbit (a circle at a constant radius — see main.js's moonOrbits)
-// never sweeps through the parent planet's collision shell.
 const MOON_ORBIT_CLEARANCE_MARGIN = 6
-// Hyperspace only reaches "neighboring" systems (game/hyperspace.js checks
-// system.neighborIds) — crossing the galaxy means hopping system to system
-// rather than jumping anywhere freely. A fixed distance cutoff could strand
-// an outlier system with zero systems in range, so instead every system is
-// guaranteed exactly this many nearest-neighbor connections, made symmetric
-// (see computeNeighborLanes) so a reachable system can always be jumped back
-// from too.
+// Match game/collision.js station/settlement shells so orbits/surface sit clear.
+const STATION_CLEARANCE_RADIUS = 225
+const SETTLEMENT_CLEARANCE_RADIUS = 123.75
+const SETTLEMENT_SURFACE_MARGIN = 8
+// Vast majority of stations orbit a planet, moon, or the star; a tiny fraction drift alone.
+const STATION_FREE_DRIFT_CHANCE = 0.003
 const JUMP_NEIGHBOR_COUNT = 5
 
-// Ships always arrive/start at this fixed point relative to the system's
-// star (at local origin) — near the system's edge, facing the star (identity
-// quaternion + a position on -Z; see game/hyperspace.js). Far enough that
-// even the largest star (a giant, core radius up to ~500 post-scale — see
-// render/starMesh.js's STAR_SIZE_SCALE) reads as a backdrop rather than
-// something the camera spawns inside of.
 export const SYSTEM_ARRIVAL_POSITION = [0, 400, -SYSTEM_LOCAL_MAX_RADIUS * 0.95]
 
 function spiralPosition(rng, armIndex) {
@@ -60,10 +39,6 @@ function spiralPosition(rng, armIndex) {
   return [x, y, z]
 }
 
-// Bodies within a system are scattered locally around that system's own
-// origin (0,0,0) — this is the small-scale space the player actually flies
-// in with real-time flight; the galaxy-scale spiral position above is only
-// used for placing the system on the galaxy map.
 function localPosition(rng, systemScale) {
   const radius = range(rng, SYSTEM_LOCAL_MIN_RADIUS, SYSTEM_LOCAL_MAX_RADIUS) * systemScale
   const theta = rng() * Math.PI * 2
@@ -71,23 +46,41 @@ function localPosition(rng, systemScale) {
   return [radius * Math.sin(phi) * Math.cos(theta), radius * Math.cos(phi) * 0.3, radius * Math.sin(phi) * Math.sin(theta)]
 }
 
-// Moons orbit close to their parent planet rather than being scattered
-// anywhere in the system like other bodies. The orbit is a flat circle in
-// the XZ plane at a constant radius and a fixed height offset (main.js's
-// moonOrbits animates exactly this shape), so the XZ-plane radius — clamped
-// here to clear both bodies' physical radii plus a margin — is guaranteed
-// to clear the parent's collision shell for the entire orbit, not just at
-// generation time.
-function localPositionNearBody(rng, parentPosition, parentRadius, moonRadius) {
-  const clearance = parentRadius + moonRadius + MOON_ORBIT_CLEARANCE_MARGIN
-  const xzRadius = Math.max(clearance, range(rng, MOON_ORBIT_MIN_RADIUS, MOON_ORBIT_MAX_RADIUS))
+// Flat XZ-plane orbit around a host body (moons, orbiting stations).
+function localPositionNearBody(rng, parentPosition, parentRadius, ownClearance) {
+  const clearance = parentRadius + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
+  const xzRadius = Math.max(clearance, range(rng, Math.max(MOON_ORBIT_MIN_RADIUS, clearance), Math.max(MOON_ORBIT_MAX_RADIUS, clearance * 1.4)))
   const theta = rng() * Math.PI * 2
-  const y = range(rng, -MOON_ORBIT_MAX_RADIUS * 0.3, MOON_ORBIT_MAX_RADIUS * 0.3)
+  const y = range(rng, -xzRadius * 0.15, xzRadius * 0.15)
   return [
     parentPosition[0] + xzRadius * Math.cos(theta),
     parentPosition[1] + y,
     parentPosition[2] + xzRadius * Math.sin(theta)
   ]
+}
+
+// Station orbiting the system star (origin).
+function localPositionStarOrbit(rng, systemScale) {
+  const radius = range(rng, SYSTEM_LOCAL_MIN_RADIUS * 0.2, SYSTEM_LOCAL_MIN_RADIUS * 0.65) * systemScale
+  const theta = rng() * Math.PI * 2
+  const y = range(rng, -radius * 0.08, radius * 0.08)
+  return [radius * Math.cos(theta), y, radius * Math.sin(theta)]
+}
+
+// Settlement sits on a planet's surface (outside the collision shell).
+function localPositionOnPlanetSurface(rng, planet) {
+  const theta = rng() * Math.PI * 2
+  const phi = Math.acos(2 * rng() - 1)
+  const dist = planet.radius + SETTLEMENT_CLEARANCE_RADIUS + SETTLEMENT_SURFACE_MARGIN
+  const offset = [
+    dist * Math.sin(phi) * Math.cos(theta),
+    dist * Math.cos(phi),
+    dist * Math.sin(phi) * Math.sin(theta)
+  ]
+  return {
+    position: [planet.position[0] + offset[0], planet.position[1] + offset[1], planet.position[2] + offset[2]],
+    surfaceOffset: offset
+  }
 }
 
 function randomTags(rng) {
@@ -97,18 +90,11 @@ function randomTags(rng) {
   return [...tags]
 }
 
-function missionChance(rng, kind) {
-  if (kind === 'planet') return rng() < 0.4
-  if (kind === 'moon') return rng() < 0.15
-  if (kind === 'asteroidField') return false
-  return true
+// Missions only at dockable facilities (stations / settlements).
+function missionChance(kind) {
+  return kind === 'station' || kind === 'settlement'
 }
 
-// Physical size for kinds whose collision/visual radius varies per instance
-// (planets/moons render and collide at this exact radius; an asteroid
-// field's radius is both its rock-scatter spread and its collision size).
-// Stations/settlements don't need this — their mesh size never varies, so
-// game/collision.js just uses a fixed radius per kind for those.
 function radiusFor(rng, kind, systemScale) {
   if (kind === 'planet') return range(rng, 8, 21) * PLANET_SIZE_SCALE * systemScale
   if (kind === 'moon') return range(rng, 3, 8) * MOON_SIZE_SCALE * systemScale
@@ -116,11 +102,12 @@ function radiusFor(rng, kind, systemScale) {
   return null
 }
 
-function makeBody(rng, idCounter, kind, parent, systemScale) {
-  // Radius is rolled before position so a moon's orbit clearance (below) can
-  // account for both its own and its parent's physical size.
+function makePlanetOrMoon(rng, idCounter, kind, parent, systemScale) {
   const radius = radiusFor(rng, kind, systemScale)
-  const position = kind === 'moon' ? localPositionNearBody(rng, parent.position, parent.radius, radius) : localPosition(rng, systemScale)
+  const position =
+    kind === 'moon'
+      ? localPositionNearBody(rng, parent.position, parent.radius, radius)
+      : localPosition(rng, systemScale)
   return {
     id: `body-${idCounter}`,
     name: kind === 'moon' ? `${parent.name} Moon` : generateBodyName(rng, kind),
@@ -129,18 +116,87 @@ function makeBody(rng, idCounter, kind, parent, systemScale) {
     position,
     radius,
     economyTags: randomTags(rng),
-    hasMissions: missionChance(rng, kind),
-    hasShipyard: kind === 'station' ? rng() < 0.6 : false,
-    // Ship parts are a rare find — only a small fraction of stations and
-    // settlements happen to stock them (see data/goods.js's SHIP_PARTS_GOOD_ID).
-    hasShipParts: kind === 'station' || kind === 'settlement' ? rng() < 0.06 : false
+    hasMissions: false,
+    hasShipyard: false,
+    hasShipParts: false
   }
 }
 
-// Gives every system a `neighborIds` list: its JUMP_NEIGHBOR_COUNT nearest
-// systems by galaxy-map distance, plus a symmetric pass so if A lists B, B
-// also lists A — otherwise a system could be jumped *to* but not jumped
-// back *from*, which would read as a bug rather than a one-way lane.
+function makeAsteroidField(rng, idCounter, systemScale) {
+  return {
+    id: `body-${idCounter}`,
+    name: generateBodyName(rng, 'asteroidField'),
+    kind: 'asteroidField',
+    position: localPosition(rng, systemScale),
+    radius: radiusFor(rng, 'asteroidField', systemScale),
+    economyTags: randomTags(rng),
+    hasMissions: false,
+    hasShipyard: false,
+    hasShipParts: false
+  }
+}
+
+function makeStation(rng, idCounter, system) {
+  const planets = system.bodies.filter((b) => b.kind === 'planet')
+  const moons = system.bodies.filter((b) => b.kind === 'moon')
+  const bodyHosts = [...planets, ...moons]
+
+  let position
+  let parentId
+  let orbitsStar = false
+
+  if (rng() < STATION_FREE_DRIFT_CHANCE) {
+    // Rare free-floating station.
+    position = localPosition(rng, system.sizeScale)
+  } else {
+    // Host pool: star + every planet/moon in the system.
+    const useStar = bodyHosts.length === 0 || rng() < 0.28
+    if (useStar) {
+      position = localPositionStarOrbit(rng, system.sizeScale)
+      orbitsStar = true
+    } else {
+      const host = pick(rng, bodyHosts)
+      const hostRadius = host.radius ?? 0
+      position = localPositionNearBody(rng, host.position, hostRadius, STATION_CLEARANCE_RADIUS)
+      parentId = host.id
+    }
+  }
+
+  return {
+    id: `body-${idCounter}`,
+    name: generateBodyName(rng, 'station'),
+    kind: 'station',
+    parentId,
+    orbitsStar: orbitsStar || undefined,
+    position,
+    radius: null,
+    economyTags: randomTags(rng),
+    hasMissions: true,
+    hasShipyard: rng() < 0.6,
+    hasShipParts: rng() < 0.06
+  }
+}
+
+function makeSettlement(rng, idCounter, system) {
+  const planets = system.bodies.filter((b) => b.kind === 'planet')
+  if (!planets.length) return null
+  const planet = pick(rng, planets)
+  const { position, surfaceOffset } = localPositionOnPlanetSurface(rng, planet)
+  return {
+    id: `body-${idCounter}`,
+    name: generateBodyName(rng, 'settlement'),
+    kind: 'settlement',
+    parentId: planet.id,
+    surfaceOffset,
+    position,
+    radius: null,
+    economyTags: randomTags(rng),
+    hasMissions: true,
+    hasShipyard: false,
+    hasShipParts: rng() < 0.06
+  }
+}
+
 function computeNeighborLanes(systems) {
   const neighborSets = new Map(systems.map((s) => [s.id, new Set()]))
   for (const system of systems) {
@@ -160,6 +216,26 @@ function computeNeighborLanes(systems) {
   for (const system of systems) system.neighborIds = [...neighborSets.get(system.id)]
 }
 
+// Guarantees the player's home system has somewhere to dock and trade.
+export function ensureStartingSystemFacilities(system, rng, startId = 0) {
+  let bodyIdCounter = startId
+  const maxExisting = system.bodies.reduce((m, b) => {
+    const n = Number(String(b.id).replace(/^body-/, ''))
+    return Number.isFinite(n) ? Math.max(m, n + 1) : m
+  }, 0)
+  bodyIdCounter = Math.max(bodyIdCounter, maxExisting)
+
+  while (system.bodies.filter((b) => b.kind === 'station').length < 1) {
+    system.bodies.push(makeStation(rng, bodyIdCounter++, system))
+  }
+  while (system.bodies.filter((b) => b.kind === 'settlement').length < 2) {
+    const s = makeSettlement(rng, bodyIdCounter++, system)
+    if (s) system.bodies.push(s)
+    else break
+  }
+  return bodyIdCounter
+}
+
 export function generateGalaxy(seed, opts = {}) {
   const {
     systemCount = 450,
@@ -172,8 +248,6 @@ export function generateGalaxy(seed, opts = {}) {
   const rng = mulberry32(seed)
   let bodyIdCounter = 0
 
-  // Spread totalPlanets across systemCount systems with some variance per
-  // system (1-5ish) rather than a flat count, so systems feel distinct.
   const planetsPerSystem = []
   let remainingPlanets = totalPlanets
   for (let i = 0; i < systemCount; i++) {
@@ -190,9 +264,9 @@ export function generateGalaxy(seed, opts = {}) {
     const sizeScale = range(rng, ...SYSTEM_SCALE_VARIANCE)
     const bodies = []
     for (let p = 0; p < planetsPerSystem[i]; p++) {
-      const planet = makeBody(rng, bodyIdCounter++, 'planet', null, sizeScale)
+      const planet = makePlanetOrMoon(rng, bodyIdCounter++, 'planet', null, sizeScale)
       bodies.push(planet)
-      if (rng() < MOON_CHANCE) bodies.push(makeBody(rng, bodyIdCounter++, 'moon', planet, sizeScale))
+      if (rng() < MOON_CHANCE) bodies.push(makePlanetOrMoon(rng, bodyIdCounter++, 'moon', planet, sizeScale))
     }
     systems.push({
       id: `sys-${i}`,
@@ -205,15 +279,16 @@ export function generateGalaxy(seed, opts = {}) {
 
   for (let i = 0; i < stationCount; i++) {
     const system = pick(rng, systems)
-    system.bodies.push(makeBody(rng, bodyIdCounter++, 'station', null, system.sizeScale))
+    system.bodies.push(makeStation(rng, bodyIdCounter++, system))
   }
   for (let i = 0; i < settlementCount; i++) {
     const system = pick(rng, systems)
-    system.bodies.push(makeBody(rng, bodyIdCounter++, 'settlement', null, system.sizeScale))
+    const settlement = makeSettlement(rng, bodyIdCounter++, system)
+    if (settlement) system.bodies.push(settlement)
   }
   for (let i = 0; i < asteroidFieldCount; i++) {
     const system = pick(rng, systems)
-    system.bodies.push(makeBody(rng, bodyIdCounter++, 'asteroidField', null, system.sizeScale))
+    system.bodies.push(makeAsteroidField(rng, bodyIdCounter++, system.sizeScale))
   }
 
   computeNeighborLanes(systems)
@@ -221,28 +296,18 @@ export function generateGalaxy(seed, opts = {}) {
   const species = []
   for (let i = 0; i < speciesCount; i++) species.push(generateSpeciesName(rng))
 
-  return { seed, systems, species }
+  return { seed, systems, species, _nextBodyId: bodyIdCounter }
 }
 
-// Whether a hyperspace jump from `fromSystem` to `toSystemId` is allowed —
-// shared by game/hyperspace.js (enforcement) and main.js/ui/navMap.js
-// (pre-validation and the galaxy map's jump-lane UI).
 export function canJumpTo(fromSystem, toSystemId) {
   return fromSystem.neighborIds.includes(toSystemId)
 }
 
-// 0 at the galactic core, 1 at the rim — shared by game/mining.js's ore-tier
-// pick, game/spawner.js's population/alien-activity gradient, and
-// game/state.js's core-biased starting system.
 export function coreFraction(system) {
   const dist = Math.hypot(system.galaxyPosition[0], system.galaxyPosition[2])
   return Math.min(1, dist / GALAXY_MAX_RADIUS)
 }
 
-// Every system reachable from originSystemId within maxJumps hyperspace
-// hops (via neighborIds — the same lanes canJumpTo enforces), including the
-// origin itself. Used to keep mission targets from being planted arbitrarily
-// far across the galaxy — see data/missionTemplates.js's pickTargetSystem.
 export function systemsWithinJumps(galaxy, originSystemId, maxJumps) {
   const visited = new Set([originSystemId])
   let frontier = [originSystemId]

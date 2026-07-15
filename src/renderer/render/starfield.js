@@ -1,9 +1,12 @@
 import * as THREE from 'three'
 
+// Thin shell only — if stars fill a thick volume around the camera, ones
+// between the camera and a planet draw *in front* of the planet (see-through
+// starfield). Keep them at ~radius so depthTest can hide them behind solids.
 function scatterPositions(count, radius) {
   const positions = new Float32Array(count * 3)
   for (let i = 0; i < count; i++) {
-    const r = radius * (0.3 + Math.random() * 0.7)
+    const r = radius * (0.94 + Math.random() * 0.06)
     const theta = Math.random() * Math.PI * 2
     const phi = Math.acos(2 * Math.random() - 1)
     positions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
@@ -59,6 +62,10 @@ function buildLayer(count, radius, size, brightnessMin = 0.5) {
     vertexColors: true,
     map: getStarSprite(),
     transparent: true,
+    // depthTest so planets/stations occlude stars; no depthWrite so stars
+    // don't punch holes in each other. Transparent + additive still draws
+    // after opaques, but fails the depth test where a solid is nearer.
+    depthTest: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending
   })
@@ -73,7 +80,9 @@ function buildLayer(count, radius, size, brightnessMin = 0.5) {
 // per-layer uniform animation instead of a per-star shader, and with the
 // stars scattered randomly across four out-of-phase groups it still reads
 // as individual stars twinkling rather than a synchronized blink.
-export function createStarfield(count = 9000, radius = 4000) {
+// Radius near the camera far plane (see render/scene.js) so the shell sits
+// behind typical in-system bodies when the field is re-centered on the camera.
+export function createStarfield(count = 9000, radius = 17000) {
   const group = new THREE.Group()
   group.add(buildLayer(Math.round(count * 0.85), radius, 2.2, 0.35))
   group.add(buildLayer(Math.round(count * 0.15), radius, 4.5, 0.6))

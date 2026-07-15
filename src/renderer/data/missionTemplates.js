@@ -52,10 +52,19 @@ export function generateExplorationMission(rng, galaxy, giverSystemId, giverStat
   }
 }
 
+const PROBEABLE_KINDS = ['planet', 'moon', 'asteroidField']
+
+function pickProbeableBody(rng, targetSystem) {
+  const probeable = targetSystem.bodies.filter((b) => PROBEABLE_KINDS.includes(b.kind))
+  return pick(rng, probeable.length ? probeable : targetSystem.bodies)
+}
+
+// Investigation is resolved by probing (see missions.js resolveInvestigationProbe),
+// so the target must be a probeable body — never a station/settlement.
 export function generateInvestigationMission(rng, galaxy, giverSystemId, giverStationId) {
   const giverSystem = galaxy.systems.find((s) => s.id === giverSystemId)
   const targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
-  const targetBody = pick(rng, targetSystem.bodies)
+  const targetBody = pickProbeableBody(rng, targetSystem)
   return {
     id: `m-${missionCounter++}`,
     type: 'investigation',
@@ -69,13 +78,10 @@ export function generateInvestigationMission(rng, galaxy, giverSystemId, giverSt
   }
 }
 
-const PROBEABLE_KINDS = ['planet', 'moon', 'asteroidField']
-
 export function generateProbeMission(rng, galaxy, giverSystemId, giverStationId) {
   const giverSystem = galaxy.systems.find((s) => s.id === giverSystemId)
   const targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
-  const probeable = targetSystem.bodies.filter((b) => PROBEABLE_KINDS.includes(b.kind))
-  const targetBody = pick(rng, probeable.length ? probeable : targetSystem.bodies)
+  const targetBody = pickProbeableBody(rng, targetSystem)
   return {
     id: `m-${missionCounter++}`,
     type: 'probe',

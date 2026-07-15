@@ -98,7 +98,7 @@ test('updateSupercruise with a blocker still reaches the target and stays outsid
 
   let arrived = false
   let minDistToBlocker = Infinity
-  for (let i = 0; i < 4000 && !arrived; i++) {
+  for (let i = 0; i < 12000 && !arrived; i++) {
     arrived = updateSupercruise(shipState, shipClass, target, DT, arrivalRange, bodies, shipRadius, 'dest')
     const d = Math.hypot(
       shipState.position[0] - 0,

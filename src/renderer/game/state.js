@@ -1,5 +1,5 @@
 import { mulberry32, pick } from '../procgen/prng.js'
-import { generateGalaxy, SYSTEM_ARRIVAL_POSITION, coreFraction } from '../procgen/galaxy.js'
+import { generateGalaxy, SYSTEM_ARRIVAL_POSITION, coreFraction, ensureStartingSystemFacilities } from '../procgen/galaxy.js'
 import { starTypeForSystem } from '../procgen/starType.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { seedMissionsForGalaxy } from '../data/missionTemplates.js'
@@ -27,9 +27,12 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
   // Separate rng streams (seed+1, seed+2) keep mission generation and
   // starting-system choice independent of galaxy layout generation, without
   // needing to expose galaxy.js's internal rng.
+  const startingSystem = pickStartingSystem(galaxy, mulberry32(seed + 2))
+  // Home system always has a station and two settlements to dock at.
+  ensureStartingSystemFacilities(startingSystem, mulberry32(seed + 3), galaxy._nextBodyId ?? 0)
+  // Missions after facilities so starting-system boards get seeded too.
   const missionRng = mulberry32(seed + 1)
   const availableMissions = seedMissionsForGalaxy(missionRng, galaxy)
-  const startingSystem = pickStartingSystem(galaxy, mulberry32(seed + 2))
 
   return {
     version: 1,
@@ -62,6 +65,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
         // weapon (see data/weapons.js) — the same stats combat.js's old
         // fixed presets used, so an untouched loadout plays identically.
         equippedWeapons: defaultLoadoutFor(shipClass),
+        // Salvaged hardpoint weapons from wrecks — equip or sell at a shipyard.
+        spareWeapons: {},
         position: [...SYSTEM_ARRIVAL_POSITION],
         velocity: [0, 0, 0],
         quaternion: [0, 0, 0, 1]
