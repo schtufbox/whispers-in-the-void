@@ -45,6 +45,13 @@ window.addEventListener('error', (e) => console.error('uncaught error:', e.messa
 
 const DOCK_RANGE = 30
 const DOCK_RANGE_COLLISION_MARGIN = 12
+// Extra approach allowance for stations/settlements (user request: +2000m).
+const DOCK_RANGE_STATION_EXTRA = 2000
+// Co-move with a host's orbit when this close beyond its collision shell.
+const ORBITAL_CARRY_MARGIN = 900
+// Solar co-orbit when this close to the system origin and not bound to a body.
+const STAR_ORBITAL_CARRY_RADIUS = 28000
+const STAR_ORBITAL_OMEGA = 0.0008
 // Stations/settlements "200% bigger", then "another 150% bigger" (2.5x on
 // top) per two rounds of user request; game/collision.js's fixed station/
 // settlement collision radii are scaled by the same factor. (Was 1.5, then
@@ -794,8 +801,7 @@ function returnToMenu() {
   hasSave().then((exists) => menu.show(exists))
 }
 
-// Only stations (in space) and settlements (on planet surfaces) are dockable.
-// Planets/moons themselves are never dockable — land at a settlement instead.
+// Only stations and settlements are dockable — never bare planets/moons.
 function isDockable(body) {
   return body.kind === 'station' || body.kind === 'settlement'
 }
@@ -803,11 +809,16 @@ function isDockable(body) {
 // The collision shell around a body (its physical radius + the ship's own)
 // can exceed the flat DOCK_RANGE for large planets/ships, which would make
 // docking physically unreachable — widen the range per body so it's always
-// comfortably outside that shell.
+// comfortably outside that shell. Stations/settlements get an extra 2000m.
 function dockRangeFor(body) {
   const bodyRadius = collisionRadiusFor(body) ?? 0
-  return Math.max(DOCK_RANGE, bodyRadius + getShipCollisionRadius(playerShipClass) + DOCK_RANGE_COLLISION_MARGIN)
+  const base = Math.max(DOCK_RANGE, bodyRadius + getShipCollisionRadius(playerShipClass) + DOCK_RANGE_COLLISION_MARGIN)
+  if (body.kind === 'station' || body.kind === 'settlement') return base + DOCK_RANGE_STATION_EXTRA
+  return base
 }
+
+// Special waypoint id for the system star (local origin) — not a real body.
+const SYSTEM_STAR_WAYPOINT_ID = 'system-star'
 
 function findNearbyDockableBody() {
   const playerPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
@@ -1512,9 +1523,18 @@ function updateCrosshair() {
   crosshairEl.style.top = `${(-projected.y * 0.5 + 0.5) * window.innerHeight}px`
 }
 
-// Body waypoint and optional free-space mission marker (bounty location).
+// Body waypoint, system star, or free-space mission marker (bounty location).
 function getActiveWaypoint() {
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (gameState.player.waypointBodyId === SYSTEM_STAR_WAYPOINT_ID) {
+    return {
+      position: [0, 0, 0],
+      name: `${currentSystem?.name ?? 'System'} Star`,
+      bodyId: SYSTEM_STAR_WAYPOINT_ID,
+      isMission: false,
+      arrivalRange: 2500 + getShipCollisionRadius(playerShipClass) + SUPERCRUISE_ARRIVAL_MARGIN
+    }
+  }
   if (gameState.player.waypointBodyId) {
     const body = currentSystem.bodies.find((b) => b.id === gameState.player.waypointBodyId)
     if (body) {
@@ -1539,6 +1559,52 @@ function getActiveWaypoint() {
     }
   }
   return null
+}
+
+// After bodies move on their orbits, co-move the ship if it's bound in their
+// gravity well. Thrusters still apply in inertial space, so the player can
+// burn out of capture range.
+function applyOrbitalCarry(sysBodies, prevPositions, dt) {
+  if (docked || dockEffect || jumpEffect || !gameState) return
+  const ship = gameState.player.ship
+  const shipPos = new THREE.Vector3().fromArray(ship.position)
+
+  let best = null
+  let bestDist = Infinity
+  for (const body of sysBodies) {
+    if (body.kind !== 'planet' && body.kind !== 'moon' && body.kind !== 'station') continue
+    const prev = prevPositions.get(body.id)
+    if (!prev) continue
+    const bodyPos = new THREE.Vector3().fromArray(body.position)
+    const dist = shipPos.distanceTo(bodyPos)
+    const capture = (collisionRadiusFor(body) ?? 0) + ORBITAL_CARRY_MARGIN
+    if (dist >= capture || dist >= bestDist) continue
+    bestDist = dist
+    best = {
+      dx: body.position[0] - prev[0],
+      dy: body.position[1] - prev[1],
+      dz: body.position[2] - prev[2]
+    }
+  }
+
+  if (best) {
+    ship.position[0] += best.dx
+    ship.position[1] += best.dy
+    ship.position[2] += best.dz
+    return
+  }
+
+  // Solar co-orbit: rotate around system origin (star) when near enough and
+  // not bound to a planet/moon/station. Deep core is skipped.
+  const x = ship.position[0]
+  const z = ship.position[2]
+  const r = Math.hypot(x, z)
+  if (r < 500 || r > STAR_ORBITAL_CARRY_RADIUS) return
+  const a = STAR_ORBITAL_OMEGA * dt
+  const c = Math.cos(a)
+  const s = Math.sin(a)
+  ship.position[0] = x * c - z * s
+  ship.position[2] = x * s + z * c
 }
 
 function updateWaypointIndicator() {
@@ -1922,6 +1988,13 @@ function animate() {
     if (!mesh) continue
     mesh.children.forEach((child, i) => { child.visible = isRockAlive(gameState, body.id, i) })
   }
+  const sysBodies = getSystem(gameState.galaxy, gameState.player.currentSystemId).bodies
+  // Snapshot body positions so the ship can co-move with orbital deltas.
+  const prevBodyPositions = new Map()
+  for (const body of sysBodies) {
+    prevBodyPositions.set(body.id, [body.position[0], body.position[1], body.position[2]])
+  }
+
   // Planets (+ star-orbit stations) first so children can follow.
   for (const orbit of planetOrbits.values()) {
     const angle = orbit.angle0 + gameState.simTime * orbit.speed
@@ -1931,7 +2004,6 @@ function animate() {
     const mesh = bodyMeshes.get(orbit.body.id)
     if (mesh) mesh.position.fromArray(orbit.body.position)
   }
-  const sysBodies = getSystem(gameState.galaxy, gameState.player.currentSystemId).bodies
   // Moons / orbiting stations, then surface settlements (fixed offset on parent).
   for (const orbit of moonOrbits.values()) {
     if (orbit.isSurface) {
@@ -1951,6 +2023,8 @@ function animate() {
     const mesh = bodyMeshes.get(orbit.body.id)
     if (mesh) mesh.position.fromArray(orbit.body.position)
   }
+  applyOrbitalCarry(sysBodies, prevBodyPositions, dt)
+
   // Tidally locked moons face their parent; others keep spinning via updateStationMesh.
   for (const [id, mesh] of bodyMeshes) {
     if (!mesh.userData.tidallyLocked || !mesh.userData.parentId) continue
@@ -1972,7 +2046,7 @@ function animate() {
 
   const nearbyBody = findNearbyDockableBody()
   dockPromptEl.style.display = nearbyBody ? 'block' : 'none'
-  if (nearbyBody) dockPromptEl.textContent = `Press F to dock at ${nearbyBody.name}`
+  if (nearbyBody) dockPromptEl.textContent = `Dock with ${nearbyBody.name}`
 
   const nearbyProbeBody = findNearbyProbeableBody()
   probePromptEl.style.display = nearbyProbeBody ? 'block' : 'none'

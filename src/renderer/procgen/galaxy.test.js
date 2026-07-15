@@ -104,22 +104,33 @@ test('stations orbit a host (planet/moon/star) except a rare free-drifter fracti
   }
 })
 
-test('settlements sit on a planet surface only', () => {
+test('settlements sit on a planet/moon surface (or rarely an asteroid field)', () => {
   const galaxy = generateGalaxy(42)
+  let surface = 0
+  let belt = 0
   for (const system of galaxy.systems) {
     for (const s of system.bodies.filter((b) => b.kind === 'settlement')) {
-      assert.ok(s.parentId, 'settlement needs a planet parent')
+      assert.ok(s.parentId, 'settlement needs a parent')
+      const parent = system.bodies.find((b) => b.id === s.parentId)
+      assert.ok(parent, 'parent must exist in system')
+      if (s.inAsteroidField) {
+        assert.equal(parent.kind, 'asteroidField')
+        belt++
+        continue
+      }
+      assert.ok(parent.kind === 'planet' || parent.kind === 'moon', 'surface settlement on planet or moon')
       assert.ok(s.surfaceOffset, 'settlement needs surfaceOffset')
-      const planet = system.bodies.find((b) => b.id === s.parentId)
-      assert.equal(planet?.kind, 'planet')
       const dist = Math.hypot(
-        s.position[0] - planet.position[0],
-        s.position[1] - planet.position[1],
-        s.position[2] - planet.position[2]
+        s.position[0] - parent.position[0],
+        s.position[1] - parent.position[1],
+        s.position[2] - parent.position[2]
       )
-      assert.ok(dist >= planet.radius, `settlement should be outside planet radius (dist ${dist}, r ${planet.radius})`)
+      assert.ok(dist >= parent.radius, `settlement should be outside host radius (dist ${dist}, r ${parent.radius})`)
+      surface++
     }
   }
+  assert.ok(surface > 0, 'expected surface settlements')
+  assert.ok(belt / (surface + belt) < 0.05, 'asteroid-belt settlements should be rare')
 })
 
 test('ensureStartingSystemFacilities adds at least 1 station and 2 settlements', () => {

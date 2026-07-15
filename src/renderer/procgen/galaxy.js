@@ -26,6 +26,8 @@ const SETTLEMENT_CLEARANCE_RADIUS = 123.75
 const SETTLEMENT_SURFACE_MARGIN = 8
 // Vast majority of stations orbit a planet, moon, or the star; a tiny fraction drift alone.
 const STATION_FREE_DRIFT_CHANCE = 0.003
+// Settlements are almost always surface-bound; a rare outpost in an asteroid belt.
+const SETTLEMENT_ASTEROID_CHANCE = 0.003
 const JUMP_NEIGHBOR_COUNT = 5
 
 export const SYSTEM_ARRIVAL_POSITION = [0, 400, -SYSTEM_LOCAL_MAX_RADIUS * 0.95]
@@ -67,18 +69,18 @@ function localPositionStarOrbit(rng, systemScale) {
   return [radius * Math.cos(theta), y, radius * Math.sin(theta)]
 }
 
-// Settlement sits on a planet's surface (outside the collision shell).
-function localPositionOnPlanetSurface(rng, planet) {
+// Settlement sits on a planet/moon surface (outside the collision shell).
+function localPositionOnSurface(rng, host) {
   const theta = rng() * Math.PI * 2
   const phi = Math.acos(2 * rng() - 1)
-  const dist = planet.radius + SETTLEMENT_CLEARANCE_RADIUS + SETTLEMENT_SURFACE_MARGIN
+  const dist = host.radius + SETTLEMENT_CLEARANCE_RADIUS + SETTLEMENT_SURFACE_MARGIN
   const offset = [
     dist * Math.sin(phi) * Math.cos(theta),
     dist * Math.cos(phi),
     dist * Math.sin(phi) * Math.sin(theta)
   ]
   return {
-    position: [planet.position[0] + offset[0], planet.position[1] + offset[1], planet.position[2] + offset[2]],
+    position: [host.position[0] + offset[0], host.position[1] + offset[1], host.position[2] + offset[2]],
     surfaceOffset: offset
   }
 }
@@ -178,15 +180,39 @@ function makeStation(rng, idCounter, system) {
 }
 
 function makeSettlement(rng, idCounter, system) {
-  const planets = system.bodies.filter((b) => b.kind === 'planet')
-  if (!planets.length) return null
-  const planet = pick(rng, planets)
-  const { position, surfaceOffset } = localPositionOnPlanetSurface(rng, planet)
+  // Rare asteroid-belt outpost — only non-surface case.
+  if (rng() < SETTLEMENT_ASTEROID_CHANCE) {
+    const fields = system.bodies.filter((b) => b.kind === 'asteroidField')
+    if (fields.length) {
+      const field = pick(rng, fields)
+      // Sit just outside the field shell (still "in" the belt, not free deep space).
+      const pos = localPositionNearBody(rng, field.position, field.radius ?? 80, SETTLEMENT_CLEARANCE_RADIUS)
+      return {
+        id: `body-${idCounter}`,
+        name: generateBodyName(rng, 'settlement'),
+        kind: 'settlement',
+        parentId: field.id,
+        inAsteroidField: true,
+        position: pos,
+        radius: null,
+        economyTags: randomTags(rng),
+        hasMissions: true,
+        hasShipyard: false,
+        hasShipParts: rng() < 0.06
+      }
+    }
+  }
+
+  // Otherwise ONLY on a planet or moon surface — never free-floating in space.
+  const hosts = system.bodies.filter((b) => b.kind === 'planet' || b.kind === 'moon')
+  if (!hosts.length) return null
+  const host = pick(rng, hosts)
+  const { position, surfaceOffset } = localPositionOnSurface(rng, host)
   return {
     id: `body-${idCounter}`,
     name: generateBodyName(rng, 'settlement'),
     kind: 'settlement',
-    parentId: planet.id,
+    parentId: host.id,
     surfaceOffset,
     position,
     radius: null,

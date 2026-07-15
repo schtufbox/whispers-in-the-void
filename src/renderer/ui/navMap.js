@@ -74,8 +74,12 @@ const BODY_ICONS = {
   moon: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3.5" fill="#9aa8bd"/></svg>',
   station: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" fill="#5ee6ff"/></svg>',
   settlement: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" fill="#c2a35c"/></svg>',
-  asteroidField: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="3" cy="4" r="2" fill="#8a8172"/><circle cx="8" cy="3" r="1.4" fill="#8a8172"/><circle cx="7" cy="8" r="2.2" fill="#8a8172"/></svg>'
+  asteroidField: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="3" cy="4" r="2" fill="#8a8172"/><circle cx="8" cy="3" r="1.4" fill="#8a8172"/><circle cx="7" cy="8" r="2.2" fill="#8a8172"/></svg>',
+  star: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="#ffe066"/><circle cx="6" cy="6" r="5.5" fill="none" stroke="#ffb347" stroke-width="0.8" opacity="0.7"/></svg>'
 }
+
+// Synthetic waypoint id for the system sun (must match main.js).
+const SYSTEM_STAR_WAYPOINT_ID = 'system-star'
 
 function dist3(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -292,9 +296,15 @@ export function createNavMap(container, gameState) {
     const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
     const playerPos = gameState.player.ship.position
     const missionBodies = missionMarkedBodyIds(gameState, system.id)
-    const rows = system.bodies
-      .map((b) => ({ b, d: dist3(playerPos, b.position) }))
-      .sort((a, b) => a.d - b.d)
+    const starPos = [0, 0, 0]
+    const starRow = {
+      b: { id: SYSTEM_STAR_WAYPOINT_ID, name: `${system.name} Star`, kind: 'star' },
+      d: dist3(playerPos, starPos)
+    }
+    const rows = [
+      starRow,
+      ...system.bodies.map((b) => ({ b, d: dist3(playerPos, b.position) })).sort((a, b) => a.d - b.d)
+    ]
 
     contentEl.innerHTML = `
       <p>Bodies in ${system.name}:</p>
@@ -306,10 +316,11 @@ export function createNavMap(container, gameState) {
               const isWp = gameState.player.waypointBodyId === b.id
               const isMission = missionBodies.has(b.id)
               const classes = [isWp ? 'active-waypoint' : '', isMission ? 'mission-marker' : ''].filter(Boolean).join(' ')
+              const distLabel = d >= 10000 ? `${(d / 1000).toFixed(1)}km` : `${Math.round(d)}m`
               return `
           <tr class="${classes}">
             <td class="body-name">${BODY_ICONS[b.kind] ?? ''}${b.name}${isMission ? '<span class="mission-tag">mission</span>' : ''}</td>
-            <td>${b.kind}</td><td>${Math.round(d)}m</td>
+            <td>${b.kind}</td><td>${distLabel}</td>
             <td><button class="waypoint" data-id="${b.id}">${isWp ? 'Clear' : 'Set Waypoint'}</button></td>
           </tr>`
             }
@@ -321,9 +332,12 @@ export function createNavMap(container, gameState) {
       btn.addEventListener('click', () => {
         if (gameState.player.waypointBodyId === btn.dataset.id) {
           gameState.player.waypointBodyId = null
+          gameState.player.waypointPosition = null
         } else {
           gameState.player.waypointBodyId = btn.dataset.id
-          gameState.player.waypointPosition = null
+          // Star is at system origin; body waypoints clear free-space markers.
+          gameState.player.waypointPosition =
+            btn.dataset.id === SYSTEM_STAR_WAYPOINT_ID ? [0, 0, 0] : null
         }
         renderSystemTab()
       })
