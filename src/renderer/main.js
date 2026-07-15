@@ -1268,13 +1268,17 @@ function showFloatingProbeResults(messages) {
 function finishProbeResults(body, attemptNumber = null) {
   // Attempt was already reserved at launch — do not double-count here.
   const attempt = attemptNumber ?? probeAttemptCount(gameState, body.id)
+  // Capture before markBodyProbed may flip objectiveComplete.
   const wasMissionTarget = isActiveMissionProbeTarget(gameState, body.id)
   // First probe on a mission target always delivers the mission outcome.
   const missionFirstProbe = wasMissionTarget && attempt === 1
 
   const probeMissionHere = body.kind !== 'star' && gameState.missions.active.find(
-    (m) => m.type === 'probe' && !m.objectiveComplete && m.target.bodyId === body.id
+    (m) =>
+      m.type === 'probe' &&
+      String(m.target?.bodyId) === String(body.id)
   )
+  // Idempotent if already marked at end of scan phase.
   markBodyProbed(gameState, body.id)
   // Investigation resolves on the probe itself (intel / hostile / lead further),
   // not from merely being listed in probedBodyIds. Stars are never investigation targets.
@@ -1299,9 +1303,15 @@ function finishProbeResults(body, attemptNumber = null) {
   } else if (investigation?.kind === 'lead') {
     messages.push(`The signal traces further — new fix on ${investigation.bodyName} in ${investigation.systemName}.`)
   }
+  // Probe survey contracts complete on markBodyProbed (scan finish / return).
   if (probeMissionHere) {
     const giver = findBody(gameState.galaxy, probeMissionHere.giverStationId)
-    messages.push(`Survey mission data acquired! Return to ${giver?.name ?? 'the mission giver'} to turn it in.`)
+    const ready = probeMissionHere.objectiveComplete
+    messages.push(
+      ready
+        ? `Survey mission complete! Return to ${giver?.name ?? 'the mission giver'} to turn it in.`
+        : `Probed ${body.name}. Mission not updated — confirm this is the contract target.`
+    )
   }
   if (result.found && result.stored) messages.push(`Probe found valuable survey data at ${body.name}! Added to cargo — sell it at any station.`)
   else if (result.found) messages.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
@@ -1357,6 +1367,14 @@ function updateProbeEffect(dt) {
     const beamCap = body.kind === 'star' ? 80 : 40
     updateProbeMesh(mesh, dt, { scanning: true, scanDist: Math.min(scanDist, beamCap), baseQuat: face })
     if (probeEffect.elapsed >= PROBE_SCAN_S) {
+      // Count the survey as soon as the scan finishes — not only after the
+      // probe docks back — so jump/dock/abort mid-return can't strand a probe
+      // mission in "in progress" after a successful scan.
+      if (!probeEffect.surveyLogged) {
+        probeEffect.surveyLogged = true
+        markBodyProbed(gameState, body.id)
+        updateMissionProgress(gameState)
+      }
       probeEffect.phase = 'returning'
       probeEffect.elapsed = 0
       probeEffect.returnStart = mesh.position.clone()
@@ -1567,6 +1585,9 @@ function dock(body) {
   docked = true
   audio.setThrustState(null)
   markBodyVisited(gameState, body.id)
+  // Catch up mission flags (e.g. probe already in probedBodyIds) before the
+  // board renders Turn In / In progress.
+  updateMissionProgress(gameState)
   // Shields regenerate on their own anyway (see combat.js's regenShields) —
   // docking just tops them off instantly and for free, since only hull/armor
   // repair costs credits in the shipyard.
@@ -1598,6 +1619,20 @@ function dockExteriorPoint(body, shipPos) {
 // Undocking reverses: unpark → flash out → back away. dockedApproach
 // remembers the original approach so the reverse trip lines up.
 function beginDocking(body) {
+  // Docking freezes the flight loop — resolve or abort any in-flight probe so
+  // survey missions don't stay "in progress" after a completed scan.
+  if (probeEffect) {
+    if (probeEffect.surveyLogged || probeEffect.phase === 'returning') {
+      const b = probeEffect.body
+      const attemptNumber = probeEffect.attemptNumber
+      clearProbeEffect()
+      finishProbeResults(b, attemptNumber)
+    } else {
+      clearProbeEffect()
+      flashToast('Probe aborted — docking')
+    }
+  }
+
   const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
   const { bodyPos, approachDir, exteriorPoint } = dockExteriorPoint(body, shipPos)
 
@@ -2531,6 +2566,12 @@ function animate() {
     audio.setStrafeActive(false)
     motionFx.hide()
     updateStarfieldMotion(starfield, 0, false)
+    // Keep probes advancing while menus/docked so a survey isn't frozen mid-scan
+    // (opening J/M/I or docking mid-flight used to stall mission completion).
+    if (probeEffect && !docked) {
+      gameState.simTime += dt
+      updateProbeEffect(dt)
+    }
     // Keep the hangar alive behind the docking UI (loaders, drones, lights).
     if (docked && interiorMesh?.parent) {
       updateStationInterior(interiorMesh, dt)

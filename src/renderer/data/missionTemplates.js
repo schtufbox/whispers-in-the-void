@@ -56,15 +56,25 @@ const PROBEABLE_KINDS = ['planet', 'moon', 'asteroidField']
 
 function pickProbeableBody(rng, targetSystem) {
   const probeable = targetSystem.bodies.filter((b) => PROBEABLE_KINDS.includes(b.kind))
-  return pick(rng, probeable.length ? probeable : targetSystem.bodies)
+  // Never fall back to stations/settlements — those aren't probeable with P.
+  if (!probeable.length) return null
+  return pick(rng, probeable)
 }
 
 // Investigation is resolved by probing (see missions.js resolveInvestigationProbe),
 // so the target must be a probeable body — never a station/settlement.
 export function generateInvestigationMission(rng, galaxy, giverSystemId, giverStationId) {
   const giverSystem = galaxy.systems.find((s) => s.id === giverSystemId)
-  const targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
-  const targetBody = pickProbeableBody(rng, targetSystem)
+  // Prefer systems that actually have a probeable body.
+  let targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
+  let targetBody = pickProbeableBody(rng, targetSystem)
+  if (!targetBody) {
+    for (let i = 0; i < 12 && !targetBody; i++) {
+      targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
+      targetBody = pickProbeableBody(rng, targetSystem)
+    }
+  }
+  if (!targetBody) return null
   return {
     id: `m-${missionCounter++}`,
     type: 'investigation',
@@ -80,8 +90,15 @@ export function generateInvestigationMission(rng, galaxy, giverSystemId, giverSt
 
 export function generateProbeMission(rng, galaxy, giverSystemId, giverStationId) {
   const giverSystem = galaxy.systems.find((s) => s.id === giverSystemId)
-  const targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
-  const targetBody = pickProbeableBody(rng, targetSystem)
+  let targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
+  let targetBody = pickProbeableBody(rng, targetSystem)
+  if (!targetBody) {
+    for (let i = 0; i < 12 && !targetBody; i++) {
+      targetSystem = pickTargetSystem(rng, galaxy, giverSystem)
+      targetBody = pickProbeableBody(rng, targetSystem)
+    }
+  }
+  if (!targetBody) return null
   return {
     id: `m-${missionCounter++}`,
     type: 'probe',
@@ -104,7 +121,8 @@ export function seedMissionsForGalaxy(rng, galaxy) {
       if (!body.hasMissions) continue
       const count = intRange(rng, 1, 3)
       for (let i = 0; i < count; i++) {
-        missions.push(pick(rng, GENERATORS)(rng, galaxy, system.id, body.id))
+        const mission = pick(rng, GENERATORS)(rng, galaxy, system.id, body.id)
+        if (mission) missions.push(mission)
       }
     }
   }

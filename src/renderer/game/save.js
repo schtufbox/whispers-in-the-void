@@ -1,4 +1,4 @@
-import { ensureBountyNpcsForSystem } from './missions.js'
+import { ensureBountyNpcsForSystem, updateMissionProgress } from './missions.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
 import { ensureBlueprintMaps, updateCraftingJobs } from './crafting.js'
@@ -72,6 +72,8 @@ export function deserializeGameState(data) {
   // system's bounty target needs to exist right away; other systems'
   // bounties re-materialize the same way when the player jumps there.
   ensureBountyNpcsForSystem(gameState, gameState.player.currentSystemId, Math.random)
+  // Re-sync probe/exploration objectives against visited/probed lists.
+  updateMissionProgress(gameState)
   return gameState
 }
 

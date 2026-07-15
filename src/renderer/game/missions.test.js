@@ -7,7 +7,8 @@ import {
   setWaypointForMission,
   updateMissionProgress,
   resolveInvestigationProbe,
-  ensureBountyNpcsForSystem
+  ensureBountyNpcsForSystem,
+  markBodyProbed
 } from './missions.js'
 import { createGameState } from './state.js'
 import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
@@ -82,6 +83,17 @@ test('setWaypointForMission tracks body objectives', () => {
     setWaypointForMission(gs, mission.id)
     assert.equal(gs.player.waypointBodyId, mission.giverStationId)
   }
+})
+
+test('probe mission completes when target body is marked probed', () => {
+  const gs = freshState(21)
+  const mission = gs.missions.available.find((m) => m.type === 'probe')
+  assert.ok(mission, 'need a probe mission in seed')
+  acceptMission(gs, mission.id, Math.random)
+  assert.equal(mission.objectiveComplete, false)
+  markBodyProbed(gs, mission.target.bodyId)
+  assert.equal(mission.objectiveComplete, true, 'markBodyProbed should complete open probe contracts')
+  assert.ok(gs.probedBodyIds.includes(mission.target.bodyId))
 })
 
 test('investigation intel probe completes the objective', () => {

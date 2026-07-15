@@ -30,6 +30,9 @@ export function acceptMission(gameState, missionId, rng) {
     gameState.npcs.push(npc)
     mission.target.npcId = npc.id
   }
+
+  // Body already surveyed before accept — complete probe objectives immediately.
+  updateMissionProgress(gameState)
 }
 
 // Re-materialize any incomplete mission with an npcShip target in this system
@@ -59,7 +62,18 @@ export function markBodyVisited(gameState, bodyId) {
 // Distinct from visitedBodyIds: a probe mission requires actually launching a
 // probe at the body (main.js's probeBody), not just flying near or docking.
 export function markBodyProbed(gameState, bodyId) {
-  if (!gameState.probedBodyIds.includes(bodyId)) gameState.probedBodyIds.push(bodyId)
+  if (!bodyId) return
+  const id = String(bodyId)
+  if (!gameState.probedBodyIds.includes(id)) gameState.probedBodyIds.push(id)
+  // Complete any matching open probe missions right here (don't rely solely on
+  // a later updateMissionProgress call that can be skipped while menus/docked).
+  for (const mission of gameState.missions.active) {
+    if (mission.type !== 'probe' || mission.objectiveComplete) continue
+    if (String(mission.target?.bodyId) === id) {
+      mission.objectiveComplete = true
+      pushMissionLog(mission, gameState, 'intel', 'Survey complete — return to the mission giver')
+    }
+  }
 }
 
 function pickInvestigationLead(gameState, mission, rng) {
@@ -177,15 +191,23 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
 }
 
 export function updateMissionProgress(gameState) {
+  const probed = gameState.probedBodyIds ?? []
+  const visited = gameState.visitedBodyIds ?? []
   for (const mission of gameState.missions.active) {
     if (mission.objectiveComplete) continue
-    if (mission.target.kind === 'npcShip') {
+    if (mission.target?.kind === 'npcShip') {
       const npc = gameState.npcs.find((n) => n.id === mission.target.npcId)
       if (npc?.destroyed) mission.objectiveComplete = true
     } else if (mission.type === 'probe') {
-      if (gameState.probedBodyIds.includes(mission.target.bodyId)) mission.objectiveComplete = true
+      const bodyId = mission.target?.bodyId
+      if (bodyId && probed.some((id) => String(id) === String(bodyId))) {
+        mission.objectiveComplete = true
+      }
     } else if (mission.type === 'exploration') {
-      if (gameState.visitedBodyIds.includes(mission.target.bodyId)) mission.objectiveComplete = true
+      const bodyId = mission.target?.bodyId
+      if (bodyId && visited.some((id) => String(id) === String(bodyId))) {
+        mission.objectiveComplete = true
+      }
     }
     // investigation body phase: only resolveInvestigationProbe sets complete
   }
