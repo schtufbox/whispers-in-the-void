@@ -364,6 +364,11 @@ function isAltKey(code) {
   return code === 'AltLeft' || code === 'AltRight'
 }
 window.addEventListener('keydown', (e) => {
+  // Alt+Enter is fullscreen (main process) — never arm free-look for that chord.
+  if (e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter' || e.key === 'Enter')) {
+    setChaseFreeLook(false)
+    return
+  }
   if (!isAltKey(e.code)) return
   if (!gameState || paused || docked || jumpEffect || navMapOpen || inventoryOpen || missionsOpen) return
   e.preventDefault()
@@ -373,6 +378,10 @@ window.addEventListener('keyup', (e) => {
   if (!isAltKey(e.code)) return
   setChaseFreeLook(false)
 })
+// Fullscreen toggle often drops the Alt keyup while free-look is still on.
+if (typeof window.electronAPI?.onFullscreenChanged === 'function') {
+  window.electronAPI.onFullscreenChanged(() => setChaseFreeLook(false))
+}
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') tryRestoreFlightMode()
