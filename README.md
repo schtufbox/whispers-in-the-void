@@ -30,7 +30,7 @@ A desktop space sim with ~**1500** planets across ~**450** star systems, **100**
 - **Targeting & sensors** — Tab-lock ships, facilities, asteroids, wrecks, or the system star; radar and mission markers.
 - **Trading economy** — tag-driven prices that nudge with your activity.
 - **Missions** — bounty, exploration, investigation, and probe contracts. **J** tracks active work; orange rings on the galaxy map mark objectives and turn-ins.
-- **Mining** — mine individual rocks with a continuous beam or manual fire; finite ore per rock, rarer tiers toward the rim.
+- **Mining** — fire on individual asteroids for ore; finite yield per rock, rarer tiers toward the rim.
 - **Probing** — scan planets, moons, asteroid fields, and stars for survey data and mission progress.
 - **Docking & storage** — dock animation into a bay interior; per-station cargo/ore/parts/ships/weapons/blueprints; Inventory (**I**) lists remote assets.
 - **Wrecks & salvage** — loot trade goods, occasional ship parts, and rare blueprints.
@@ -85,7 +85,6 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **Mouse wheel** | Chase camera zoom |
 | **Tab** | Target under crosshair, or cycle nearby contacts |
 | **Ctrl/Cmd + Tab** | Set / clear waypoint on body under crosshair |
-| **R** | Toggle mining mode |
 | **F** | Dock (in range) or salvage a wreck |
 | **P** | Launch a probe (orbit + target, or close range) |
 | **I** | Inventory |
