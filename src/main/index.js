@@ -86,7 +86,13 @@ function setupApplicationMenu() {
             { role: 'reload' },
             { role: 'toggleDevTools' },
             { type: 'separator' },
-            { role: 'togglefullscreen' }
+            {
+              label: 'Toggle Full Screen',
+              accelerator: 'Alt+Enter',
+              click: (_item, focusedWindow) => {
+                if (focusedWindow) focusedWindow.setFullScreen(!focusedWindow.isFullScreen())
+              }
+            }
           ]
         },
         {
@@ -117,7 +123,13 @@ function setupApplicationMenu() {
           { role: 'reload' },
           { role: 'toggleDevTools' },
           { type: 'separator' },
-          { role: 'togglefullscreen' }
+          {
+            label: 'Toggle Full Screen',
+            accelerator: 'Alt+Enter',
+            click: (_item, focusedWindow) => {
+              if (focusedWindow) focusedWindow.setFullScreen(!focusedWindow.isFullScreen())
+            }
+          }
         ]
       },
       {
@@ -165,6 +177,15 @@ function createWindow() {
   win.on('page-title-updated', (event) => {
     event.preventDefault()
     win.setTitle(APP_NAME)
+  })
+
+  // Alt+Enter fullscreen even when the game has pointer lock / no menu focus.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (!input.alt || input.control || input.meta || input.shift) return
+    if (input.key !== 'Enter' && input.key !== 'Return') return
+    win.setFullScreen(!win.isFullScreen())
+    event.preventDefault()
   })
 
   win.webContents.on('console-message', (_event, level, message, line, sourceId) => {

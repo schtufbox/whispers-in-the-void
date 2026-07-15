@@ -67,6 +67,14 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
       // Free-space waypoint (e.g. bounty hunt marker) — cleared when a body
       // waypoint is set. Not required for normal body navigation.
       waypointPosition: null,
+      // Galaxy-map plotted hyperspace chain: remaining system ids to visit
+      // (destination last). Null when no route. Advanced on each jump.
+      plottedRoute: null,
+      // Docked at this body id (station/settlement); null when flying.
+      // Exterior hang point + approach dir let undock after load line up.
+      dockedBodyId: null,
+      dockedExteriorPosition: null,
+      dockedApproachDir: null,
       ship: {
         classId: shipClassId,
         instanceName: shipInstanceName,

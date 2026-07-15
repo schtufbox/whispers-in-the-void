@@ -1,6 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { applyDamage, fireProjectile, updateProjectiles, updateNpcAI, regenShields } from './combat.js'
+import {
+  applyDamage,
+  fireProjectile,
+  updateProjectiles,
+  updateNpcAI,
+  regenShields,
+  PLAYER_DAMAGE_TAKEN_MULT
+} from './combat.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
 
@@ -31,6 +38,15 @@ test('applyDamage marks entity destroyed when hull drops to zero or below', () =
   applyDamage(entity, 20)
   assert.ok(entity.hull <= 0)
   assert.equal(entity.destroyed, true)
+})
+
+test('player takes 25% less damage than an NPC for the same hit', () => {
+  const npc = { shields: 0, armor: 0, hull: 100, destroyed: false }
+  const player = { shields: 0, armor: 0, hull: 100, destroyed: false }
+  applyDamage(npc, 40)
+  applyDamage(player, 40, null, { player: true })
+  assert.equal(npc.hull, 60)
+  assert.equal(player.hull, 100 - 40 * PLAYER_DAMAGE_TAKEN_MULT)
 })
 
 test('player shields regen ~1% of max per 10s out of combat', () => {

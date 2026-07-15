@@ -16,11 +16,13 @@ const CONTROLS = [
   ['P', 'Launch probe'],
   ['I', 'Inventory'],
   ['J', 'Missions'],
-  ['Esc', 'Pause']
+  ['Esc', 'Pause'],
+  ['Alt+Enter', 'Toggle fullscreen']
 ]
 
 const STYLE = `
-#pause-menu { position: fixed; inset: 0; background: rgba(4, 6, 12, 0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+/* Above docking chrome (z 50–55) so pause works while docked. */
+#pause-menu { position: fixed; inset: 0; background: rgba(4, 6, 12, 0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 60; }
 #pause-menu .panel {
   display: flex; flex-direction: column; gap: 10px; width: 300px; padding: 26px 28px;
   background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));

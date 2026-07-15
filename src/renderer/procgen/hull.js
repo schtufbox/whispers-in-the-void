@@ -120,5 +120,26 @@ export function buildHullGeometry(hull) {
   }
   const merged = mergeGeometries(parts, false)
   merged.computeVertexNormals()
+  // Cylindrical UVs for tiling hull metal maps (ships use +Z as length axis).
+  addCylindricalUVs(merged, length)
   return merged
+}
+
+/** u = angle around the hull, v = length along local +Z (nose→tail). */
+function addCylindricalUVs(geometry, length) {
+  const pos = geometry.getAttribute('position')
+  if (!pos) return
+  const uvs = new Float32Array(pos.count * 2)
+  const invLen = length > 1e-6 ? 1 / length : 1
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i)
+    const y = pos.getY(i)
+    const z = pos.getZ(i)
+    // Angle around longitudinal axis; wings get usable UVs from the same map.
+    const u = (Math.atan2(y, x) / (Math.PI * 2) + 1) % 1
+    const v = (z * invLen + 0.5)
+    uvs[i * 2] = u * 2.2 // slight tile around circumference
+    uvs[i * 2 + 1] = v * 1.6
+  }
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
 }

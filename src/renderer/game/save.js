@@ -62,6 +62,23 @@ export function deserializeGameState(data) {
   // never gets the "no hostiles at home" protection, which is harmless.
   gameState.player.startingSystemId ??= null
   gameState.player.waypointPosition ??= null
+  gameState.player.plottedRoute ??= null
+  // Pre-docking-save fields: null = was flying when saved.
+  gameState.player.dockedBodyId ??= null
+  gameState.player.dockedExteriorPosition ??= null
+  gameState.player.dockedApproachDir ??= null
+  // Keep last pose arrays valid if an older/corrupt save omitted them.
+  const ship = gameState.player.ship
+  if (!Array.isArray(ship.position) || ship.position.length !== 3) {
+    ship.position = [0, 400, 0]
+  }
+  if (!Array.isArray(ship.velocity) || ship.velocity.length !== 3) {
+    ship.velocity = [0, 0, 0]
+  }
+  if (!Array.isArray(ship.quaternion) || ship.quaternion.length !== 4) {
+    ship.quaternion = [0, 0, 0, 1]
+  }
+  ship.throttle ??= 0
   gameState.flags.startingSystemPeaceBroken ??= false
 
   // Resolve any crafts that finished while the save was offline (wall-clock).

@@ -40,8 +40,12 @@ let projectileCounter = 0
 // accumulated from per-frame dt), never wall-clock time, so combat logic
 // behaves identically whether it's run at 60fps or fast-forwarded in a test.
 
-export function applyDamage(entity, amount, simTime = null) {
+// Player ship takes less weapon damage than NPCs (same shot, less effect).
+export const PLAYER_DAMAGE_TAKEN_MULT = 0.75
+
+export function applyDamage(entity, amount, simTime = null, { player = false } = {}) {
   let remaining = amount
+  if (player) remaining *= PLAYER_DAMAGE_TAKEN_MULT
   if (entity.shields > 0) {
     const absorbed = Math.min(entity.shields, remaining)
     entity.shields -= absorbed
@@ -175,7 +179,8 @@ export function updateProjectiles(gameState, dt, onHit) {
       const targetPos = new THREE.Vector3().fromArray(target.position)
       const hitDistance = HIT_RADIUS + getShipCollisionRadius(targetShipClass)
       if (closestDistanceToSegment(targetPos, prevPos, newPos) < hitDistance) {
-        applyDamage(target, proj.damage, gameState.simTime)
+        const isPlayer = target === gameState.player.ship
+        applyDamage(target, proj.damage, gameState.simTime, { player: isPlayer })
         // Firing on a non-hostile ship (a trader) while home permanently
         // breaks the starting system's peace — see main.js's ambient
         // spawner, which otherwise only ever spawns neutral traffic there.
@@ -190,7 +195,15 @@ export function updateProjectiles(gameState, dt, onHit) {
             spawnWreck(newPos.toArray(), gameState.simTime, Math.random, target.shipClassId ?? target.classId)
           )
         }
-        onHit?.({ position: newPos.toArray(), weaponType: proj.weaponType, weaponId: proj.weaponId, destroyed: !!target.destroyed })
+        onHit?.({
+          position: newPos.toArray(),
+          weaponType: proj.weaponType,
+          weaponId: proj.weaponId,
+          destroyed: !!target.destroyed,
+          hitPlayer: isPlayer,
+          // Incoming shot direction (world) for directional damage vignette.
+          inboundDir: prevPos.clone().sub(newPos).toArray()
+        })
         hit = true
         break
       }
@@ -271,7 +284,7 @@ function opponentsFor(npc, gameState) {
   return []
 }
 
-export function updateNpcAI(npc, gameState, dt, onFire) {
+export function updateNpcAI(npc, gameState, dt, onFire, onPlayerHit) {
   if (npc.destroyed) return
   const npcShipClass = getShipClass(npc.shipClassId)
   regenShields(npc, npcShipClass, gameState.simTime, dt)
@@ -348,9 +361,10 @@ export function updateNpcAI(npc, gameState, dt, onFire) {
     velocity.addScaledVector(forward, stats.accel * 1.6 * dt)
     const hitDistance = getShipCollisionRadius(npcShipClass) + getShipCollisionRadius(getShipClass(gameState.player.ship.classId))
     if (npcPos.distanceTo(playerPos) < hitDistance) {
-      applyDamage(gameState.player.ship, RAM_DAMAGE, gameState.simTime)
+      applyDamage(gameState.player.ship, RAM_DAMAGE, gameState.simTime, { player: true })
       npc.hull = 0
       npc.destroyed = true
+      onPlayerHit?.(npc.position)
     }
   } else if (npc.aiState === 'flee') {
     const fleeFromPos = opponent ? new THREE.Vector3().fromArray(opponent.position) : playerPos

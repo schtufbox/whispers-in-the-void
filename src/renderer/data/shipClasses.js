@@ -8,24 +8,31 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     role: 'trader',
     price: 12000,
     stats: { hull: 100, shields: 50, armor: 20, cargoCapacity: 40, speed: 120, turnRate: 1.8, accel: 30 },
-    hardpoints: [{ id: 'fwd1', position: [0, 0.2, 10], type: 'laser' }],
+    // Hardpoint near the rounded nose (Gallente-shuttle-ish silhouette).
+    hardpoints: [{ id: 'fwd1', position: [0, 0.35, 8.5], type: 'laser' }],
     hull: {
-      length: 22,
-      // Blunt freighter nose, fat cargo mid, truncated drive section.
-      stationWidths: [0.9, 2.0, 2.5, 2.5, 2.1, 1.1],
-      stationHeights: [0.7, 1.2, 1.5, 1.5, 1.2, 0.7],
-      crossSectionSides: 6,
-      wings: [{ atStation: 3, span: 4.5, sweep: 0.3, thickness: 0.35, side: 'both' }],
-      // Slight cargo-module offset — starter ship still mostly clean.
-      stationOffsetsX: [0, 0.05, 0.12, 0.12, 0.06, 0],
-      color: '#9aa8b8',
+      // Compact shuttle: rounded organic mid (Gallente starter vibe — Velator/
+      // Imicus family: bulbous body, short fins, twin rear drives), not a box freighter.
+      length: 18,
+      // Needle tip → swollen mid capsule → slim engine bustle.
+      stationWidths: [0.35, 1.15, 2.05, 2.15, 1.55, 0.85],
+      stationHeights: [0.3, 0.95, 1.55, 1.65, 1.2, 0.7],
+      crossSectionSides: 12,
+      // Short swept-back fins mid-body (not cargo wings).
+      wings: [
+        { atStation: 3, span: 2.6, sweep: -0.85, thickness: 0.22, side: 'both', tipOffsetY: -0.15 }
+      ],
+      stationOffsetsX: [0, 0, 0, 0, 0, 0],
+      stationOffsetsY: [0, 0.05, 0.08, 0.05, 0, -0.05],
+      // Soft blue-green hull — Gallente-adjacent, not industrial grey.
+      color: '#6a9a88',
       style: {
-        asymmetric: true,
-        bridgeSide: 1,
+        asymmetric: false,
+        bridgeSide: 0,
         engineLayout: 'twin',
-        hasRadiator: true,
-        hasCargoPods: true,
-        hasSensorMast: true,
+        hasRadiator: false,
+        hasCargoPods: false,
+        hasSensorMast: false,
         hasDockingRing: false
       }
     }

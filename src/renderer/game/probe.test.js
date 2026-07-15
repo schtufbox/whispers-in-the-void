@@ -7,9 +7,12 @@ import {
   recordProbeAttempt,
   isActiveMissionProbeTarget,
   MAX_PROBE_ATTEMPTS,
-  PROBE_EXHAUSTED_MESSAGE
+  probeExhaustedMessage,
+  probeSurveyReport,
+  planetArchetypeForBody
 } from './probe.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
+import { generateGalaxy } from '../procgen/galaxy.js'
 
 function freshShip() {
   return { cargo: {} }
@@ -57,7 +60,8 @@ test('each body can be probed at most MAX_PROBE_ATTEMPTS times', () => {
   assert.equal(gameState.probeCounts['body-1'], MAX_PROBE_ATTEMPTS)
   assert.equal(canProbeBody(gameState, 'body-1'), false)
   assert.equal(canProbeBody(gameState, 'body-2'), true)
-  assert.match(PROBE_EXHAUSTED_MESSAGE, /never will/i)
+  assert.match(probeExhaustedMessage('Nyxara'), /Nyxara fully scanned/)
+  assert.match(probeExhaustedMessage(''), /Target fully scanned/)
 })
 
 test('forceFind always yields a survey-data find when cargo has room', () => {
@@ -83,4 +87,37 @@ test('isActiveMissionProbeTarget detects open probe and investigation targets', 
   assert.equal(isActiveMissionProbeTarget(gameState, 'b'), true)
   assert.equal(isActiveMissionProbeTarget(gameState, 'c'), false)
   assert.equal(isActiveMissionProbeTarget(gameState, 'x'), false)
+})
+
+test('probeSurveyReport classifies planets, moons, stars, and asteroid fields', () => {
+  const galaxy = generateGalaxy(42)
+  const system = galaxy.systems.find((s) => s.bodies.some((b) => b.kind === 'planet')) ?? galaxy.systems[0]
+  const planet = system.bodies.find((b) => b.kind === 'planet')
+  const moon = system.bodies.find((b) => b.kind === 'moon')
+  const field = galaxy.systems.flatMap((s) => s.bodies).find((b) => b.kind === 'asteroidField')
+
+  const planetLines = probeSurveyReport(planet, system)
+  assert.ok(planetLines.some((l) => /Body type: Planet/.test(l)))
+  assert.ok(planetLines.some((l) => /Atmosphere:/.test(l)))
+  assert.ok(planetLines.some((l) => /Life:|Flora|Fauna|biosignatures/i.test(l)))
+  assert.equal(planetArchetypeForBody(planet), planetArchetypeForBody(planet))
+
+  if (moon) {
+    const moonLines = probeSurveyReport(moon, system)
+    assert.ok(moonLines.some((l) => /Moon/.test(l)))
+    assert.equal(planetArchetypeForBody(moon), 'rocky')
+  }
+
+  const starLines = probeSurveyReport(
+    { id: `${system.id}:star`, name: `${system.name} Star`, kind: 'star' },
+    system
+  )
+  assert.ok(starLines.some((l) => /Star/.test(l)))
+
+  if (field) {
+    const fieldSys = galaxy.systems.find((s) => s.bodies.includes(field))
+    const fieldLines = probeSurveyReport(field, fieldSys)
+    assert.ok(fieldLines.some((l) => /Asteroid/.test(l)))
+    assert.ok(fieldLines.some((l) => /Ore survey:/.test(l)))
+  }
 })

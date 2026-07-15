@@ -26,18 +26,26 @@ import { acceptMission, turnInMission } from '../game/missions.js'
 import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
-/* Top-aligned (not vertically centered) so Trade / Shipyard / etc. keep the
-   same header Y when side boxes appear or content height changes. */
+/* Docked chrome: actions stay clickable; full menu only when .services-open.
+   Top-aligned so Trade / Shipyard / etc. keep the same header Y when side
+   boxes appear or content height changes. */
 #docking-ui {
-  position: fixed; inset: 0; background: rgba(4,6,12,0.38); backdrop-filter: blur(1.5px);
+  position: fixed; inset: 0; background: transparent; backdrop-filter: none;
   font-family: monospace; color: #cfe3ff; display: none;
   align-items: flex-start; justify-content: center;
   padding-top: 6vh; box-sizing: border-box; z-index: 50;
+  pointer-events: none;
+}
+#docking-ui.services-open {
+  background: rgba(4,6,12,0.38); backdrop-filter: blur(1.5px);
+  pointer-events: auto;
 }
 #docking-ui .docked-layout {
-  display: flex; gap: 16px; align-items: flex-start;
+  display: none; gap: 16px; align-items: flex-start;
   max-height: calc(100vh - 6vh - 2vh); min-height: 0;
+  pointer-events: auto;
 }
+#docking-ui.services-open .docked-layout { display: flex; }
 #docking-ui .panel, #docking-ui .side-panel {
   max-height: calc(100vh - 6vh - 2vh); overflow-y: auto; padding: 18px 22px;
   background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
@@ -56,6 +64,20 @@ const STYLE = `
 #docking-ui .side-panel.jobs-side { max-height: none; }
 #docking-ui .side-panel h3 { margin: 0 0 8px 0; }
 #docking-ui .side-panel h3 + h3 { margin-top: 14px; }
+#docking-ui .side-panel .panel-kicker {
+  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #7fe6ff; opacity: 0.75; margin: 0 0 10px 0;
+  text-shadow: 0 0 6px rgba(79,195,217,0.45);
+}
+#docking-ui .side-panel .meta-line {
+  font-size: 11px; opacity: 0.75; margin: 0 0 8px 0;
+}
+#docking-ui .side-panel .holds-actions {
+  display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 4px;
+}
+#docking-ui .side-panel .holds-actions button {
+  margin-right: 0; padding: 3px 8px; font-size: 11px;
+}
 #docking-ui .side-panel .empty { opacity: 0.5; font-size: 12px; }
 #docking-ui .side-panel .job-row { font-size: 12px; margin-bottom: 10px; }
 #docking-ui .side-panel .job-row .job-name { color: #cfe3ff; margin-bottom: 2px; }
@@ -110,7 +132,12 @@ const STYLE = `
 #docking-ui .dock-prompt button.prompt-cancel:hover { background: rgba(224,90,90,0.22); }
 #docking-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
 #docking-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 18px 0 8px; }
-#docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+#docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 12px; }
+#docking-ui .header .body-name { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#docking-ui .header-credits {
+  flex-shrink: 0; font-size: 13px; letter-spacing: 1px; color: #ffe08a;
+  text-shadow: 0 0 8px rgba(255,210,70,0.4); white-space: nowrap;
+}
 #docking-ui .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid rgba(111,216,242,0.25); }
 #docking-ui .tab {
   background: transparent; border: none; border-bottom: 2px solid transparent; color: #8fb3d9;
@@ -124,9 +151,27 @@ const STYLE = `
 #docking-ui td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
 #docking-ui tbody tr:hover td { background: rgba(111,216,242,0.05); }
 #docking-ui .credits { margin-bottom: 10px; opacity: 0.85; font-size: 12px; letter-spacing: 0.5px; }
-/* Undock alone bottom-right, clear of cockpit corner braces (inset ~44px). */
-#docking-ui button.undock-btn {
+/* Bottom-right action stack, clear of cockpit corner braces (inset ~44px). */
+#docking-ui .dock-actions {
   position: fixed; bottom: 52px; right: 52px; z-index: 55;
+  display: flex; flex-direction: column; gap: 10px; align-items: stretch;
+  pointer-events: auto;
+}
+#docking-ui button.services-btn {
+  background: rgba(255,210,70,0.16); border: 1px solid rgba(255,210,70,0.65); color: #ffe08a;
+  padding: 12px 22px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
+  font-size: 13px; text-transform: uppercase;
+  box-shadow: 0 0 18px rgba(255,210,70,0.22), 0 2px 8px rgba(0,0,0,0.45);
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+#docking-ui button.services-btn:hover {
+  background: rgba(255,210,70,0.28); box-shadow: 0 0 22px rgba(255,210,70,0.4), 0 2px 10px rgba(0,0,0,0.5);
+  transform: translateY(-1px);
+}
+#docking-ui.services-open button.services-btn {
+  background: rgba(255,210,70,0.28); box-shadow: 0 0 16px rgba(255,210,70,0.35);
+}
+#docking-ui button.undock-btn {
   background: rgba(224,90,90,0.16); border: 1px solid rgba(224,90,90,0.55); color: #ffb3b3;
   padding: 12px 28px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
   font-size: 13px; text-transform: uppercase;
@@ -210,6 +255,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       <div class="panel">
         <div class="header">
           <h2 class="body-name"></h2>
+          <span class="header-credits"></span>
         </div>
         <div class="tabs">
           <button data-tab="trade" class="tab active">Trade</button>
@@ -226,12 +272,21 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         <div class="side-panel jobs-side" style="display:none"></div>
       </div>
     </div>
-    <button type="button" class="undock-btn">Undock</button>
+    <div class="dock-actions">
+      <button type="button" class="services-btn">Station Services</button>
+      <button type="button" class="undock-btn">Undock</button>
+    </div>
   `
   container.appendChild(root)
 
   const bodyNameEl = root.querySelector('.body-name')
+  const headerCreditsEl = root.querySelector('.header-credits')
   const contentEl = root.querySelector('.tab-content')
+
+  function updateHeaderCredits() {
+    const n = Math.max(0, Math.floor(Number(gameState.player.credits) || 0))
+    headerCreditsEl.textContent = `${n.toLocaleString()} cr`
+  }
   const shipyardLeftCol = root.querySelector('.shipyard-left-column')
   const statsSideEl = root.querySelector('.stats-side')
   const loadoutSideEl = root.querySelector('.loadout-side')
@@ -297,24 +352,122 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     return openDialog({ title, body, okLabel })
   }
 
-  // Always visible holds; station ships + industry jobs in separate right-side boxes.
+  // Always visible ship inventory on the right; station ships + industry jobs below.
   function renderSidePanel() {
+    updateHeaderCredits()
+    ensureBlueprintMaps(gameState)
     const shipClass = getShipClass(gameState.player.ship.classId)
     const ship = gameState.player.ship
     const cargoRows = Object.entries(ship.cargo).filter(([, qty]) => qty > 0)
     const oreRows = Object.entries(ship.miningHold).filter(([, qty]) => qty > 0)
     const cargoUsed = cargoRows.reduce((a, [, qty]) => a + qty, 0)
     const oreUsed = oreRows.reduce((a, [, qty]) => a + qty, 0)
+    const spareWeaponRows = Object.entries(ship.spareWeapons ?? {}).filter(([, qty]) => qty > 0)
+    const shipBpRows = Object.entries(ship.blueprints ?? {}).filter(([, qty]) => qty > 0)
+    const shipParts = ship.shipParts ?? 0
+    const atBay =
+      currentBody &&
+      (currentBody.kind === 'station' || currentBody.kind === 'settlement')
+    // Transfer actions only when docked — Storage tab uses the same station body.
+    const transferHtml = atBay
+      ? `
+      <div class="holds-actions">
+        <button type="button" class="store-cargo">Store cargo</button>
+        <button type="button" class="retrieve-cargo">Retrieve cargo</button>
+      </div>
+      <div class="holds-actions">
+        <button type="button" class="store-ore">Store ore</button>
+        <button type="button" class="retrieve-ore">Retrieve ore</button>
+      </div>
+      <div class="holds-actions">
+        <button type="button" class="store-parts">Store parts</button>
+        <button type="button" class="retrieve-parts">Retrieve parts</button>
+      </div>
+      ${spareWeaponRows.length ? `<div class="holds-actions"><button type="button" class="store-weapons">Store salvaged weapons</button></div>` : ''}
+      ${shipBpRows.length ? `<div class="holds-actions"><button type="button" class="store-blueprints">Store blueprints</button></div>` : ''}
+      `
+      : ''
+
     holdsSideEl.innerHTML = `
+      <div class="panel-kicker">Your ship</div>
       <h3>Cargo Hold (${cargoUsed}/${shipClass.stats.cargoCapacity})</h3>
       ${cargoRows.length ? `<table><tbody>${cargoRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Empty</div>'}
       <h3>Mining Hold (${oreUsed}/${shipClass.stats.miningCapacity})</h3>
       ${oreRows.length ? `<table><tbody>${oreRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Empty</div>'}
+      <h3>Ship Parts</h3>
+      <div class="meta-line">Carried: ${shipParts}</div>
+      <h3>Salvaged Weapons</h3>
+      ${spareWeaponRows.length
+        ? `<table><tbody>${spareWeaponRows.map(([id, qty]) => `
+            <tr>
+              <td>${getWeapon(id).name}</td><td>×${qty}</td>
+              <td><button type="button" class="sell-carried-weapon" data-weapon="${id}">Sell</button></td>
+            </tr>`).join('')}</tbody></table>`
+        : '<div class="empty">None</div>'}
+      <h3>Blueprints</h3>
+      ${shipBpRows.length
+        ? `<table><tbody>${shipBpRows.map(([id, qty]) => {
+          let name = id
+          try { name = getBlueprint(id).name } catch { /* */ }
+          return `<tr><td>${escapeHtml(name)}</td><td>×${qty}</td></tr>`
+        }).join('')}</tbody></table>`
+        : '<div class="empty">None</div>'}
+      ${transferHtml}
     `
 
-    const atBay =
-      currentBody &&
-      (currentBody.kind === 'station' || currentBody.kind === 'settlement')
+    if (atBay) {
+      const reStorage = () => {
+        renderSidePanel()
+        if (currentTab === 'storage') renderStorage()
+        else if (currentTab === 'industry') renderIndustry()
+        else if (currentTab === 'shipyard') renderShipyard()
+      }
+      holdsSideEl.querySelector('.store-cargo')?.addEventListener('click', () => {
+        storeCargo(gameState, currentBody.id)
+        reStorage()
+      })
+      holdsSideEl.querySelector('.retrieve-cargo')?.addEventListener('click', async () => {
+        try { retrieveCargo(gameState, currentBody.id) } catch (err) { await showNotice('Retrieve failed', err.message) }
+        reStorage()
+      })
+      holdsSideEl.querySelector('.store-ore')?.addEventListener('click', () => {
+        storeOre(gameState, currentBody.id)
+        reStorage()
+      })
+      holdsSideEl.querySelector('.retrieve-ore')?.addEventListener('click', async () => {
+        try { retrieveOre(gameState, currentBody.id) } catch (err) { await showNotice('Retrieve failed', err.message) }
+        reStorage()
+      })
+      holdsSideEl.querySelector('.store-parts')?.addEventListener('click', () => {
+        storeShipParts(gameState, currentBody.id)
+        reStorage()
+      })
+      holdsSideEl.querySelector('.retrieve-parts')?.addEventListener('click', () => {
+        retrieveShipParts(gameState, currentBody.id)
+        reStorage()
+      })
+      holdsSideEl.querySelector('.store-weapons')?.addEventListener('click', () => {
+        storeCarriedWeapons(gameState, currentBody.id)
+        reStorage()
+      })
+      holdsSideEl.querySelector('.store-blueprints')?.addEventListener('click', () => {
+        storeBlueprints(gameState, currentBody.id)
+        reStorage()
+      })
+    }
+
+    holdsSideEl.querySelectorAll('.sell-carried-weapon').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        try {
+          sellCarriedWeapon(gameState, btn.dataset.weapon)
+        } catch (err) {
+          await showNotice('Sale failed', err.message)
+        }
+        renderSidePanel()
+        if (currentTab === 'storage') renderStorage()
+      })
+    )
+
     if (!atBay) {
       shipsSideEl.style.display = 'none'
       shipsSideEl.innerHTML = ''
@@ -323,7 +476,6 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       return
     }
 
-    ensureBlueprintMaps(gameState)
     const storage = gameState.stationStorage[currentBody.id] ?? { ships: [] }
     storage.ships ??= []
     shipsSideEl.style.display = 'block'
@@ -717,43 +869,26 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       cargo: {}, miningHold: {}, shipParts: 0, ships: [], weapons: {}, blueprints: {}
     }
     storage.blueprints ??= {}
-    const ship = gameState.player.ship
-    const shipClass = getShipClass(ship.classId)
     const cargoRows = Object.entries(storage.cargo).filter(([, qty]) => qty > 0)
     const oreRows = Object.entries(storage.miningHold).filter(([, qty]) => qty > 0)
     const weaponRows = Object.entries(storage.weapons ?? {}).filter(([, qty]) => qty > 0)
-    const spareWeaponRows = Object.entries(ship.spareWeapons ?? {}).filter(([, qty]) => qty > 0)
-    const shipBpRows = Object.entries(ship.blueprints ?? {}).filter(([, qty]) => qty > 0)
     const storageBpRows = Object.entries(storage.blueprints ?? {}).filter(([, qty]) => qty > 0)
+    const cargoStored = cargoRows.reduce((a, [, qty]) => a + qty, 0)
+    const oreStored = oreRows.reduce((a, [, qty]) => a + qty, 0)
 
+    // Station bay contents only — ship inventory + transfer controls live in the
+    // right "Your ship" side panel (cargo / mining / parts / salvaged gear).
     contentEl.innerHTML = `
-      <p style="opacity:0.7;font-size:12px;">Storage is per-station — anything left here can only be picked up again at ${currentBody.name}.</p>
-      <h3>Cargo</h3>
-      <div class="credits">In ship: ${Object.values(ship.cargo).reduce((a, b) => a + b, 0)}/${shipClass.stats.cargoCapacity} | In storage: ${cargoRows.reduce((a, [, qty]) => a + qty, 0)}</div>
-      ${cargoRows.length ? `<table><tbody>${cargoRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : ''}
-      <button class="store-cargo">Store All Cargo</button><button class="retrieve-cargo">Retrieve All Cargo</button>
-      <h3>Mining Hold</h3>
-      <div class="credits">In ship: ${Object.values(ship.miningHold).reduce((a, b) => a + b, 0)}/${shipClass.stats.miningCapacity} | In storage: ${oreRows.reduce((a, [, qty]) => a + qty, 0)}</div>
-      ${oreRows.length ? `<table><tbody>${oreRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : ''}
-      <button class="store-ore">Store All Ore</button><button class="retrieve-ore">Retrieve All Ore</button>
-      <h3>Ship Parts</h3>
-      <div class="credits">Carried: ${ship.shipParts ?? 0} | In storage: ${storage.shipParts ?? 0}</div>
-      <button class="store-parts">Store All</button><button class="retrieve-parts">Retrieve All</button>
-      <h3>Salvaged Weapons (on ship)</h3>
-      ${spareWeaponRows.length ? `
-      <table>
-        <thead><tr><th>Weapon</th><th>Carried</th><th></th></tr></thead>
-        <tbody>${spareWeaponRows.map(([id, qty]) => `
-          <tr>
-            <td>${getWeapon(id).name}</td><td>${qty}</td>
-            <td>
-              <button class="sell-carried-weapon" data-weapon="${id}">Sell (${Math.round(getWeapon(id).price * 0.5)}cr)</button>
-            </td>
-          </tr>`).join('')}</tbody>
-      </table>
-      <button class="store-weapons">Store All Salvaged Weapons Here</button>
-      <p style="opacity:0.65;font-size:11px;">Equip salvaged weapons from the Shipyard Loadout tab.</p>` : '<p>No salvaged weapons on board. Rare wreck drops may yield hardpoint weapons.</p>'}
-      <h3>Weapons (station storage)</h3>
+      <p style="opacity:0.7;font-size:12px;">Station storage at ${escapeHtml(currentBody.name)} — only retrievable here. Ship holds and transfer buttons are on the right.</p>
+      <h3>Station Cargo</h3>
+      <div class="credits">${cargoStored} unit${cargoStored === 1 ? '' : 's'} stored</div>
+      ${cargoRows.length ? `<table><tbody>${cargoRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : '<p class="empty" style="opacity:0.5">Empty</p>'}
+      <h3>Station Ore</h3>
+      <div class="credits">${oreStored} unit${oreStored === 1 ? '' : 's'} stored</div>
+      ${oreRows.length ? `<table><tbody>${oreRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody></table>` : '<p class="empty" style="opacity:0.5">Empty</p>'}
+      <h3>Station Ship Parts</h3>
+      <div class="credits">${storage.shipParts ?? 0} in bay</div>
+      <h3>Weapons (station)</h3>
       ${weaponRows.length ? `
       <table>
         <thead><tr><th>Weapon</th><th>In Storage</th><th></th></tr></thead>
@@ -762,21 +897,8 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
             <td>${getWeapon(id).name}</td><td>${qty}</td>
             <td><button class="sell-weapon" data-weapon="${id}">Sell (${Math.round(getWeapon(id).price * 0.5)}cr)</button></td>
           </tr>`).join('')}</tbody>
-      </table>` : '<p>No spare weapons stored here.</p>'}
-      <h3>Blueprints (on ship)</h3>
-      ${shipBpRows.length ? `
-      <table>
-        <thead><tr><th>Blueprint</th><th>Qty</th></tr></thead>
-        <tbody>${shipBpRows.map(([id, qty]) => {
-          let name = id
-          try { name = getBlueprint(id).name } catch { /* */ }
-          return `<tr><td>${escapeHtml(name)}</td><td>${qty}</td></tr>`
-        }).join('')}</tbody>
-      </table>
-      <button class="store-blueprints">Store All Blueprints Here</button>
-      <p style="opacity:0.65;font-size:11px;">Industry crafts from station storage only — move ore + blueprints here first.</p>`
-        : '<p>No blueprints on board. Very rare wreck or probe finds.</p>'}
-      <h3>Blueprints (station storage)</h3>
+      </table>` : '<p style="opacity:0.5">No spare weapons stored here.</p>'}
+      <h3>Blueprints (station)</h3>
       ${storageBpRows.length ? `
       <table>
         <thead><tr><th>Blueprint</th><th>Qty</th></tr></thead>
@@ -786,22 +908,11 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           return `<tr><td>${escapeHtml(name)}</td><td>${qty}</td></tr>`
         }).join('')}</tbody>
       </table>
-      <button class="retrieve-blueprints">Retrieve All Blueprints</button>`
-        : '<p>No blueprints stored here.</p>'}
-      <p style="opacity:0.7;font-size:12px;margin-top:16px;">Parked ships are listed in the <strong>Ships stored here</strong> panel on the right — rename, activate, or sell them there.</p>
+      <button class="retrieve-blueprints">Retrieve All Blueprints</button>
+      <p style="opacity:0.65;font-size:11px;">Industry crafts from station storage — move ore + blueprints here from the ship panel first.</p>`
+        : '<p style="opacity:0.5">No blueprints stored here.</p>'}
+      <p style="opacity:0.7;font-size:12px;margin-top:16px;">Parked ships: <strong>Ships stored here</strong> on the right. Equip weapons from Shipyard Loadout.</p>
     `
-    contentEl.querySelector('.store-cargo').addEventListener('click', () => { storeCargo(gameState, currentBody.id); renderStorage() })
-    contentEl.querySelector('.retrieve-cargo').addEventListener('click', async () => {
-      try { retrieveCargo(gameState, currentBody.id) } catch (err) { await showNotice('Retrieve failed', err.message) }
-      renderStorage()
-    })
-    contentEl.querySelector('.store-ore').addEventListener('click', () => { storeOre(gameState, currentBody.id); renderStorage() })
-    contentEl.querySelector('.retrieve-ore').addEventListener('click', async () => {
-      try { retrieveOre(gameState, currentBody.id) } catch (err) { await showNotice('Retrieve failed', err.message) }
-      renderStorage()
-    })
-    contentEl.querySelector('.store-parts').addEventListener('click', () => { storeShipParts(gameState, currentBody.id); renderStorage() })
-    contentEl.querySelector('.retrieve-parts').addEventListener('click', () => { retrieveShipParts(gameState, currentBody.id); renderStorage() })
     contentEl.querySelectorAll('.sell-weapon').forEach((btn) =>
       btn.addEventListener('click', async () => {
         try {
@@ -812,24 +923,6 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         renderStorage()
       })
     )
-    contentEl.querySelectorAll('.sell-carried-weapon').forEach((btn) =>
-      btn.addEventListener('click', async () => {
-        try {
-          sellCarriedWeapon(gameState, btn.dataset.weapon)
-        } catch (err) {
-          await showNotice('Sale failed', err.message)
-        }
-        renderStorage()
-      })
-    )
-    contentEl.querySelector('.store-weapons')?.addEventListener('click', () => {
-      storeCarriedWeapons(gameState, currentBody.id)
-      renderStorage()
-    })
-    contentEl.querySelector('.store-blueprints')?.addEventListener('click', () => {
-      storeBlueprints(gameState, currentBody.id)
-      renderStorage()
-    })
     contentEl.querySelector('.retrieve-blueprints')?.addEventListener('click', () => {
       retrieveBlueprints(gameState, currentBody.id)
       renderStorage()
@@ -958,6 +1051,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
   }
 
   function renderCurrentTab() {
+    updateHeaderCredits()
     if (currentTab !== 'shipyard') hideShipyardSideBoxes()
     renderers[currentTab]()
   }
@@ -970,7 +1064,26 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     })
   )
 
+  const servicesBtn = root.querySelector('.services-btn')
+  let servicesOpen = false
+
+  function setServicesOpen(open) {
+    servicesOpen = !!open
+    root.classList.toggle('services-open', servicesOpen)
+    servicesBtn.textContent = servicesOpen ? 'Close Services' : 'Station Services'
+    servicesBtn.setAttribute('aria-pressed', servicesOpen ? 'true' : 'false')
+    if (servicesOpen) {
+      updateHeaderCredits()
+      renderCurrentTab()
+    }
+  }
+
+  servicesBtn.addEventListener('click', () => {
+    setServicesOpen(!servicesOpen)
+  })
+
   root.querySelector('.undock-btn').addEventListener('click', () => {
+    setServicesOpen(false)
     root.style.display = 'none'
     onUndock?.()
   })
@@ -985,13 +1098,16 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       // for kinds (planet/moon) whose name doesn't already spell it out.
       const kindLabel = body.kind.charAt(0).toUpperCase() + body.kind.slice(1)
       bodyNameEl.textContent = body.name.endsWith(kindLabel) ? body.name : `${body.name} (${body.kind})`
+      updateHeaderCredits()
       selectedShipClassId = null
       currentTab = 'trade'
       tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'trade'))
-      renderCurrentTab()
+      // Menu closed by default — only Station Services + Undock until opened.
+      setServicesOpen(false)
       root.style.display = 'flex'
     },
     hide() {
+      setServicesOpen(false)
       root.style.display = 'none'
     },
     element: root

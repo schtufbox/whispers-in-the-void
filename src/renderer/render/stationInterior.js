@@ -1,18 +1,52 @@
 import * as THREE from 'three'
+import { stationMaterialMaps } from './textures.js'
 
 // Shared docking-bay backdrop for every dockable body. Built once, animated
 // while the player is docked (loaders, drones, lights, hangar door field).
+// Station + settlement docks share this interior (same bay mesh for both).
 
 const BAY_WIDTH = 72
 const BAY_HEIGHT = 48
 const BAY_LENGTH = 150
 
-const wallMat = () => new THREE.MeshStandardMaterial({ color: 0x1a2438, flatShading: true, metalness: 0.55, roughness: 0.5 })
-const floorMat = () => new THREE.MeshStandardMaterial({ color: 0x0c121c, flatShading: true, metalness: 0.65, roughness: 0.45 })
-const beamMat = () => new THREE.MeshStandardMaterial({ color: 0x2a3a55, flatShading: true, metalness: 0.7, roughness: 0.4 })
-const accentMat = () => new THREE.MeshStandardMaterial({ color: 0x4fc3d9, flatShading: true, metalness: 0.4, roughness: 0.45, emissive: 0x1a4050, emissiveIntensity: 0.35 })
-const hazardMat = () => new THREE.MeshStandardMaterial({ color: 0xc45a18, flatShading: true, metalness: 0.35, roughness: 0.55 })
-const panelMat = () => new THREE.MeshStandardMaterial({ color: 0x141c28, flatShading: true, metalness: 0.6, roughness: 0.5 })
+const wallMat = () => new THREE.MeshStandardMaterial({
+  color: 0x3a4a62,
+  metalness: 0.85,
+  roughness: 0.72,
+  ...stationMaterialMaps('wall', 0.42)
+})
+const floorMat = () => new THREE.MeshStandardMaterial({
+  color: 0x2a3038,
+  metalness: 0.88,
+  roughness: 0.7,
+  ...stationMaterialMaps('floor', 0.45)
+})
+const beamMat = () => new THREE.MeshStandardMaterial({
+  color: 0x4a5a70,
+  metalness: 0.9,
+  roughness: 0.65,
+  ...stationMaterialMaps('beam', 0.4)
+})
+const accentMat = () => new THREE.MeshStandardMaterial({
+  color: 0x4fc3d9,
+  metalness: 0.55,
+  roughness: 0.5,
+  emissive: 0x1a4050,
+  emissiveIntensity: 0.35,
+  ...stationMaterialMaps('accent', 0.3)
+})
+const hazardMat = () => new THREE.MeshStandardMaterial({
+  color: 0xc45a18,
+  metalness: 0.45,
+  roughness: 0.55,
+  ...stationMaterialMaps('panel', 0.35)
+})
+const panelMat = () => new THREE.MeshStandardMaterial({
+  color: 0x2a3548,
+  metalness: 0.82,
+  roughness: 0.68,
+  ...stationMaterialMaps('panel', 0.4)
+})
 const glassMat = () => new THREE.MeshStandardMaterial({
   color: 0x1a3048,
   transparent: true,
@@ -22,7 +56,12 @@ const glassMat = () => new THREE.MeshStandardMaterial({
   emissive: 0x0a2035,
   emissiveIntensity: 0.3
 })
-const shipHullMat = (hex) => new THREE.MeshStandardMaterial({ color: hex, flatShading: true, metalness: 0.6, roughness: 0.4 })
+const shipHullMat = (hex) => new THREE.MeshStandardMaterial({
+  color: hex,
+  metalness: 0.75,
+  roughness: 0.55,
+  ...stationMaterialMaps('hull', 0.32)
+})
 
 function makeBox(w, h, d, mat, x, y, z, group) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat)
@@ -67,7 +106,12 @@ function makeDrone() {
   const g = new THREE.Group()
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(1.1, 0.55, 1.1),
-    new THREE.MeshStandardMaterial({ color: 0x5a6a7a, flatShading: true, metalness: 0.7, roughness: 0.35 })
+    new THREE.MeshStandardMaterial({
+      color: 0x5a6a7a,
+      metalness: 0.85,
+      roughness: 0.4,
+      ...stationMaterialMaps('panel', 0.35)
+    })
   )
   g.add(body)
   const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 1.4), panelMat())
@@ -86,7 +130,12 @@ function makeDrone() {
 // Humanoid silhouette walking on catwalks (cheap capsule + head).
 function makeWorker() {
   const g = new THREE.Group()
-  const suit = new THREE.MeshStandardMaterial({ color: 0x3a4a5a, flatShading: true, metalness: 0.4, roughness: 0.6 })
+  const suit = new THREE.MeshStandardMaterial({
+    color: 0x3a4a5a,
+    metalness: 0.55,
+    roughness: 0.55,
+    ...stationMaterialMaps('panel', 0.25)
+  })
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.7, 4, 8), suit)
   torso.position.y = 0.9
   g.add(torso)
@@ -250,8 +299,12 @@ export function buildStationInteriorMesh() {
   }
 
   // --- Cargo area (left) ---------------------------------------------------
-  const crateMat = new THREE.MeshStandardMaterial({ color: 0x3a4a3a, flatShading: true, metalness: 0.5, roughness: 0.55 })
-  const crateMat2 = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, flatShading: true, metalness: 0.45, roughness: 0.55 })
+  const crateMat = new THREE.MeshStandardMaterial({
+    color: 0x3a4a3a, metalness: 0.65, roughness: 0.55, ...stationMaterialMaps('panel', 0.3)
+  })
+  const crateMat2 = new THREE.MeshStandardMaterial({
+    color: 0x4a3a2a, metalness: 0.6, roughness: 0.55, ...stationMaterialMaps('radiator', 0.3)
+  })
   for (let i = 0; i < 12; i++) {
     const crate = makeCargoCrate(i % 2 === 0 ? crateMat : crateMat2)
     crate.position.set(

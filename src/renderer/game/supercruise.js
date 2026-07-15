@@ -63,82 +63,20 @@ export function ignoreBodyAsCruiseObstacle(body, destPos, destBodyId = null, arr
 }
 
 /**
- * If the straight line ship→target clips any body shell (except the
- * destination / its host), return an aim point that skirts the nearest threat;
- * otherwise return the original target.
- *
- * bodies: system bodies array; destinationBodyId: waypoint body to not avoid.
- * destPos / arrivalRange: used to also skip host bodies (settlement on planet).
+ * Path aim for supercruise. Always flies straight at the target — bodies
+ * on the line are tunnelled through (arcade cruise, not a traffic sim).
+ * Signature kept so main.js / tests don't need a call-site rewrite.
  */
 export function aimAroundObstacles(
   shipPos,
   targetPos,
-  bodies,
-  shipRadius,
-  destinationBodyId = null,
-  destPos = null,
-  arrivalRange = 60
+  _bodies,
+  _shipRadius,
+  _destinationBodyId = null,
+  _destPos = null,
+  _arrivalRange = 60
 ) {
-  if (!bodies?.length) return targetPos
-
-  const distToTarget = _pathDir.copy(targetPos).sub(shipPos).length()
-  if (distToTarget < 1e-3) return targetPos
-  _pathDir.multiplyScalar(1 / distToTarget)
-
-  // Final approach: commit straight to the waypoint (no more skirting).
-  if (distToTarget < Math.max(arrivalRange * FINAL_APPROACH_MUL, FINAL_APPROACH_MIN)) {
-    return targetPos
-  }
-
-  const scanDist = Math.min(distToTarget, LOOK_AHEAD)
-  let threatProj = Infinity
-  let threatClearance = 0
-  let threatBodyPos = null
-  const dest = destPos ?? targetPos
-
-  for (const body of bodies) {
-    if (ignoreBodyAsCruiseObstacle(body, dest, destinationBodyId, arrivalRange)) continue
-    const bodyRadius = collisionRadiusFor(body)
-    if (bodyRadius == null) continue
-
-    _bodyPos.fromArray(body.position)
-    _toBody.copy(_bodyPos).sub(shipPos)
-    const proj = _toBody.dot(_pathDir)
-    // Only care about obstacles ahead of us, not behind, and within look-ahead.
-    if (proj < 0 || proj > scanDist) continue
-
-    _closest.copy(shipPos).addScaledVector(_pathDir, proj)
-    const miss = _closest.distanceTo(_bodyPos)
-    const clearance = bodyRadius + shipRadius + AVOID_MARGIN
-    if (miss >= clearance) continue
-
-    // Nearest threat along the path wins (steer early for the first blocker).
-    if (proj < threatProj) {
-      threatProj = proj
-      threatClearance = clearance
-      threatBodyPos = _bodyPos.clone()
-    }
-  }
-
-  if (!threatBodyPos) return targetPos
-
-  // Lateral = component of (ship - body) perpendicular to path; head-on uses
-  // path × world-up so we prefer climbing over a random horizontal flip.
-  _lateral.copy(shipPos).sub(threatBodyPos)
-  _lateral.addScaledVector(_pathDir, -_lateral.dot(_pathDir))
-  if (_lateral.lengthSq() < 1e-6) {
-    _lateral.crossVectors(_pathDir, _up)
-    if (_lateral.lengthSq() < 1e-6) _lateral.crossVectors(_pathDir, _xAxis)
-  }
-  _lateral.normalize()
-
-  // Skirt outside the shell, slightly ahead of the closest approach so the
-  // ship commits past the body rather than orbiting it.
-  _avoidAim
-    .copy(threatBodyPos)
-    .addScaledVector(_lateral, threatClearance * 1.05)
-    .addScaledVector(_pathDir, threatClearance * AVOID_LEAD)
-  return _avoidAim.clone()
+  return targetPos
 }
 
 function smoothstep01(t) {
@@ -172,7 +110,7 @@ export function supercruiseApproachFactor(dist, arrivalRange, cruiseTopSpeed) {
 // Returns true once the ship has arrived (caller should disengage).
 // arrivalRange is the distance-to-target center that counts as "there"
 // (main.js sizes this off the waypoint body's collision shell).
-// bodies / shipRadius / destinationBodyId enable automatic path skirting.
+// bodies / shipRadius / destinationBodyId retained for API compat (no skirting).
 export function updateSupercruise(
   shipState,
   shipClass,
@@ -189,6 +127,7 @@ export function updateSupercruise(
   const dist = toTarget.length()
   if (dist < arrivalRange) return true
 
+  // Straight-line cruise: pass through anything on the path.
   const aimPos = aimAroundObstacles(
     shipPos,
     targetPos,

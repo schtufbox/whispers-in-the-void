@@ -100,23 +100,48 @@ export function craftDurationS(blueprintId) {
   return Math.round(CRAFT_DURATION_MIN_S + t * (CRAFT_DURATION_MAX_S - CRAFT_DURATION_MIN_S))
 }
 
+// Ship relative price (0–1 within ship roster) thresholds for rim ores.
+// Below these, recipes use only common raw/rich ore (core/mid-galaxy mining).
+export const SHIP_EXOTIC_ORE_FROM_R = 0.55   // upper half of hull prices
+export const SHIP_QUANTUM_ORE_FROM_R = 0.78  // top ~quintile / capital hulls
+
 /**
  * Ore recipe in mined-ore units (raw/rich/exotic/quantum).
- * Weapons: small raw/rich stacks. Ships: large totals with rarer tiers.
+ * Weapons and cheap/mid ships: raw + rich only.
+ * Expensive / large ships only: exotic, then quantum (outer-rim ores).
  */
 export function oreCostForBlueprint(blueprintId) {
   const bp = getBlueprint(blueprintId)
-  const t = blueprintComplexity(blueprintId)
-  // Weapons ~5–45 units; ships ~140–230 (driven by their higher t band).
-  const total = bp.kind === 'weapon'
-    ? Math.round(5 + (t / WEAPON_COMPLEXITY_MAX) * 40)
-    : Math.round(140 + ((t - SHIP_COMPLEXITY_MIN) / (1 - SHIP_COMPLEXITY_MIN)) * 90)
-  // Higher t shifts mass into rarer tiers (ships only hit meaningful exotic/quantum).
-  const quantum = Math.floor(total * t * t * 0.35)
-  const exotic = Math.floor(total * t * 0.28)
-  const rich = Math.floor(total * (0.12 + t * 0.28))
+  // r is 0–1 within kind by list price (log scale).
+  const r = relativePriceWithinKind(bp.kind, bp.listPrice)
+
+  if (bp.kind === 'weapon') {
+    // Hardpoints never need rim ore — small raw/rich stacks only.
+    const total = Math.round(5 + r * 40)
+    const rich = Math.floor(total * (0.1 + r * 0.28))
+    let raw = total - rich
+    if (raw < 2) raw = 2
+    const cost = { raw_ore: raw }
+    if (rich > 0) cost.rich_ore = rich
+    return cost
+  }
+
+  // Ships: total mass scales with price tier.
+  const total = Math.round(70 + r * 160) // ~70 cheapest → ~230 capital
+  let quantum = 0
+  let exotic = 0
+  if (r >= SHIP_EXOTIC_ORE_FROM_R) {
+    // 0 at threshold → peaks at top price.
+    const e = (r - SHIP_EXOTIC_ORE_FROM_R) / (1 - SHIP_EXOTIC_ORE_FROM_R)
+    exotic = Math.floor(total * e * e * 0.32)
+  }
+  if (r >= SHIP_QUANTUM_ORE_FROM_R) {
+    const q = (r - SHIP_QUANTUM_ORE_FROM_R) / (1 - SHIP_QUANTUM_ORE_FROM_R)
+    quantum = Math.floor(total * q * q * 0.38)
+  }
+  const rich = Math.floor(total * (0.14 + r * 0.32))
   let raw = total - quantum - exotic - rich
-  if (raw < 2) raw = 2
+  if (raw < 4) raw = 4
   const cost = {}
   if (raw > 0) cost.raw_ore = raw
   if (rich > 0) cost.rich_ore = rich

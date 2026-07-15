@@ -88,17 +88,13 @@ test('aimAroundObstacles leaves a clear path alone', () => {
   assert.deepEqual(aim.toArray(), targetPos.toArray())
 })
 
-test('aimAroundObstacles skirts a body sitting on the path', () => {
+test('aimAroundObstacles flies straight through a body on the path', () => {
   const shipPos = new THREE.Vector3(0, 0, 0)
   const targetPos = new THREE.Vector3(0, 0, 1000)
-  // Planet dead ahead on the boresight.
+  // Planet dead ahead — SC tunnels through, no skirting.
   const bodies = [{ id: 'blocker', kind: 'planet', position: [0, 0, 400], radius: 80 }]
   const aim = aimAroundObstacles(shipPos, targetPos, bodies, 5)
-  // Should not still aim straight through the planet center.
-  assert.notDeepEqual(aim.toArray(), targetPos.toArray())
-  // Skirt point should clear the shell (radius 80 + ship 5 + margin 40 = 125).
-  const distFromBody = aim.distanceTo(new THREE.Vector3(0, 0, 400))
-  assert.ok(distFromBody >= 120, `aim should sit outside the shell, got ${distFromBody.toFixed(1)}`)
+  assert.deepEqual(aim.toArray(), targetPos.toArray())
 })
 
 test('aimAroundObstacles does not avoid the destination body', () => {
@@ -166,12 +162,10 @@ test('supercruise reaches a surface settlement sitting on a large host planet', 
   assert.ok(dist >= arrivalRange * 0.9, 'should drop out near the arrival standoff, not on the mesh')
 })
 
-test('updateSupercruise with a blocker still reaches the target and stays outside its shell', () => {
+test('updateSupercruise with a blocker still reaches the target (tunnels through)', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const shipRadius = shipClass.hull.length / 2
   const shipState = { position: [0, 0, 0], velocity: [0, 0, 0], quaternion: [0, 0, 0, 1], supercruiseElapsed: 0 }
-  // Longer run at high cruise speed; blocker slightly off-center so the skirt
-  // can commit past without a head-on orbit lock.
   const target = [0, 0, 25000]
   const blocker = { id: 'blocker', kind: 'planet', position: [40, 0, 8000], radius: 100 }
   const dest = { id: 'dest', kind: 'planet', position: [0, 0, 25000], radius: 30 }
@@ -179,21 +173,9 @@ test('updateSupercruise with a blocker still reaches the target and stays outsid
   const arrivalRange = 30 + shipRadius + 220
 
   let arrived = false
-  let minDistToBlocker = Infinity
   for (let i = 0; i < 180000 && !arrived; i++) {
     arrived = updateSupercruise(shipState, shipClass, target, DT, arrivalRange, bodies, shipRadius, 'dest')
-    const d = Math.hypot(
-      shipState.position[0] - 40,
-      shipState.position[1] - 0,
-      shipState.position[2] - 8000
-    )
-    if (d < minDistToBlocker) minDistToBlocker = d
   }
 
-  assert.equal(arrived, true, 'should still arrive despite the blocker')
-  // Must never dive inside the collision shell (100 + shipRadius).
-  assert.ok(
-    minDistToBlocker >= 100 + shipRadius - 2,
-    `should stay outside blocker shell, closest approach ${minDistToBlocker.toFixed(1)}`
-  )
+  assert.equal(arrived, true, 'should arrive even with a body on the path')
 })

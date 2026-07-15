@@ -273,6 +273,14 @@ export function playCraftComplete() {
   tone({ type: 'triangle', freq: 1047, duration: 0.32, peak: 0.1, delay: 0.34 })
 }
 
+/** Soft confirmation chime for successful game save. */
+export function playSaveChime() {
+  tone({ type: 'sine', freq: 660, duration: 0.1, peak: 0.12 })
+  tone({ type: 'sine', freq: 880, duration: 0.14, peak: 0.14, delay: 0.08 })
+  tone({ type: 'triangle', freq: 1320, duration: 0.22, peak: 0.1, delay: 0.18 })
+  tone({ type: 'sine', freq: 1760, duration: 0.28, peak: 0.06, delay: 0.28 })
+}
+
 // Shared noise buffer fillers (hyperdrive static + supercruise thunder beds).
 function fillBrownNoise(data) {
   let last = 0

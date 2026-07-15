@@ -93,7 +93,17 @@ test('probe mission completes when target body is marked probed', () => {
   assert.equal(mission.objectiveComplete, false)
   markBodyProbed(gs, mission.target.bodyId)
   assert.equal(mission.objectiveComplete, true, 'markBodyProbed should complete open probe contracts')
-  assert.ok(gs.probedBodyIds.includes(mission.target.bodyId))
+  assert.ok(gs.probedBodyIds.map(String).includes(String(mission.target.bodyId)))
+})
+
+test('exploration survey completes when the target body is probed', () => {
+  const gs = freshState(21)
+  const mission = gs.missions.available.find((m) => m.type === 'exploration')
+  assert.ok(mission, 'need an exploration mission in seed')
+  acceptMission(gs, mission.id, Math.random)
+  assert.equal(mission.objectiveComplete, false)
+  markBodyProbed(gs, mission.target.bodyId)
+  assert.equal(mission.objectiveComplete, true, 'probing the survey target should complete exploration')
 })
 
 test('investigation intel probe completes the objective', () => {
@@ -110,6 +120,13 @@ test('investigation hostile probe requires a kill', () => {
   const gs = freshState(17)
   const mission = acceptInvestigation(gs)
   const bodyId = mission.target.bodyId
+  const body = findBody(gs.galaxy, bodyId)
+  // Place the player near the body so spawn direction is well-defined.
+  gs.player.ship.position = [
+    body.position[0] + (body.radius ?? 0) + 500,
+    body.position[1],
+    body.position[2]
+  ]
   // roll in [0.4, 0.7) → hostile
   const result = resolveInvestigationProbe(gs, bodyId, () => 0.5)
   assert.equal(result.kind, 'hostile')
@@ -117,10 +134,23 @@ test('investigation hostile probe requires a kill', () => {
   assert.equal(mission.target.kind, 'npcShip')
   assert.ok(gs.npcs.some((n) => n.id === mission.target.npcId))
 
+  const npc = gs.npcs.find((n) => n.id === mission.target.npcId)
+  const dist = Math.hypot(
+    npc.position[0] - body.position[0],
+    npc.position[1] - body.position[1],
+    npc.position[2] - body.position[2]
+  )
+  // Must not be buried inside the surveyed body mesh.
+  assert.ok(
+    dist >= (body.radius ?? 0) + 200 - 1e-3,
+    `hostile should spawn outside body shell (dist ${dist}, radius ${body.radius})`
+  )
+  assert.ok(npc.destroyed === false)
+  assert.deepEqual(gs.player.waypointPosition, npc.position)
+
   updateMissionProgress(gs)
   assert.equal(mission.objectiveComplete, false)
 
-  const npc = gs.npcs.find((n) => n.id === mission.target.npcId)
   npc.destroyed = true
   updateMissionProgress(gs)
   assert.equal(mission.objectiveComplete, true)

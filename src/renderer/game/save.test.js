@@ -11,15 +11,42 @@ test('serialize then deserialize round-trips player, galaxy, and missions, and d
   })
   gameState.player.credits = 4321
   gameState.player.ship.position = [10, 20, 30]
+  gameState.player.ship.quaternion = [0, 0.1, 0, 0.995]
+  gameState.player.ship.velocity = [1, 0, -5]
+  gameState.player.dockedBodyId = null
 
   const json = JSON.parse(JSON.stringify(serializeGameState(gameState)))
   const restored = deserializeGameState(json)
 
   assert.equal(restored.player.credits, 4321)
   assert.deepEqual(restored.player.ship.position, [10, 20, 30])
+  assert.deepEqual(restored.player.ship.velocity, [1, 0, -5])
+  assert.equal(restored.player.dockedBodyId, null)
   assert.equal(restored.galaxy.systems.length, gameState.galaxy.systems.length)
   assert.equal(restored.npcs.length, 0, 'no ordinary encounter state should persist')
   assert.equal(restored.inCombat, false)
+})
+
+test('docked pose fields round-trip through save', () => {
+  const gameState = createGameState({
+    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5
+  })
+  const station = gameState.galaxy.systems
+    .flatMap((s) => s.bodies)
+    .find((b) => b.kind === 'station')
+  assert.ok(station)
+  gameState.player.currentSystemId = gameState.galaxy.systems.find((s) =>
+    s.bodies.some((b) => b.id === station.id)
+  ).id
+  gameState.player.dockedBodyId = station.id
+  gameState.player.dockedExteriorPosition = [100, 50, -200]
+  gameState.player.dockedApproachDir = [0, 0, 1]
+  gameState.player.ship.position = [2_000_000, 0, 20]
+
+  const restored = deserializeGameState(JSON.parse(JSON.stringify(serializeGameState(gameState))))
+  assert.equal(restored.player.dockedBodyId, station.id)
+  assert.deepEqual(restored.player.dockedExteriorPosition, [100, 50, -200])
+  assert.deepEqual(restored.player.dockedApproachDir, [0, 0, 1])
 })
 
 test('an active, incomplete bounty mission respawns its target npc on load', () => {

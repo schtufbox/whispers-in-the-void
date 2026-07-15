@@ -1,11 +1,22 @@
 import * as THREE from 'three'
 import { mulberry32, range, intRange, pick } from '../procgen/prng.js'
+import { stationMaterialMaps } from './textures.js'
+import {
+  buildStationFromFreeModel,
+  STATION_TYPE_COUNT,
+  stationModelsReady
+} from './stationModels.js'
 
 function hashString(str) {
   let h = 0
   for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0
   return Math.abs(h)
 }
+
+// Smooth-shaded PBR (no flatShading) — faceted flat shading was the main
+// "blocky" read once maps were applied. Soft normals + modest tile repeats
+// keep plating readable without giant plate tiles.
+const stationMaps = (role) => stationMaterialMaps(role, 0.36)
 
 function hullMaterials(rng) {
   // Industrial metal: desaturated greys with a cool or warm bias.
@@ -15,47 +26,69 @@ function hullMaterials(rng) {
   const accentColor = new THREE.Color().setHSL(((hue + range(rng, 100, 180)) % 360) / 360, range(rng, 0.35, 0.55), range(rng, 0.45, 0.6))
   const panelColor = hullColor.clone().offsetHSL(0, 0, -0.12)
   return {
-    hull: new THREE.MeshStandardMaterial({ color: hullColor, flatShading: true, metalness: 0.62, roughness: 0.42 }),
-    accent: new THREE.MeshStandardMaterial({ color: accentColor, flatShading: true, metalness: 0.45, roughness: 0.5 }),
-    panel: new THREE.MeshStandardMaterial({ color: panelColor, flatShading: true, metalness: 0.7, roughness: 0.38 }),
+    hull: new THREE.MeshStandardMaterial({
+      color: hullColor,
+      metalness: 0.92,
+      roughness: 0.72,
+      envMapIntensity: 0.85,
+      ...stationMaps('hull')
+    }),
+    accent: new THREE.MeshStandardMaterial({
+      color: accentColor,
+      metalness: 0.78,
+      roughness: 0.68,
+      envMapIntensity: 0.9,
+      ...stationMaps('accent')
+    }),
+    panel: new THREE.MeshStandardMaterial({
+      color: panelColor,
+      metalness: 0.88,
+      roughness: 0.7,
+      ...stationMaps('panel')
+    }),
     window: new THREE.MeshStandardMaterial({
       color: 0x1a3040,
-      emissive: accentColor.clone().multiplyScalar(0.6),
-      emissiveIntensity: 0.7,
-      flatShading: true,
-      metalness: 0.2,
-      roughness: 0.25
+      emissive: accentColor.clone().multiplyScalar(0.55),
+      emissiveIntensity: 0.75,
+      metalness: 0.15,
+      roughness: 0.18,
+      transparent: true,
+      opacity: 0.92
     }),
     solar: new THREE.MeshStandardMaterial({
-      color: 0x0a1a3a,
+      color: 0xd0e0f5,
       emissive: 0x061428,
-      emissiveIntensity: 0.25,
-      flatShading: true,
-      metalness: 0.85,
-      roughness: 0.2
+      emissiveIntensity: 0.14,
+      metalness: 0.95,
+      roughness: 0.55,
+      ...stationMaps('solar')
     }),
     radiator: new THREE.MeshStandardMaterial({
-      color: 0x2a2220,
-      flatShading: true,
-      metalness: 0.75,
-      roughness: 0.35,
+      color: 0x6a5048,
+      metalness: 0.9,
+      roughness: 0.78,
       emissive: 0x1a0a08,
-      emissiveIntensity: 0.12
+      emissiveIntensity: 0.1,
+      ...stationMaps('radiator')
     })
   }
 }
 
 function edgesFor(geometry, color = 0x0a0a0a) {
-  return new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 22), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.8 }))
+  // Soft panel seams only — heavy EdgesGeometry fought the normal maps.
+  return new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry, 28),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.28 })
+  )
 }
 
 function addBeacon(group, position, color, phase, radius = 0.55) {
-  const light = new THREE.Mesh(new THREE.SphereGeometry(radius, 6, 4), new THREE.MeshBasicMaterial({ color }))
+  const light = new THREE.Mesh(new THREE.SphereGeometry(radius, 10, 8), new THREE.MeshBasicMaterial({ color }))
   light.position.copy(position)
   group.add(light)
 
   const glow = new THREE.Mesh(
-    new THREE.SphereGeometry(radius * 2.6, 8, 6),
+    new THREE.SphereGeometry(radius * 2.6, 12, 10),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false })
   )
   glow.position.copy(position)
@@ -67,68 +100,116 @@ function addBeacon(group, position, color, phase, radius = 0.55) {
 
 function addGlowRing(group, radius, tube, color, rotationX = Math.PI / 2) {
   const glow = new THREE.Mesh(
-    new THREE.TorusGeometry(radius, tube, 8, 32),
+    new THREE.TorusGeometry(radius, tube, 10, 48),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false })
   )
   glow.rotation.x = rotationX
   group.add(glow)
 }
 
+// Thin reinforcement rings on cylindrical hulls (reads more "built" than bare loft).
+function addHullBands(group, mats, radius, y0, y1, count = 3) {
+  for (let i = 0; i < count; i++) {
+    const t = count === 1 ? 0.5 : i / (count - 1)
+    const y = y0 + (y1 - y0) * t
+    const band = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.02, radius * 0.04, 8, 40), mats.panel)
+    band.rotation.x = Math.PI / 2
+    band.position.y = y
+    group.add(band)
+  }
+}
+
+function addAntennaDish(group, mats, position, radius = 2.2) {
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, radius * 2.2, 8), mats.panel)
+  mast.position.copy(position)
+  mast.position.y += radius * 0.6
+  group.add(mast)
+  const dish = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), mats.accent)
+  dish.position.copy(position)
+  dish.position.y += radius * 1.7
+  dish.rotation.x = -Math.PI / 3.2
+  group.add(dish)
+}
+
 // Row of lit portholes along a cylinder / flat face.
 function addWindowRow(group, mats, { count, radius, y, z = 0, axis = 'y' }) {
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2
-    const win = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.35, 0.2), mats.window)
+    const win = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.38, 0.18), mats.window)
     if (axis === 'y') {
       win.position.set(Math.cos(a) * radius, y, Math.sin(a) * radius + z)
       win.lookAt(0, y, 0)
     } else {
-      win.position.set((i - (count - 1) / 2) * 1.1, y, radius)
+      win.position.set((i - (count - 1) / 2) * 1.15, y, radius)
     }
     group.add(win)
   }
 }
 
 function addSolarArray(group, mats, origin, length, width, tilt = 0.15) {
-  const panel = new THREE.Mesh(new THREE.BoxGeometry(length, 0.12, width), mats.solar)
-  panel.position.copy(origin)
-  panel.rotation.z = tilt
-  group.add(panel)
-  // Grid lines as thin ribs.
-  for (let i = 0; i < 5; i++) {
-    const rib = new THREE.Mesh(new THREE.BoxGeometry(length * 0.98, 0.14, 0.08), mats.panel)
-    rib.position.set(origin.x, origin.y, origin.z + (i - 2) * (width / 5))
-    rib.rotation.z = tilt
-    group.add(rib)
+  // Framed multi-panel wing rather than a single slab.
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(length + 0.4, 0.18, width + 0.35), mats.panel)
+  frame.position.copy(origin)
+  frame.rotation.z = tilt
+  group.add(frame)
+  const cols = 3
+  const rows = 2
+  const cellL = (length - 0.3) / cols
+  const cellW = (width - 0.25) / rows
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(cellL * 0.92, 0.1, cellW * 0.9), mats.solar)
+      const ox = (c - (cols - 1) / 2) * cellL
+      const oz = (r - (rows - 1) / 2) * cellW
+      panel.position.set(origin.x + ox * Math.cos(tilt), origin.y + ox * Math.sin(tilt) + 0.06, origin.z + oz)
+      panel.rotation.z = tilt
+      group.add(panel)
+    }
   }
-  // Truss boom.
-  const boom = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(origin.x) * 0.9 + 1, 0.35, 0.35), mats.panel)
-  boom.position.set(origin.x * 0.45, origin.y, origin.z)
+  const boomLen = Math.abs(origin.x) * 0.85 + 1.2
+  const boom = new THREE.Mesh(new THREE.BoxGeometry(boomLen, 0.32, 0.32), mats.panel)
+  boom.position.set(origin.x * 0.42, origin.y, origin.z)
   group.add(boom)
+  // Cross-brace.
+  const brace = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, width * 0.7), mats.panel)
+  brace.position.set(origin.x * 0.7, origin.y, origin.z)
+  group.add(brace)
 }
 
 function addRadiatorFin(group, mats, origin, size) {
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(size, size * 0.08, size * 0.55), mats.radiator)
-  fin.position.copy(origin)
-  group.add(fin)
+  // Stack of thin radiator plates.
+  const stack = 3
+  for (let i = 0; i < stack; i++) {
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(size, size * 0.045, size * 0.55), mats.radiator)
+    fin.position.set(origin.x, origin.y + (i - 1) * size * 0.08, origin.z)
+    group.add(fin)
+  }
+  const spine = new THREE.Mesh(new THREE.BoxGeometry(size * 0.12, size * 0.28, size * 0.12), mats.panel)
+  spine.position.copy(origin)
+  group.add(spine)
 }
 
 function addDockingPort(group, mats, position, facing = new THREE.Vector3(0, 0, 1)) {
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 1.2, 10), mats.accent)
+  const f = facing.clone().normalize()
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.85, 1.4, 16), mats.accent)
   collar.position.copy(position)
-  // Orient cylinder along facing.
-  collar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), facing.clone().normalize())
+  collar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), f)
   group.add(collar)
-  const hatch = new THREE.Mesh(new THREE.CircleGeometry(1.1, 12), mats.panel)
-  hatch.position.copy(position).addScaledVector(facing, 0.65)
-  hatch.lookAt(position.clone().add(facing))
+  const outer = new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.12, 8, 24), mats.panel)
+  outer.position.copy(position).addScaledVector(f, 0.35)
+  outer.quaternion.copy(collar.quaternion)
+  outer.rotateX(Math.PI / 2)
+  group.add(outer)
+  const hatch = new THREE.Mesh(new THREE.CircleGeometry(1.15, 20), mats.panel)
+  hatch.position.copy(position).addScaledVector(f, 0.75)
+  hatch.lookAt(position.clone().add(f))
   group.add(hatch)
 }
 
 function addTrussModule(group, mats, from, to) {
   const mid = from.clone().add(to).multiplyScalar(0.5)
   const len = from.distanceTo(to)
-  const beam = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, len), mats.panel)
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, len), mats.panel)
   beam.position.copy(mid)
   beam.lookAt(to)
   beam.rotateX(Math.PI / 2)
@@ -141,49 +222,87 @@ function addTrussModule(group, mats, from, to) {
 // added below for in-game stations/settlements.
 export function buildStationMesh() {
   const group = new THREE.Group()
-  const hullMat = new THREE.MeshStandardMaterial({ color: 0x7d8f9a, flatShading: true, metalness: 0.6, roughness: 0.4 })
-  const accentMat = new THREE.MeshStandardMaterial({ color: 0x4fc3d9, flatShading: true, metalness: 0.45, roughness: 0.45 })
-  const panelMat = new THREE.MeshStandardMaterial({ color: 0x3a4550, flatShading: true, metalness: 0.7, roughness: 0.35 })
+  // Same shared maps as in-game variants; fixed palette so the menu flyby
+  // stays consistent (not seeded off a body id).
+  const mats = {
+    hull: new THREE.MeshStandardMaterial({
+      color: 0x7d8f9a, metalness: 0.92, roughness: 0.72, ...stationMaps('hull')
+    }),
+    accent: new THREE.MeshStandardMaterial({
+      color: 0x4fc3d9, metalness: 0.78, roughness: 0.68, ...stationMaps('accent')
+    }),
+    panel: new THREE.MeshStandardMaterial({
+      color: 0x3a4550, metalness: 0.88, roughness: 0.7, ...stationMaps('panel')
+    }),
+    solar: new THREE.MeshStandardMaterial({
+      color: 0xd0e0f5,
+      metalness: 0.95,
+      roughness: 0.55,
+      emissive: 0x061428,
+      emissiveIntensity: 0.14,
+      ...stationMaps('solar')
+    }),
+    radiator: new THREE.MeshStandardMaterial({
+      color: 0x6a5048, metalness: 0.9, roughness: 0.78, ...stationMaps('radiator')
+    }),
+    window: new THREE.MeshStandardMaterial({
+      color: 0x1a3040,
+      emissive: 0x2a6070,
+      emissiveIntensity: 0.7,
+      metalness: 0.15,
+      roughness: 0.18,
+      transparent: true,
+      opacity: 0.92
+    })
+  }
 
-  const coreGeometry = new THREE.CylinderGeometry(5.5, 5.5, 24, 10)
-  const core = new THREE.Mesh(coreGeometry, hullMat)
+  const coreGeometry = new THREE.CylinderGeometry(5.5, 5.5, 24, 20)
+  const core = new THREE.Mesh(coreGeometry, mats.hull)
   group.add(core)
+  addHullBands(group, mats, 5.5, -8, 8, 4)
+  addWindowRow(group, mats, { count: 14, radius: 5.65, y: 2 })
+  addWindowRow(group, mats, { count: 14, radius: 5.65, y: -4 })
 
-  // Hab ring with thicker tube (pressure shell).
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(17, 2.0, 10, 36), accentMat)
+  // Hab ring with thicker tube (pressure shell). Name 'ring' required by menu flyby.
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(17, 2.15, 14, 56), mats.accent)
   ring.rotation.x = Math.PI / 2
   ring.name = 'ring'
   group.add(ring)
-  addGlowRing(group, 17, 2.8, 0x4fc3d9)
+  addGlowRing(group, 17, 2.9, 0x4fc3d9)
+  // Ring panel segments (visual only — don't rename 'ring').
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2
+    const node = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.6, 2.4), mats.panel)
+    node.position.set(Math.cos(a) * 17, 0, Math.sin(a) * 17)
+    group.add(node)
+  }
 
   // Spoke arms + docking nodes.
   for (let i = 0; i < 4; i++) {
     const angle = (i / 4) * Math.PI * 2
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 12), hullMat)
-    arm.position.set(Math.cos(angle) * 11.5, 0, Math.sin(angle) * 11.5)
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 12, 10), mats.hull)
+    arm.rotation.z = Math.PI / 2
     arm.rotation.y = -angle
+    arm.position.set(Math.cos(angle) * 11.5, 0, Math.sin(angle) * 11.5)
     group.add(arm)
-    const node = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.4, 3.2), panelMat)
+    const node = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.6, 3.4), mats.panel)
     node.position.set(Math.cos(angle) * 17, 0, Math.sin(angle) * 17)
     group.add(node)
+    addDockingPort(group, mats, new THREE.Vector3(Math.cos(angle) * 19.2, 0, Math.sin(angle) * 19.2), new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)))
   }
 
   // Command modules top/bottom.
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 4.5, 5, 8), accentMat)
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 4.5, 5, 14), mats.accent)
   cap.position.y = 14.5
   group.add(cap)
   const cap2 = cap.clone()
   cap2.position.y = -14.5
   group.add(cap2)
+  addAntennaDish(group, mats, new THREE.Vector3(0, 16.5, 0), 1.8)
 
-  // Solar wings.
-  for (const side of [-1, 1]) {
-    const solar = new THREE.Mesh(new THREE.BoxGeometry(22, 0.15, 6), new THREE.MeshStandardMaterial({
-      color: 0x0a1a3a, metalness: 0.85, roughness: 0.2, flatShading: true, emissive: 0x061428, emissiveIntensity: 0.2
-    }))
-    solar.position.set(side * 28, 0, 0)
-    group.add(solar)
-  }
+  addSolarArray(group, mats, new THREE.Vector3(28, 0, 0), 20, 6.5, 0.08)
+  addSolarArray(group, mats, new THREE.Vector3(-28, 0, 0), 20, 6.5, -0.08)
+  addRadiatorFin(group, mats, new THREE.Vector3(0, 6, 8), 6)
 
   addBeacon(group, new THREE.Vector3(0, 18, 0), 0xff4040, 0)
   addBeacon(group, new THREE.Vector3(0, -18, 0), 0xff4040, Math.PI)
@@ -198,23 +317,25 @@ function buildSpireStation(rng) {
   const group = new THREE.Group()
 
   const bodyHeight = 32
-  const coreGeometry = new THREE.CylinderGeometry(4.5, 7.5, bodyHeight, 8)
+  const coreGeometry = new THREE.CylinderGeometry(4.5, 7.5, bodyHeight, 18)
   group.add(new THREE.Mesh(coreGeometry, mats.hull))
-  addWindowRow(group, mats, { count: 10, radius: 5.2, y: 4 })
-  addWindowRow(group, mats, { count: 10, radius: 6.2, y: -6 })
+  addHullBands(group, mats, 5.5, -10, 10, 5)
+  addWindowRow(group, mats, { count: 14, radius: 5.4, y: 4 })
+  addWindowRow(group, mats, { count: 14, radius: 6.4, y: -6 })
+  addWindowRow(group, mats, { count: 12, radius: 5.0, y: 10 })
 
-  const spire = new THREE.Mesh(new THREE.ConeGeometry(4.5, 14, 8), mats.accent)
+  const spire = new THREE.Mesh(new THREE.ConeGeometry(4.5, 14, 16), mats.accent)
   spire.position.y = bodyHeight / 2 + 7
   group.add(spire)
+  addAntennaDish(group, mats, new THREE.Vector3(2.5, bodyHeight / 2 + 2, 0), 1.6)
 
   const platformCount = intRange(rng, 2, 4)
   for (let i = 0; i < platformCount; i++) {
     const platformRadius = 9 + i * 1.4
-    const platform = new THREE.Mesh(new THREE.CylinderGeometry(platformRadius, platformRadius, 1.1, 12), mats.panel)
+    const platform = new THREE.Mesh(new THREE.CylinderGeometry(platformRadius, platformRadius, 1.1, 24), mats.panel)
     platform.position.y = -bodyHeight / 2 + 5 + i * 8
     group.add(platform)
-    // Deck edge lip.
-    const lip = new THREE.Mesh(new THREE.TorusGeometry(platformRadius, 0.25, 6, 24), mats.accent)
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(platformRadius, 0.28, 8, 36), mats.accent)
     lip.rotation.x = Math.PI / 2
     lip.position.y = platform.position.y + 0.6
     group.add(lip)
@@ -239,11 +360,26 @@ function buildModularStation(rng) {
   const coreSize = 10
   const coreGeometry = new THREE.BoxGeometry(coreSize, coreSize * 0.85, coreSize)
   group.add(new THREE.Mesh(coreGeometry, mats.hull))
-  addWindowRow(group, mats, { count: 6, radius: coreSize / 2 + 0.1, y: 1, axis: 'flat' })
+  // Beveled corner caps on the hub.
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), mats.panel)
+        cap.position.set(sx * 4.2, sy * 3.4, sz * 4.2)
+        group.add(cap)
+      }
+    }
+  }
+  addWindowRow(group, mats, { count: 8, radius: coreSize / 2 + 0.1, y: 1, axis: 'flat' })
 
-  // Central truss spine.
-  const spine = new THREE.Mesh(new THREE.BoxGeometry(28, 1.2, 1.2), mats.panel)
+  // Central truss spine with lattice.
+  const spine = new THREE.Mesh(new THREE.BoxGeometry(28, 1.0, 1.0), mats.panel)
   group.add(spine)
+  for (let i = -3; i <= 3; i++) {
+    const cross = new THREE.Mesh(new THREE.BoxGeometry(0.25, 2.2, 0.25), mats.panel)
+    cross.position.set(i * 3.5, 0, 0)
+    group.add(cross)
+  }
 
   const directions = [
     [1, 0, 0], [-1, 0, 0],
@@ -254,11 +390,10 @@ function buildModularStation(rng) {
     if (rng() < 0.28) continue
     const size = range(rng, 4, 8)
     const strutLen = range(rng, 2.5, 5)
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, strutLen), mats.panel)
-    // Cylindrical habitat module (more "real station" than cubes).
+    const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, strutLen, 10), mats.panel)
     const isHab = rng() < 0.55
     const module = isHab
-      ? new THREE.Mesh(new THREE.CylinderGeometry(size * 0.4, size * 0.4, size * 1.1, 10), mats.accent)
+      ? new THREE.Mesh(new THREE.CylinderGeometry(size * 0.4, size * 0.4, size * 1.1, 16), mats.accent)
       : new THREE.Mesh(new THREE.BoxGeometry(size, size * 0.7, size), mats.accent)
     if (isHab && dir[1] === 0) module.rotation.z = Math.PI / 2
     if (isHab && dir[2] !== 0) module.rotation.x = Math.PI / 2
@@ -267,8 +402,8 @@ function buildModularStation(rng) {
     const moduleCenter = coreSize / 2 + strutLen + size / 2
     strut.position.set(dir[0] * strutCenter, dir[1] * strutCenter, dir[2] * strutCenter)
     module.position.set(dir[0] * moduleCenter, dir[1] * moduleCenter, dir[2] * moduleCenter)
-    if (dir[0] !== 0) strut.rotation.y = Math.PI / 2
-    if (dir[1] !== 0) strut.rotation.x = Math.PI / 2
+    if (dir[0] !== 0) strut.rotation.z = Math.PI / 2
+    if (dir[2] !== 0) strut.rotation.x = Math.PI / 2
     group.add(strut)
     group.add(module)
 
@@ -280,6 +415,7 @@ function buildModularStation(rng) {
   addSolarArray(group, mats, new THREE.Vector3(-18, -1, 0), 14, 5.5, -0.1)
   addRadiatorFin(group, mats, new THREE.Vector3(0, 8, 0), 6)
   addDockingPort(group, mats, new THREE.Vector3(0, 0, coreSize / 2 + 1.5), new THREE.Vector3(0, 0, 1))
+  addAntennaDish(group, mats, new THREE.Vector3(3, coreSize * 0.5, -2), 1.5)
 
   group.add(edgesFor(coreGeometry))
   return group
@@ -290,11 +426,13 @@ function buildRingHabitatStation(rng) {
   const mats = hullMaterials(rng)
   const group = new THREE.Group()
 
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 18, 10), mats.hull)
+  const coreGeom = new THREE.CylinderGeometry(3.5, 3.5, 18, 18)
+  const core = new THREE.Mesh(coreGeom, mats.hull)
   group.add(core)
+  addHullBands(group, mats, 3.5, -6, 6, 3)
 
   const ringR = 16
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(ringR, 2.2, 10, 40), mats.accent)
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(ringR, 2.2, 14, 56), mats.accent)
   ring.rotation.x = Math.PI / 2 + (rng() - 0.5) * 0.15
   group.add(ring)
   addGlowRing(group, ringR, 2.8, mats.accent.color, ring.rotation.x)
@@ -302,24 +440,25 @@ function buildRingHabitatStation(rng) {
   // Three spokes (not four) — slight asymmetry.
   for (let i = 0; i < 3; i++) {
     const angle = (i / 3) * Math.PI * 2 + 0.2
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, ringR - 2), mats.panel)
-    arm.position.set(Math.cos(angle) * ringR * 0.45, 0, Math.sin(angle) * ringR * 0.45)
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, ringR - 2, 10), mats.panel)
+    arm.rotation.z = Math.PI / 2
     arm.rotation.y = -angle
+    arm.position.set(Math.cos(angle) * ringR * 0.45, 0, Math.sin(angle) * ringR * 0.45)
     group.add(arm)
   }
 
-  // Command pod offset above-and-to-the-side of the axis.
   const cmd = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 8), mats.hull)
   cmd.position.set(4, 12, -2)
   group.add(cmd)
   addDockingPort(group, mats, new THREE.Vector3(4, 12, 3), new THREE.Vector3(0, 0, 1))
+  addAntennaDish(group, mats, new THREE.Vector3(4, 14, -2), 1.4)
 
   addSolarArray(group, mats, new THREE.Vector3(22, 3, 0), 16, 4.5, 0.08)
   addRadiatorFin(group, mats, new THREE.Vector3(-6, -8, 0), 8)
-  addWindowRow(group, mats, { count: 16, radius: ringR + 1.5, y: 0 })
+  addWindowRow(group, mats, { count: 20, radius: ringR + 1.6, y: 0 })
 
   addBeacon(group, new THREE.Vector3(4, 15, -2), 0xff4040, rng() * Math.PI * 2)
-  group.add(edgesFor(new THREE.CylinderGeometry(3.5, 3.5, 18, 10)))
+  group.add(edgesFor(coreGeom))
   return group
 }
 
@@ -372,27 +511,40 @@ function buildDomeStation(rng) {
   const group = new THREE.Group()
 
   const baseRadius = 12
-  const baseGeometry = new THREE.CylinderGeometry(baseRadius, baseRadius * 1.12, 5, 12)
+  const baseGeometry = new THREE.CylinderGeometry(baseRadius, baseRadius * 1.12, 5, 28)
   const base = new THREE.Mesh(baseGeometry, mats.hull)
   base.position.y = -2.5
   group.add(base)
+  // Skirt ring under the pad.
+  const skirt = new THREE.Mesh(new THREE.TorusGeometry(baseRadius * 1.05, 0.35, 8, 40), mats.panel)
+  skirt.rotation.x = Math.PI / 2
+  skirt.position.y = -4.8
+  group.add(skirt)
 
   const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(baseRadius * 0.82, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(baseRadius * 0.82, 28, 16, 0, Math.PI * 2, 0, Math.PI / 2),
     mats.accent
   )
   group.add(dome)
+  // Dome meridian ribs.
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(baseRadius * 0.82, 0.12, 6, 24, Math.PI), mats.panel)
+    rib.rotation.y = a
+    rib.rotation.z = Math.PI / 2
+    group.add(rib)
+  }
   addGlowRing(group, baseRadius * 1.02, 0.4, mats.accent.color, Math.PI / 2)
 
-  // Asymmetric service tower.
   const tower = new THREE.Mesh(new THREE.BoxGeometry(3.5, 10, 3.5), mats.panel)
   tower.position.set(baseRadius * 0.55, 3, -baseRadius * 0.2)
   group.add(tower)
+  addAntennaDish(group, mats, new THREE.Vector3(baseRadius * 0.55, 7, -baseRadius * 0.2), 1.3)
 
   addSolarArray(group, mats, new THREE.Vector3(-baseRadius * 0.9, 1, baseRadius * 0.3), 10, 4, 0.2)
   addRadiatorFin(group, mats, new THREE.Vector3(baseRadius * 0.3, 0, baseRadius * 0.85), 5)
   addDockingPort(group, mats, new THREE.Vector3(0, -1, baseRadius + 1), new THREE.Vector3(0, 0, 1))
-  addWindowRow(group, mats, { count: 12, radius: baseRadius * 0.75, y: 1.5 })
+  addWindowRow(group, mats, { count: 16, radius: baseRadius * 0.75, y: 1.5 })
 
   addBeacon(group, new THREE.Vector3(baseRadius * 0.55, 9, -baseRadius * 0.2), 0xff4040, rng() * Math.PI * 2)
   group.add(edgesFor(baseGeometry))
@@ -405,54 +557,63 @@ function buildSettlementDomeCluster(rng) {
   const mats = hullMaterials(rng)
   const group = new THREE.Group()
 
-  // Landing pad base.
-  const pad = new THREE.Mesh(new THREE.CylinderGeometry(14, 15, 1.2, 16), mats.panel)
-  pad.position.y = -0.4
+  // Multi-tier landing pad.
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(14, 15.5, 1.4, 32), mats.panel)
+  pad.position.y = -0.5
   group.add(pad)
-  // Pad markings.
-  const mark = new THREE.Mesh(new THREE.RingGeometry(4, 5, 24), mats.accent)
+  const apron = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 0.35, 28), mats.hull)
+  apron.position.y = 0.25
+  group.add(apron)
+  const mark = new THREE.Mesh(new THREE.RingGeometry(4, 5.2, 32), mats.accent)
   mark.rotation.x = -Math.PI / 2
-  mark.position.y = 0.25
+  mark.position.y = 0.48
   group.add(mark)
+  const mark2 = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.7, 24), mats.accent)
+  mark2.rotation.x = -Math.PI / 2
+  mark2.position.y = 0.49
+  group.add(mark2)
 
-  // Central habitat dome.
+  // Central habitat dome with skirt.
   const mainDome = new THREE.Mesh(
-    new THREE.SphereGeometry(6, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(6, 28, 16, 0, Math.PI * 2, 0, Math.PI / 2),
     mats.hull
   )
   mainDome.position.set(0, 0, -2)
   group.add(mainDome)
+  const domeBase = new THREE.Mesh(new THREE.CylinderGeometry(6.4, 6.8, 1.2, 24), mats.panel)
+  domeBase.position.set(0, 0.2, -2)
+  group.add(domeBase)
+  addWindowRow(group, mats, { count: 10, radius: 5.9, y: 2.2, z: -2 })
 
-  // Secondary domes — irregular cluster, not a perfect ring.
   const satelliteCount = intRange(rng, 3, 5)
   for (let i = 0; i < satelliteCount; i++) {
     const a = (i / satelliteCount) * Math.PI * 2 + rng() * 0.4
     const dist = range(rng, 7, 11)
     const r = range(rng, 2.2, 3.8)
     const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(r, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.SphereGeometry(r, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
       i % 2 === 0 ? mats.accent : mats.hull
     )
     dome.position.set(Math.cos(a) * dist, 0, Math.sin(a) * dist)
     group.add(dome)
-    // Corridor to main.
-    const corridor = new THREE.Mesh(new THREE.BoxGeometry(dist * 0.55, 1.2, 1.6), mats.panel)
-    corridor.position.set(Math.cos(a) * dist * 0.4, 0.6, Math.sin(a) * dist * 0.4 - 1)
+    const corridor = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, dist * 0.55, 10), mats.panel)
+    corridor.rotation.z = Math.PI / 2
     corridor.rotation.y = -a
+    corridor.position.set(Math.cos(a) * dist * 0.4, 0.7, Math.sin(a) * dist * 0.4 - 1)
     group.add(corridor)
   }
 
-  // Comms tower off-center.
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 12, 6), mats.panel)
-  mast.position.set(5, 6, 4)
-  group.add(mast)
-  const dish = new THREE.Mesh(new THREE.CircleGeometry(2.2, 12), mats.accent)
-  dish.position.set(5, 12, 4)
-  dish.rotation.x = -Math.PI / 3
-  group.add(dish)
+  addAntennaDish(group, mats, new THREE.Vector3(5, 0, 4), 2.0)
+  // Fuel tanks.
+  for (const [x, z] of [[-10, 5], [-11.5, 7.5]]) {
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 4.5, 12), mats.radiator)
+    tank.position.set(x, 2.2, z)
+    group.add(tank)
+  }
 
   addBeacon(group, new THREE.Vector3(5, 13, 4), 0xff4040, rng() * Math.PI * 2, 0.4)
   addBeacon(group, new THREE.Vector3(-8, 1, -6), 0xffcf4f, Math.PI, 0.35)
+  addSolarArray(group, mats, new THREE.Vector3(0, 6, -10), 9, 3.2, 0.2)
   return group
 }
 
@@ -460,12 +621,14 @@ function buildSettlementOutpost(rng) {
   const mats = hullMaterials(rng)
   const group = new THREE.Group()
 
-  // Raised platform / cliff pad.
+  // Raised platform with edge lip.
   const platform = new THREE.Mesh(new THREE.BoxGeometry(20, 2, 16), mats.hull)
   platform.position.y = 0
   group.add(platform)
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(20.6, 0.35, 16.6), mats.panel)
+  lip.position.y = 1.1
+  group.add(lip)
 
-  // Hab blocks — staggered, asymmetric.
   const blocks = [
     [0, 3, -2, 8, 6, 7],
     [6, 2.5, 3, 5, 5, 5],
@@ -476,23 +639,35 @@ function buildSettlementOutpost(rng) {
     const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), rng() < 0.4 ? mats.accent : mats.panel)
     b.position.set(x, y, z)
     group.add(b)
+    // Roofline strip.
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w * 1.05, 0.25, d * 1.05), mats.hull)
+    roof.position.set(x, y + h / 2 + 0.15, z)
+    group.add(roof)
+  }
+  // Windows on the main block face.
+  for (let i = 0; i < 4; i++) {
+    const win = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.12), mats.window)
+    win.position.set(-2.5 + i * 1.6, 3.2, 1.55)
+    group.add(win)
   }
 
-  // Landing lights along pad edge.
   for (let i = 0; i < 6; i++) {
     addBeacon(group, new THREE.Vector3(-9 + i * 3.5, 1.2, 7.5), 0xffcf4f, i * 0.7, 0.3)
   }
 
-  // Crane arm (asymmetric industrial detail).
-  const craneBase = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1, 5, 6), mats.panel)
+  const craneBase = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1, 5, 10), mats.panel)
   craneBase.position.set(-8, 4.5, -5)
   group.add(craneBase)
-  const craneArm = new THREE.Mesh(new THREE.BoxGeometry(10, 0.6, 0.6), mats.hull)
+  const craneArm = new THREE.Mesh(new THREE.BoxGeometry(10, 0.55, 0.55), mats.hull)
   craneArm.position.set(-4, 7, -5)
   craneArm.rotation.z = -0.15
   group.add(craneArm)
+  const hook = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.2, 0.35), mats.panel)
+  hook.position.set(0.5, 5.5, -5)
+  group.add(hook)
 
   addSolarArray(group, mats, new THREE.Vector3(0, 8, -6), 12, 3.5, 0.25)
+  addAntennaDish(group, mats, new THREE.Vector3(6, 5, -2), 1.2)
   return group
 }
 
@@ -500,30 +675,63 @@ function buildSettlementMinehead(rng) {
   const mats = hullMaterials(rng)
   const group = new THREE.Group()
 
-  // Headframe over a shaft.
+  // Ground apron.
+  const apron = new THREE.Mesh(new THREE.CylinderGeometry(12, 13, 0.8, 24), mats.panel)
+  apron.position.y = -0.2
+  group.add(apron)
+
   const legs = [[-3, -3], [3, -3], [-3, 3], [3, 3]]
   for (const [x, z] of legs) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.7, 14, 0.7), mats.panel)
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.75, 14, 0.75), mats.panel)
     leg.position.set(x, 7, z)
     group.add(leg)
   }
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(8, 1, 8), mats.hull)
+  // Cross braces on headframe.
+  for (const y of [4, 9, 13]) {
+    const cross = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.4, 0.4), mats.hull)
+    cross.position.set(0, y, -3)
+    group.add(cross)
+    const cross2 = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.4, 0.4), mats.hull)
+    cross2.position.set(0, y, 3)
+    group.add(cross2)
+  }
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, 8), mats.hull)
   cap.position.y = 14
   group.add(cap)
+  // Sheave wheel.
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.25, 10, 24), mats.accent)
+  wheel.position.set(0, 14.8, 0)
+  wheel.rotation.y = Math.PI / 2
+  group.add(wheel)
 
-  // Processing building to one side.
   const plant = new THREE.Mesh(new THREE.BoxGeometry(12, 5, 8), mats.accent)
   plant.position.set(10, 2.5, 0)
   group.add(plant)
-  const silo = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 10, 10), mats.hull)
+  for (let i = 0; i < 3; i++) {
+    const win = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 0.15), mats.window)
+    win.position.set(10 - 3 + i * 3, 3.2, 4.1)
+    group.add(win)
+  }
+  const silo = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 10, 16), mats.hull)
   silo.position.set(10, 5, 7)
   group.add(silo)
+  for (const y of [3, 7]) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(2.55, 0.12, 8, 24), mats.panel)
+    band.rotation.x = Math.PI / 2
+    band.position.set(10, y, 7)
+    group.add(band)
+  }
 
-  // Conveyor.
   const conv = new THREE.Mesh(new THREE.BoxGeometry(10, 0.8, 1.5), mats.panel)
   conv.position.set(4, 3, 4)
   conv.rotation.z = -0.2
   group.add(conv)
+  // Conveyor legs.
+  for (const t of [0.2, 0.6]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.5, 0.3), mats.panel)
+    leg.position.set(4 - t * 5, 1.2, 4)
+    group.add(leg)
+  }
 
   addBeacon(group, new THREE.Vector3(0, 15, 0), 0xff4040, 0)
   addRadiatorFin(group, mats, new THREE.Vector3(10, 6, -5), 4)
@@ -534,37 +742,50 @@ function buildSettlementFarmBubble(rng) {
   const mats = hullMaterials(rng)
   const group = new THREE.Group()
 
-  // Greenhouse bubbles with green emissive tint.
   const growMat = new THREE.MeshStandardMaterial({
     color: 0x2a5a40,
     emissive: 0x1a4030,
     emissiveIntensity: 0.35,
     transparent: true,
-    opacity: 0.85,
-    flatShading: true,
-    metalness: 0.1,
-    roughness: 0.4
+    opacity: 0.78,
+    metalness: 0.08,
+    roughness: 0.35
   })
+
+  // Pad under the farm.
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(13, 14, 0.9, 28), mats.panel)
+  pad.position.y = -0.3
+  group.add(pad)
 
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + 0.3
     const dist = 5 + (i % 2) * 2
-    const bubble = new THREE.Mesh(new THREE.SphereGeometry(3.5 + (i % 2), 12, 8), growMat)
+    const r = 3.5 + (i % 2)
+    const bubble = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), growMat)
     bubble.position.set(Math.cos(a) * dist, 2.5, Math.sin(a) * dist)
     group.add(bubble)
+    // Frame rings on greenhouse.
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 0.98, 0.08, 6, 28), mats.panel)
+    ring.position.copy(bubble.position)
+    ring.rotation.x = Math.PI / 2
+    group.add(ring)
   }
 
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(3, 3.5, 4, 10), mats.hull)
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(3, 3.5, 4, 16), mats.hull)
   hub.position.y = 2
   group.add(hub)
+  addWindowRow(group, mats, { count: 8, radius: 3.3, y: 2.2 })
 
-  // Water tank asymmetric.
-  const tank = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 6, 10), mats.panel)
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 6, 14), mats.panel)
   tank.position.set(9, 3, -3)
   group.add(tank)
+  const tankCap = new THREE.Mesh(new THREE.SphereGeometry(2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mats.hull)
+  tankCap.position.set(9, 6, -3)
+  group.add(tankCap)
 
   addBeacon(group, new THREE.Vector3(0, 5, 0), 0x4fe0ff, rng() * Math.PI * 2)
   addSolarArray(group, mats, new THREE.Vector3(-10, 4, 0), 10, 4, 0.3)
+  addAntennaDish(group, mats, new THREE.Vector3(2, 3, 6), 1.1)
   return group
 }
 
@@ -576,20 +797,20 @@ function coreBox(size, rng) {
 }
 function coreCylinder(size, rng) {
   const h = size * range(rng, 1.1, 2.0)
-  return { geometry: new THREE.CylinderGeometry(size * range(rng, 0.28, 0.5), size * range(rng, 0.3, 0.55), h, intRange(rng, 6, 10)), height: h }
+  return { geometry: new THREE.CylinderGeometry(size * range(rng, 0.28, 0.5), size * range(rng, 0.3, 0.55), h, intRange(rng, 14, 20)), height: h }
 }
 function coreCone(size, rng) {
   const h = size * range(rng, 1.0, 1.8)
-  return { geometry: new THREE.ConeGeometry(size * range(rng, 0.35, 0.55), h, intRange(rng, 6, 8)), height: h }
+  return { geometry: new THREE.ConeGeometry(size * range(rng, 0.35, 0.55), h, intRange(rng, 12, 16)), height: h }
 }
 function coreSphere(size, rng) {
   const r = size * range(rng, 0.4, 0.6)
-  return { geometry: new THREE.SphereGeometry(r, intRange(rng, 8, 12), intRange(rng, 6, 10)), height: r * 2 }
+  return { geometry: new THREE.SphereGeometry(r, intRange(rng, 16, 24), intRange(rng, 12, 18)), height: r * 2 }
 }
 function coreTorus(size, rng) {
   const tube = size * range(rng, 0.12, 0.2)
   return {
-    geometry: new THREE.TorusGeometry(size * range(rng, 0.45, 0.65), tube, 8, intRange(rng, 16, 28)),
+    geometry: new THREE.TorusGeometry(size * range(rng, 0.45, 0.65), tube, 12, intRange(rng, 32, 48)),
     height: tube * 2,
     rotationX: Math.PI / 2
   }
@@ -598,7 +819,7 @@ const CORE_BUILDERS = [coreBox, coreCylinder, coreCone, coreSphere, coreTorus]
 
 function accessoryRing(group, size, height, mats, rng) {
   const r = size * range(rng, 0.75, 1.15)
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(r, size * 0.07, 8, 28), mats.accent)
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(r, size * 0.07, 12, 48), mats.accent)
   ring.rotation.x = Math.PI / 2 + (rng() - 0.5) * 0.35
   group.add(ring)
   addGlowRing(group, r, size * 0.1, mats.accent.color, ring.rotation.x)
@@ -609,11 +830,11 @@ function accessoryArms(group, size, height, mats, rng) {
   const phase = rng() * 0.5
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2 + phase
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(size * 0.12, size * 0.12, armLen), mats.hull)
-    arm.position.set(Math.cos(angle) * armLen * 0.5, (rng() - 0.5) * height * 0.15, Math.sin(angle) * armLen * 0.5)
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.05, size * 0.05, armLen, 10), mats.hull)
+    arm.rotation.z = Math.PI / 2
     arm.rotation.y = -angle
+    arm.position.set(Math.cos(angle) * armLen * 0.5, (rng() - 0.5) * height * 0.15, Math.sin(angle) * armLen * 0.5)
     group.add(arm)
-    // End module.
     const mod = new THREE.Mesh(new THREE.BoxGeometry(size * 0.3, size * 0.25, size * 0.3), mats.accent)
     mod.position.set(Math.cos(angle) * armLen, arm.position.y, Math.sin(angle) * armLen)
     group.add(mod)
@@ -624,7 +845,7 @@ function accessorySpikes(group, size, height, mats, rng) {
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2 + rng()
     const r = size * range(rng, 0.25, 0.55)
-    const spike = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.04, size * 0.08, size * range(rng, 0.5, 0.9), 6), mats.panel)
+    const spike = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.04, size * 0.08, size * range(rng, 0.5, 0.9), 10), mats.panel)
     spike.position.set(Math.cos(angle) * r, height * 0.45, Math.sin(angle) * r)
     group.add(spike)
   }
@@ -636,7 +857,7 @@ function accessoryModules(group, size, height, mats, rng) {
     const dist = size * range(rng, 0.65, 1.15)
     const moduleSize = size * range(rng, 0.22, 0.42)
     const module = rng() < 0.5
-      ? new THREE.Mesh(new THREE.CylinderGeometry(moduleSize * 0.4, moduleSize * 0.4, moduleSize, 8), mats.accent)
+      ? new THREE.Mesh(new THREE.CylinderGeometry(moduleSize * 0.4, moduleSize * 0.4, moduleSize, 14), mats.accent)
       : new THREE.Mesh(new THREE.BoxGeometry(moduleSize, moduleSize * 0.7, moduleSize), mats.accent)
     module.position.set(Math.cos(angle) * dist, (rng() - 0.5) * height * 0.35, Math.sin(angle) * dist)
     if (rng() < 0.5) module.rotation.z = Math.PI / 2
@@ -644,9 +865,10 @@ function accessoryModules(group, size, height, mats, rng) {
   }
 }
 function accessoryStack(group, size, height, mats, rng) {
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.2, size * 0.28, size * range(rng, 0.35, 0.7), 8), mats.accent)
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.2, size * 0.28, size * range(rng, 0.35, 0.7), 14), mats.accent)
   cap.position.y = height / 2 + size * 0.15
   group.add(cap)
+  if (rng() < 0.55) addAntennaDish(group, mats, new THREE.Vector3(size * 0.15, height / 2, 0), size * 0.12)
 }
 function accessoryPanels(group, size, height, mats, rng) {
   // Prefer solar-style panels, often only on one side.
@@ -714,52 +936,48 @@ function buildParametricStation(structureRng, colorRng) {
   return group
 }
 
-const STATION_ROSTER_SEED = 'station-archetype-v2'
-const GENERATED_STATION_TEMPLATES = Array.from({ length: 36 }, (_, i) => {
-  const structureSeed = hashString(`${STATION_ROSTER_SEED}-${i}`)
-  return (colorRng) => buildParametricStation(mulberry32(structureSeed), colorRng)
-})
+// Exactly three orbital station types — each assembled from free Kenney Space
+// Kit GLBs (CC0). See stationModels.js. Procedural builders above remain as
+// fallback if models haven't finished loading, and for settlements / menu.
+const STATION_FALLBACKS = [buildRingHabitatStation, buildHangarComplexFallback, buildIndustrialGateFallback]
 
-const STATION_HANDCRAFTED = [
-  buildStationMesh,
-  buildSpireStation,
-  buildModularStation,
-  buildDomeStation,
-  buildRingHabitatStation,
-  buildDrydockStation
-]
-const STATION_VARIANTS = [...STATION_HANDCRAFTED, ...GENERATED_STATION_TEMPLATES]
+function buildHangarComplexFallback(rng) {
+  // Lightweight stand-in until GLBs load (or if a module failed).
+  return buildModularStation(rng)
+}
+function buildIndustrialGateFallback(rng) {
+  return buildSpireStation(rng)
+}
 
 const SETTLEMENT_VARIANTS = [
   buildSettlementDomeCluster,
   buildSettlementOutpost,
   buildSettlementMinehead,
-  buildSettlementFarmBubble,
-  // Reuse a couple of dome/spire-ish forms at settlement scale via wrappers.
-  (rng) => {
-    const g = buildDomeStation(rng)
-    g.scale.setScalar(0.85)
-    return g
-  },
-  (rng) => {
-    const g = buildSettlementDomeCluster(rng)
-    // Extra pad lights for variety.
-    addBeacon(g, new THREE.Vector3(10, 0.8, 10), 0x4fe0ff, 1.2, 0.3)
-    return g
-  }
+  buildSettlementFarmBubble
 ]
 
-// Picks one of several distinct station/settlement archetypes deterministically
-// from the body's id, so the same body always looks the same but the galaxy
-// isn't just one reskinned structure everywhere.
+// Picks station/settlement mesh deterministically from body id.
+// Stations: one of exactly three free-model archetypes (tinted per body).
+// Settlements: procedural surface variants (unchanged).
 export function buildStationMeshForBody(body) {
   const rng = mulberry32(hashString(body.id))
   const isSettlement = body.kind === 'settlement'
-  const pool = isSettlement ? SETTLEMENT_VARIANTS : STATION_VARIANTS
-  const variant = pool[Math.floor(rng() * pool.length)]
-  const group = variant(rng)
-  // Settlements on a surface shouldn't spin like free stations.
-  group.userData.spinSpeed = isSettlement ? 0 : 0.006 + rng() * 0.01
+  let group
+  if (isSettlement) {
+    const variant = SETTLEMENT_VARIANTS[Math.floor(rng() * SETTLEMENT_VARIANTS.length)]
+    group = variant(rng)
+    group.userData.spinSpeed = 0
+  } else {
+    const typeIndex = Math.floor(rng() * STATION_TYPE_COUNT)
+    group = stationModelsReady()
+      ? buildStationFromFreeModel(typeIndex, rng)
+      : null
+    if (!group) {
+      group = STATION_FALLBACKS[typeIndex](rng)
+    }
+    group.userData.stationType = typeIndex
+    group.userData.spinSpeed = 0.006 + rng() * 0.01
+  }
   return group
 }
 

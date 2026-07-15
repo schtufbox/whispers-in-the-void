@@ -1,42 +1,28 @@
 import * as THREE from 'three'
+import {
+  createLightningGeometry,
+  createLightningMaterial,
+  rewriteSpiralLightningBolt
+} from './lightningBolt.js'
 
-// Hyperdrive corridor — same full-frame camera-parented idea as the
-// supercruise tunnel, but the cross-section is a 5-pointed star rather
-// than a circle. Streaks ride the star wall, star-shaped depth rings rush
-// past, and a soft star haze sells the tube.
+// Hyperdrive corridor — same spiral-lightning language as supercruise, with a
+// 5-pointed star frame (haze + rings + lip). Streamers match SC (circular
+// helix + mesh spin); the star is the corridor shell only so bolts stay stable.
 
-const STREAK_WALL = 160
-const STREAK_INNER = 80
+const TUNNEL_STREAMERS = 16
 const RING_COUNT = 7
 const STAR_POINTS = 5
 const STAR_OUTER = 28
 const STAR_INNER_RATIO = 0.38
 const STAR_ROT_SPEED = 0.12
-
-function buildStreakMap() {
-  const w = 32
-  const h = 256
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  const g = ctx.createLinearGradient(w / 2, 0, w / 2, h)
-  g.addColorStop(0, 'rgba(255,255,255,0)')
-  g.addColorStop(0.12, 'rgba(180,255,220,0.9)')
-  g.addColorStop(0.5, 'rgba(255,255,255,1)')
-  g.addColorStop(0.88, 'rgba(120,220,255,0.75)')
-  g.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = g
-  ctx.fillRect(0, 0, w, h)
-  const core = ctx.createLinearGradient(w / 2, 0, w / 2, h)
-  core.addColorStop(0, 'rgba(255,255,255,0)')
-  core.addColorStop(0.4, 'rgba(255,255,255,0.95)')
-  core.addColorStop(0.6, 'rgba(255,255,255,0.95)')
-  core.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = core
-  ctx.fillRect(w * 0.38, 0, w * 0.24, h)
-  return new THREE.CanvasTexture(canvas)
-}
+// Keep all tunnel geometry past the chase-camera ship (~44u at zoom 1) so
+// effects sit behind the hull rather than painting over it.
+const Z_NEAR = -58
+const Z_FAR = -280
+// grow: 0 → 1 far→near; >1 holds full span, then recycle.
+const GROW_HOLD = 1.4
+// Rings / lip recycle before they reach the ship plane.
+const Z_RECYCLE = Z_NEAR + 4
 
 function buildGlowMap() {
   const size = 128
@@ -69,7 +55,7 @@ function starRadiusAt(theta, points = STAR_POINTS, innerRatio = STAR_INNER_RATIO
   return 1 + (innerRatio - 1) * ease
 }
 
-/** Sample a 2D star outline (closed) for ring / haze geometry. */
+/** Sample a 2D star outline (closed) for ring / lip geometry. */
 function starOutlineVertices(outerR, innerRatio, points = STAR_POINTS, stepsPerPoint = 8) {
   const verts = []
   const total = points * 2 * stepsPerPoint
@@ -79,6 +65,20 @@ function starOutlineVertices(outerR, innerRatio, points = STAR_POINTS, stepsPerP
     verts.push(Math.cos(theta) * r, Math.sin(theta) * r, 0)
   }
   return new Float32Array(verts)
+}
+
+function tunnelMat(color, opacity, { side = THREE.DoubleSide } = {}) {
+  // depthTest on so the player ship (opaque, writes depth) occludes tunnel
+  // fragments behind it; depthWrite off so transparent layers don't fight.
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: true,
+    side
+  })
 }
 
 function makeStarRingMesh(outerR, thickness, color) {
@@ -107,30 +107,25 @@ function makeStarRingMesh(outerR, thickness, color) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geo.setIndex(indices)
   geo.computeVertexNormals()
-  return new THREE.Mesh(
-    geo,
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.16,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide
-    })
-  )
+  return new THREE.Mesh(geo, tunnelMat(color, 0.16))
 }
 
-function makeStarHazeMesh(outerR, depth, color, opacity) {
-  // Open star-tube: rings of star cross-sections lofted along Z, open-ended.
-  const rings = 10
+/**
+ * Open star-tube lofted along Z from zNear → zFar (both negative, |zFar| larger).
+ * Starts past the ship so the near mouth never sits between camera and hull.
+ */
+function makeStarHazeMesh(outerR, zNear, zFar, color, opacity) {
+  const rings = 12
   const stepsPerPoint = 5
   const total = STAR_POINTS * 2 * stepsPerPoint
   const positions = []
   const indices = []
+  const depth = Math.abs(zFar - zNear)
   for (let zi = 0; zi <= rings; zi++) {
-    const z = -depth * (zi / rings)
-    const taper = 0.85 + 0.2 * (zi / rings)
+    const t = zi / rings
+    const z = zNear + (zFar - zNear) * t
+    // Slight taper: a bit wider near the camera mouth.
+    const taper = 1.05 - 0.15 * t
     for (let i = 0; i < total; i++) {
       const theta = (i / total) * Math.PI * 2 - Math.PI / 2
       const r = outerR * taper * starRadiusAt(theta, STAR_POINTS, STAR_INNER_RATIO)
@@ -150,75 +145,67 @@ function makeStarHazeMesh(outerR, depth, color, opacity) {
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geo.setIndex(indices)
-  return new THREE.Mesh(
-    geo,
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      depthTest: false,
-      blending: THREE.AdditiveBlending,
-      wireframe: false
-    })
-  )
+  // BackSide so we see the inner wall of the corridor from inside.
+  return new THREE.Mesh(geo, tunnelMat(color, opacity, { side: THREE.BackSide }))
 }
 
 export function createHyperspaceTunnel() {
   const group = new THREE.Group()
   group.visible = false
-  group.renderOrder = 10
+  // Below the player ship (default 0) so opaque hull wins when depths are equal;
+  // with depthTest true the ship already occludes, but keep order conservative.
+  group.renderOrder = 1
   group.frustumCulled = false
 
-  // Spinning star frame — streaks/rings parented so the whole corridor twists.
+  // Spinning star frame — haze/rings/lip only. Streamers live on `group` so
+  // they spin like supercruise (mesh.rotation.z) without double-transform.
   const spin = new THREE.Group()
   spin.frustumCulled = false
   group.add(spin)
 
-  const streakMap = buildStreakMap()
   const glowMap = buildGlowMap()
-  const geometry = new THREE.PlaneGeometry(1, 1)
 
-  function makeStreak(lightJitter, layer) {
-    const mat = new THREE.MeshBasicMaterial({
-      map: streakMap,
-      color: new THREE.Color().setHSL(0.48 + Math.random() * 0.12, 0.55, 0.72 + lightJitter),
-      transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide
-    })
-    const mesh = new THREE.Mesh(geometry, mat)
-    mesh.frustumCulled = false
-    spin.add(mesh)
+  function makeStreamer(lightJitter) {
+    const geo = createLightningGeometry()
+    const hue = 0.48 + Math.random() * 0.1
+    const coreMat = createLightningMaterial(
+      new THREE.Color().setHSL(hue, 0.7, 0.78 + lightJitter),
+      0.95
+    )
+    const glowMat = createLightningMaterial(
+      new THREE.Color().setHSL(hue + 0.03, 0.55, 0.55 + lightJitter * 0.4),
+      0.42
+    )
+    const core = new THREE.LineSegments(geo, coreMat)
+    const glow = new THREE.LineSegments(geo, glowMat)
+    core.frustumCulled = false
+    glow.frustumCulled = false
+    // Same as SC: geometry in tunnel space, mesh at origin, spin via rotation.z.
+    core.position.set(0, 0, 0)
+    glow.position.set(0, 0, 0)
+    group.add(glow)
+    group.add(core)
     return {
-      mesh,
-      layer,
-      // angle on the star wall (0..2π)
-      angle: Math.random() * Math.PI * 2,
-      // radial scale relative to star unit radius (wall band / inner band)
-      radiusScale: 1,
-      z: -20,
-      speed: 100,
-      len: 12,
-      thick: 0.15,
+      mesh: core,
+      glow,
+      lightJitter,
+      angle0: 0,
+      radius: STAR_OUTER,
+      twists: 1.2,
+      spin: 0.35,
+      advance: 0.12,
       phase: Math.random(),
-      lightJitter
+      flickerT: 0,
+      grow: 0
     }
   }
 
   const streaks = []
-  for (let i = 0; i < STREAK_WALL; i++) {
-    streaks.push(makeStreak(0.05 + Math.random() * 0.15, 'wall'))
-  }
-  for (let i = 0; i < STREAK_INNER; i++) {
-    streaks.push(makeStreak(0.1 + Math.random() * 0.2, 'inner'))
+  for (let i = 0; i < TUNNEL_STREAMERS; i++) {
+    streaks.push(makeStreamer(0.05 + Math.random() * 0.14))
   }
 
-  // Bright vanishing-point core
+  // Bright vanishing-point core at the far mouth (lightning origins).
   const core = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: glowMap,
@@ -227,15 +214,15 @@ export function createHyperspaceTunnel() {
       opacity: 0.9,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      depthTest: false
+      depthTest: true
     })
   )
   core.scale.setScalar(40)
-  core.position.set(0, 0, -120)
+  core.position.set(0, 0, Z_FAR * 0.92)
   core.frustumCulled = false
   group.add(core)
 
-  // Star-shaped depth rings
+  // Star-shaped depth rings — only past the ship plane.
   const rings = []
   for (let i = 0; i < RING_COUNT; i++) {
     const mesh = makeStarRingMesh(STAR_OUTER * (0.85 + (i % 3) * 0.06), 1.1 + (i % 2) * 0.4, 0x7affd0)
@@ -243,23 +230,22 @@ export function createHyperspaceTunnel() {
     spin.add(mesh)
     rings.push({
       mesh,
-      z: -28 - i * (130 / RING_COUNT),
+      z: Z_NEAR - 8 - i * (Math.abs(Z_FAR - Z_NEAR) * 0.9 / RING_COUNT),
       speed: 85 + i * 14,
       baseScale: 0.9 + (i % 3) * 0.05
     })
   }
 
-  // Soft star-tube haze (outer + tighter inner)
-  const haze = makeStarHazeMesh(STAR_OUTER * 1.12, 200, 0x0a3040, 0.22)
-  haze.position.z = 0
+  // Soft star-tube haze from just past the ship to the far mouth.
+  const haze = makeStarHazeMesh(STAR_OUTER * 1.12, Z_NEAR, Z_FAR, 0x0a3040, 0.18)
   haze.frustumCulled = false
   spin.add(haze)
 
-  const hazeInner = makeStarHazeMesh(STAR_OUTER * 0.55, 160, 0x104858, 0.1)
+  const hazeInner = makeStarHazeMesh(STAR_OUTER * 0.55, Z_NEAR - 4, Z_FAR * 0.92, 0x104858, 0.08)
   hazeInner.frustumCulled = false
   spin.add(hazeInner)
 
-  // Faint wireframe star outline near the camera as a "portal lip"
+  // Portal lip just past the ship (not between camera and hull).
   {
     const lipPos = starOutlineVertices(STAR_OUTER * 1.05, STAR_INNER_RATIO, STAR_POINTS, 10)
     const lipGeo = new THREE.BufferGeometry()
@@ -269,40 +255,54 @@ export function createHyperspaceTunnel() {
       new THREE.LineBasicMaterial({
         color: 0xa0ffe8,
         transparent: true,
-        opacity: 0.35,
+        opacity: 0.32,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        depthTest: false
+        depthTest: true
       })
     )
-    lip.position.z = -18
+    lip.position.z = Z_NEAR
     lip.frustumCulled = false
     spin.add(lip)
   }
 
   let active = false
   let spinAngle = 0
+  const _aim = new THREE.Vector3()
+  const _eye = new THREE.Vector3()
+  const _up = new THREE.Vector3()
+  const _lookMat = new THREE.Matrix4()
 
-  function resetStreak(s, strength) {
-    s.angle = Math.random() * Math.PI * 2
-    if (s.layer === 'wall') {
-      // Tight band on the star wall.
-      s.radiusScale = 0.88 + Math.random() * 0.2
-      s.speed = (160 + Math.random() * 320) * (0.65 + strength * 0.9)
-      s.len = 14 + Math.random() * 50 * (0.7 + strength)
-      s.thick = 0.1 + Math.random() * 0.38
-    } else {
-      // Inner filaments closer to the axis, still on a star-ish distribution.
-      s.radiusScale = 0.18 + Math.random() * 0.5
-      s.speed = (220 + Math.random() * 400) * (0.7 + strength)
-      s.len = 10 + Math.random() * 36 * (0.6 + strength)
-      s.thick = 0.05 + Math.random() * 0.2
-    }
-    s.z = -18 - Math.random() * 200
-    s.phase = Math.random()
+  function reshapeStreamer(s) {
+    // Same spiral as SC: circular helix far→tip, continuous mesh spin separate.
+    const twists = (1.2 + Math.random() * 1.35) * (s.spin >= 0 ? 1 : -1)
+    s.twists = twists
+    const g = Math.min(1, Math.max(0.04, s.grow ?? 1))
+    const zTip = Z_FAR + (Z_NEAR - Z_FAR) * g
+    rewriteSpiralLightningBolt(s.mesh.geometry, {
+      zStart: Z_FAR,
+      zEnd: zTip,
+      radius: s.radius,
+      angle0: 0,
+      twists,
+      jag: 0.9 + Math.random() * 1.15,
+      forks: 2 + Math.floor(Math.random() * 3),
+      thickness: 0.2 + Math.random() * 0.16
+    })
+    s.flickerT = 0.12 + Math.random() * 0.16
   }
 
-  for (const s of streaks) resetStreak(s, 0.7)
+  function resetStreamer(s, strength) {
+    s.angle0 = Math.random() * Math.PI * 2
+    s.spin = (0.3 + Math.random() * 0.45) * (Math.random() < 0.5 ? 1 : -1)
+    s.advance = (0.5 + Math.random() * 0.4) * (0.75 + strength * 0.5)
+    s.radius = STAR_OUTER * (0.88 + Math.random() * 0.22)
+    s.phase = Math.random()
+    s.grow = Math.random() * 0.3
+    reshapeStreamer(s)
+  }
+
+  for (const s of streaks) resetStreamer(s, 0.7)
 
   return {
     group,
@@ -310,7 +310,7 @@ export function createHyperspaceTunnel() {
       active = true
       spinAngle = 0
       group.visible = true
-      for (const s of streaks) resetStreak(s, 0.7)
+      for (const s of streaks) resetStreamer(s, 0.7)
     },
     stop() {
       active = false
@@ -320,68 +320,91 @@ export function createHyperspaceTunnel() {
      * @param {number} dt
      * @param {number} strength 0–1 overall effect strength
      * @param {THREE.Camera} camera
+     * @param {THREE.Vector3|number[]|null} [aimWorld] - crosshair aim; corridor
+     *   vanishes along camera→aim (same as supercruise tunnel).
      */
-    update(dt, strength, camera) {
+    update(dt, strength, camera, aimWorld = null) {
       if (!active) return
       group.visible = strength > 0.02
 
-      // Stick to camera so the tunnel always fills the frame.
+      // Stick to camera; -Z toward crosshair (camera convention).
+      // Object3D.lookAt on a Group aims +Z at the target — that hid the tunnel.
       group.position.copy(camera.position)
-      group.quaternion.copy(camera.quaternion)
+      if (aimWorld) {
+        if (aimWorld.isVector3) _aim.copy(aimWorld)
+        else _aim.fromArray(aimWorld)
+        _eye.copy(camera.position)
+        if (_eye.distanceToSquared(_aim) > 1e-4) {
+          _up.copy(camera.up)
+          _lookMat.lookAt(_eye, _aim, _up)
+          group.quaternion.setFromRotationMatrix(_lookMat)
+        } else {
+          group.quaternion.copy(camera.quaternion)
+        }
+      } else {
+        group.quaternion.copy(camera.quaternion)
+      }
 
-      // Slow twist of the star corridor — more "matrix corridor" than rigid pipe.
+      // Slow twist of the star frame only (haze + rings + lip).
       spinAngle += STAR_ROT_SPEED * (0.4 + strength) * dt
       spin.rotation.z = spinAngle
 
-      const rush = 0.6 + strength * 2.0
+      const rush = 0.55 + strength * 1.35
       const i = Math.min(1, Math.max(0.2, strength))
 
       for (const s of streaks) {
-        s.z += s.speed * rush * dt
-        if (s.z > 22) resetStreak(s, strength)
+        // Match SC: spin helix on the mesh + grow tip far→near.
+        s.angle0 += s.spin * rush * dt
+        s.grow = (s.grow || 0) + s.advance * rush * dt
+        if (s.grow > GROW_HOLD) {
+          resetStreamer(s, strength)
+          continue
+        }
 
-        // Perspective flare as streaks approach the lens.
-        const depthT = Math.min(1, Math.max(0, (s.z + 180) / 200))
-        const flare = 1 + depthT * depthT * 0.9
-        // angle is spin-local; parent spin group handles corridor twist.
-        const unitR = starRadiusAt(s.angle, STAR_POINTS, STAR_INNER_RATIO)
-        const r = STAR_OUTER * s.radiusScale * unitR * flare
-        // Cancel spin on angle placement so wall stays fixed in spin group;
-        // angle is already in spin-local space.
-        const x = Math.cos(s.angle) * r
-        const y = Math.sin(s.angle) * r
-        s.mesh.position.set(x, y, s.z)
-        const lenMul = 0.55 + i * 1.25
-        const thickMul = 0.7 + i * 1.0
-        s.mesh.scale.set(s.thick * thickMul, s.len * lenMul, 1)
-        s.mesh.rotation.set(Math.PI / 2, 0, s.angle)
-        const nearFade = Math.min(1, (20 - s.z) / 24 + 0.25)
-        const farFade = Math.min(1, (-s.z) / 50 + 0.2)
-        s.mesh.material.opacity =
-          (s.layer === 'wall' ? 0.4 : 0.26) * (0.5 + i * 0.75) * (0.4 + s.phase * 0.6) * nearFade * farFade
+        s.flickerT -= dt
+        if (s.flickerT <= 0) reshapeStreamer(s)
+
+        s.mesh.rotation.set(0, 0, s.angle0)
+        s.mesh.position.set(0, 0, 0)
+        s.mesh.scale.set(1, 1, 1)
+        if (s.glow) {
+          s.glow.rotation.copy(s.mesh.rotation)
+          s.glow.position.copy(s.mesh.position)
+          s.glow.scale.set(1.12, 1.12, 1.12)
+        }
+
+        const reach = Math.min(1, s.grow)
+        const holdFade = s.grow > 1 ? Math.max(0, 1 - (s.grow - 1) / (GROW_HOLD - 1)) : 1
+        const crackle = 0.6 + 0.4 * Math.sin(s.phase * 45 + s.angle0 * 2.2)
+        const baseOp =
+          0.92 * (0.5 + i * 0.75) * (0.55 + s.phase * 0.45) * (0.4 + reach * 0.6) * holdFade * crackle
+        s.mesh.material.opacity = Math.max(0, baseOp)
+        if (s.glow) s.glow.material.opacity = Math.max(0, baseOp * 0.48)
       }
 
       for (const r of rings) {
         r.z += r.speed * rush * dt
-        if (r.z > 18) {
-          r.z = -190 - Math.random() * 40
+        // Recycle before the ship plane — never fly through the hull.
+        if (r.z > Z_RECYCLE) {
+          r.z = Z_FAR * 0.95 - Math.random() * 40
           r.baseScale = 0.85 + Math.random() * 0.2
         }
-        const depthT = Math.min(1, Math.max(0, (r.z + 180) / 200))
+        const span = Math.abs(Z_FAR - Z_NEAR)
+        const depthT = Math.min(1, Math.max(0, (r.z - Z_FAR) / span))
         const sc = r.baseScale * (1 + depthT * 0.85) * (0.8 + i * 0.3)
         r.mesh.scale.set(sc, sc, sc)
         r.mesh.position.set(0, 0, r.z)
-        r.mesh.material.opacity = (0.06 + i * 0.2) * Math.min(1, (-r.z) / 35 + 0.25)
+        r.mesh.material.opacity = (0.06 + i * 0.2) * Math.min(1, (-r.z - 40) / 50 + 0.2)
       }
 
-      haze.material.opacity = 0.1 + i * 0.28
-      haze.scale.set(0.95 + i * 0.1, 0.95 + i * 0.1, 0.9 + i * 0.2)
-      hazeInner.material.opacity = 0.05 + i * 0.12
-      hazeInner.scale.set(0.9 + i * 0.12, 0.9 + i * 0.12, 0.85 + i * 0.2)
+      haze.material.opacity = 0.08 + i * 0.2
+      haze.scale.set(0.95 + i * 0.1, 0.95 + i * 0.1, 1)
+      hazeInner.material.opacity = 0.04 + i * 0.1
+      hazeInner.scale.set(0.9 + i * 0.12, 0.9 + i * 0.12, 1)
 
-      core.position.z = -95 - (1 - strength) * 35
+      core.position.z = Z_FAR * 0.92
       core.scale.setScalar(22 + strength * 60)
-      core.material.opacity = 0.3 + strength * 0.65
+      core.material.opacity = 0.28 + strength * 0.55
     }
   }
 }

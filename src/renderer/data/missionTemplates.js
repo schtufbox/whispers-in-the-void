@@ -1,5 +1,6 @@
 import { pick, intRange } from '../procgen/prng.js'
 import { systemsWithinJumps } from '../procgen/galaxy.js'
+import { spawnPointNearBody } from '../game/spawner.js'
 
 let missionCounter = 0
 
@@ -21,6 +22,9 @@ function pickTargetSystem(rng, galaxy, giverSystem) {
 export function generateBountyMission(rng, galaxy, giverSystemId, giverStationId) {
   const giverSystem = galaxy.systems.find((s) => s.id === giverSystemId)
   const locationBody = pick(rng, giverSystem.bodies)
+  // Outside the body's shell (and clear of other system solids) — never at
+  // body.position (planet/station centers used to bury bounty NPCs).
+  const locationHint = spawnPointNearBody(rng, locationBody, giverSystem.bodies)
   return {
     id: `m-${missionCounter++}`,
     type: 'bounty',
@@ -30,7 +34,13 @@ export function generateBountyMission(rng, galaxy, giverSystemId, giverStationId
     reward: intRange(rng, 1500, 5000),
     status: 'available',
     objectiveComplete: false,
-    target: { kind: 'npcShip', shipClassId: pick(rng, BOUNTY_TARGET_CLASSES), systemId: giverSystemId, locationHint: locationBody.position, npcId: null }
+    target: {
+      kind: 'npcShip',
+      shipClassId: pick(rng, BOUNTY_TARGET_CLASSES),
+      systemId: giverSystemId,
+      locationHint,
+      npcId: null
+    }
   }
 }
 

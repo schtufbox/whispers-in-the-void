@@ -9,7 +9,9 @@ import {
   blueprintIdForShip,
   blueprintIdForWeapon,
   allBlueprints,
-  getBlueprint
+  getBlueprint,
+  SHIP_EXOTIC_ORE_FROM_R,
+  SHIP_QUANTUM_ORE_FROM_R
 } from '../data/blueprints.js'
 import {
   startCraft,
@@ -76,6 +78,43 @@ test('ore cost is higher for expensive items', () => {
   const cheapTotal = Object.values(oreCostForBlueprint(cheapId)).reduce((a, b) => a + b, 0)
   const expTotal = Object.values(oreCostForBlueprint(expensiveId)).reduce((a, b) => a + b, 0)
   assert.ok(expTotal > cheapTotal * 2)
+})
+
+test('only upper-tier ships need exotic/quantum (rim) ore; weapons never do', () => {
+  const weapons = allBlueprints().filter((b) => b.kind === 'weapon')
+  for (const w of weapons) {
+    const c = oreCostForBlueprint(w.id)
+    assert.equal(c.exotic_ore, undefined, `${w.itemName} should not need exotic ore`)
+    assert.equal(c.quantum_ore, undefined, `${w.itemName} should not need quantum ore`)
+    assert.ok((c.raw_ore ?? 0) > 0)
+  }
+
+  const ships = allBlueprints().filter((b) => b.kind === 'ship').sort((a, b) => a.listPrice - b.listPrice)
+  const prices = ships.map((s) => s.listPrice)
+  const logMin = Math.log(prices[0])
+  const logMax = Math.log(prices[prices.length - 1])
+  const rel = (price) => (Math.log(price) - logMin) / (logMax - logMin)
+
+  let anyExotic = false
+  let anyQuantum = false
+  for (const s of ships) {
+    const c = oreCostForBlueprint(s.id)
+    const r = rel(s.listPrice)
+    if (r < SHIP_EXOTIC_ORE_FROM_R - 0.02) {
+      assert.equal(c.exotic_ore, undefined, `cheap ship ${s.itemName} (r=${r.toFixed(2)}) needs no exotic`)
+      assert.equal(c.quantum_ore, undefined, `cheap ship ${s.itemName} needs no quantum`)
+    }
+    if (r < SHIP_QUANTUM_ORE_FROM_R - 0.02) {
+      assert.equal(c.quantum_ore, undefined, `mid ship ${s.itemName} (r=${r.toFixed(2)}) needs no quantum`)
+    }
+    if ((c.exotic_ore ?? 0) > 0) anyExotic = true
+    if ((c.quantum_ore ?? 0) > 0) anyQuantum = true
+  }
+  assert.ok(anyExotic, 'some high-end ships should need exotic ore')
+  assert.ok(anyQuantum, 'top ships should need quantum ore')
+  // Top ship must use quantum.
+  const top = ships[ships.length - 1]
+  assert.ok((oreCostForBlueprint(top.id).quantum_ore ?? 0) > 0)
 })
 
 test('credit bay fee is modest and ships cost more than weapons', () => {

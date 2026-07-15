@@ -1,5 +1,14 @@
 import { mulberry32, pick, range, intRange } from './prng.js'
-import { generateBodyName, generateSpeciesName } from './names.js'
+import {
+  generateBodyName,
+  generateSpeciesName,
+  generateSystemName,
+  generateUniquePlanetName,
+  generateUniqueMoonName,
+  sequentialPlanetName,
+  sequentialMoonName,
+  isSequentialMoonName
+} from './names.js'
 import { ECONOMY_TAGS } from '../data/economyTags.js'
 
 const ARM_COUNT = 4
@@ -22,18 +31,31 @@ const MOON_CHANCE = 0.23
 const MOON_ORBIT_MIN_RADIUS = 18
 const MOON_ORBIT_MAX_RADIUS = 45
 const MOON_ORBIT_CLEARANCE_MARGIN = 6
-// Match game/collision.js station shells (+50% station/settlement pass).
-const STATION_CLEARANCE_RADIUS = 337.5
-// Settlements sit on the crust — only a small radial lift so the mesh base
-// meets the surface (not floating on the full collision shell).
-const SETTLEMENT_SURFACE_LIFT = 33
-const SETTLEMENT_CLEARANCE_RADIUS = 60
+// Placement / orbital packing for station *visual* bulk (~STATION_SCALE 190).
+// Player collision is smaller (500m) in collision.js so you can fly in close.
+const STATION_CLEARANCE_RADIUS = 2500
+// Min extra gap beyond planet surface + station shell — stations must orbit
+// no closer than this many world units from a planet's crust (not merely the
+// thin MOON_ORBIT_CLEARANCE_MARGIN used for moon↔host packing).
+const STATION_PLANET_ORBIT_GAP = 2000
+// Settlements were not part of the behemoth scale pass — keep original shells.
+const SETTLEMENT_CLEARANCE_RADIUS = 72
+// Settlements sit ON the crust — tiny lift only to avoid z-fighting (mesh
+// origin is at the pad base). Large lifts read as floating bases.
+const SETTLEMENT_SURFACE_LIFT = 1.5
 // Vast majority of stations orbit a planet, moon, or the star; a tiny fraction drift alone.
 const STATION_FREE_DRIFT_CHANCE = 0.003
+// Planets/moons that host a station or settlement keep their catalog name
+// most of the time, but sometimes receive a unique proper name instead
+// (proper names never include Roman/Arabic numerals).
+const PLANET_UNIQUE_NAME_CHANCE = 0.55
+const MOON_UNIQUE_NAME_CHANCE = 0.4
 // Settlements are almost always surface-bound; a rare outpost in an asteroid belt.
 const SETTLEMENT_ASTEROID_CHANCE = 0.003
 // If the chosen host already has an orbiting station, settlement is rare.
 const SETTLEMENT_WITH_STATION_CHANCE = 0.05
+// Placement retries when a rolled position clips another body / orbit band.
+const STATION_PLACE_ATTEMPTS = 48
 const JUMP_NEIGHBOR_COUNT = 5
 
 export const SYSTEM_ARRIVAL_POSITION = [0, 400, -SYSTEM_LOCAL_MAX_RADIUS * 0.95]
@@ -60,10 +82,47 @@ function localPosition(rng, systemScale) {
 }
 
 // XZ orbital radius of a body around its host (matches main.js moonOrbits).
-function xzOrbitRadius(position, parentPosition) {
+function xzOrbitRadius(position, parentPosition = [0, 0, 0]) {
   const dx = position[0] - parentPosition[0]
   const dz = position[2] - parentPosition[2]
   return Math.hypot(dx, dz)
+}
+
+function dist3(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+}
+
+/** Collision shell radius used for placement clearance (matches game/collision.js). */
+function bodyShellRadius(body) {
+  if (body.kind === 'station') return STATION_CLEARANCE_RADIUS
+  if (body.kind === 'settlement') return SETTLEMENT_CLEARANCE_RADIUS
+  return body.radius ?? 0
+}
+
+/**
+ * True if `position` would put a body of `ownShell` inside any solid body
+ * already in the system (planets, moons, stations, settlements, asteroid fields).
+ */
+function clearanceMarginFor(otherKind) {
+  // Stations keep a much wider berth from planets than from moons/peers.
+  return otherKind === 'planet' ? STATION_PLANET_ORBIT_GAP : MOON_ORBIT_CLEARANCE_MARGIN
+}
+
+function positionOverlapsBodies(position, ownShell, system) {
+  for (const b of system.bodies) {
+    if (
+      b.kind !== 'planet' &&
+      b.kind !== 'moon' &&
+      b.kind !== 'station' &&
+      b.kind !== 'settlement' &&
+      b.kind !== 'asteroidField'
+    ) {
+      continue
+    }
+    const need = ownShell + bodyShellRadius(b) + clearanceMarginFor(b.kind)
+    if (dist3(position, b.position) < need) return true
+  }
+  return false
 }
 
 /**
@@ -71,18 +130,31 @@ function xzOrbitRadius(position, parentPosition) {
  * @param {Array<{ r: number, halfWidth: number }>} [avoidBands]
  *   Forbidden orbital-radius bands so co-hosted moons/stations don't share an
  *   orbit shell (radial gap >= moon size + station shell at every angle).
+ * @param {number} [maxOrbitRadius]
+ *   Hard cap on XZ radius (e.g. moon-hosted stations must stay clear of the
+ *   grandparent planet over the full circle). Returns null if no valid shell.
  */
-function localPositionNearBody(rng, parentPosition, parentRadius, ownClearance, avoidBands = []) {
-  const clearance = parentRadius + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
+function localPositionNearBody(
+  rng,
+  parentPosition,
+  parentRadius,
+  ownClearance,
+  avoidBands = [],
+  maxOrbitRadius = Infinity,
+  surfaceGap = MOON_ORBIT_CLEARANCE_MARGIN
+) {
+  const clearance = parentRadius + ownClearance + surfaceGap
   const minR = Math.max(MOON_ORBIT_MIN_RADIUS, clearance)
   // Default outer roll; expand if we must clear co-hosted orbiters further out.
   let maxR = Math.max(MOON_ORBIT_MAX_RADIUS, clearance * 1.4)
   for (const band of avoidBands) {
     maxR = Math.max(maxR, band.r + band.halfWidth + ownClearance * 0.15)
   }
+  maxR = Math.min(maxR, maxOrbitRadius)
+  if (!(maxR >= minR)) return null
 
   function radiusOk(r) {
-    return avoidBands.every((b) => Math.abs(r - b.r) >= b.halfWidth)
+    return r >= minR && r <= maxR && avoidBands.every((b) => Math.abs(r - b.r) >= b.halfWidth)
   }
 
   let xzRadius = null
@@ -93,16 +165,25 @@ function localPositionNearBody(rng, parentPosition, parentRadius, ownClearance, 
       break
     }
   }
-  // Fallback: park outside the outermost forbidden band (always clears moons).
+  // Fallback: park outside the outermost forbidden band (always clears moons),
+  // still respecting the hard max orbit cap.
   if (xzRadius == null) {
     xzRadius = minR
     for (const band of avoidBands) {
       xzRadius = Math.max(xzRadius, band.r + band.halfWidth)
     }
     xzRadius += range(rng, ownClearance * 0.05, ownClearance * 0.25)
+    if (xzRadius > maxR) {
+      // Try just under the cap if the outer-park overshot.
+      xzRadius = maxR
+      if (!radiusOk(xzRadius)) return null
+    }
   }
 
   const theta = rng() * Math.PI * 2
+  // Cap y so the 3D distance to the host still clears the host shell (xz alone
+  // already does; a large y is fine for host clearance, but keep the flat orbit
+  // convention used by main.js moonOrbits).
   const y = range(rng, -xzRadius * 0.15, xzRadius * 0.15)
   return [
     parentPosition[0] + xzRadius * Math.cos(theta),
@@ -111,29 +192,116 @@ function localPositionNearBody(rng, parentPosition, parentRadius, ownClearance, 
   ]
 }
 
-/** Orbit shells of moons / stations already bound to this host. */
+/**
+ * Orbit shells to avoid around a host: direct child moons/stations, plus the
+ * annulus swept by stations that themselves orbit a child moon of this host.
+ */
 function orbitAvoidBandsForHost(system, host, ownClearance) {
   const bands = []
   for (const b of system.bodies) {
-    if (!b.parentId || b.parentId !== host.id) continue
-    if (b.kind !== 'moon' && b.kind !== 'station') continue
-    const r = xzOrbitRadius(b.position, host.position)
-    // Radial gap so full coplanar orbits never intersect collision shells.
-    const otherShell =
-      b.kind === 'moon'
-        ? (b.radius ?? 0)
-        : STATION_CLEARANCE_RADIUS
-    bands.push({
-      r,
-      halfWidth: otherShell + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
-    })
+    if (b.parentId === host.id && (b.kind === 'moon' || b.kind === 'station')) {
+      const r = xzOrbitRadius(b.position, host.position)
+      bands.push({
+        r,
+        halfWidth: bodyShellRadius(b) + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
+      })
+      continue
+    }
+    // Station orbiting a moon of this host sweeps ~[moonR ± stR] around host.
+    if (b.kind === 'station' && b.parentId) {
+      const mid = system.bodies.find((x) => x.id === b.parentId)
+      if (!mid || mid.kind !== 'moon' || mid.parentId !== host.id) continue
+      const moonR = xzOrbitRadius(mid.position, host.position)
+      const stR = xzOrbitRadius(b.position, mid.position)
+      bands.push({
+        r: moonR,
+        halfWidth: stR + bodyShellRadius(b) + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
+      })
+    }
   }
   return bands
 }
 
-// Station orbiting the system star (origin).
-function localPositionStarOrbit(rng, systemScale) {
-  const radius = range(rng, SYSTEM_LOCAL_MIN_RADIUS * 0.2, SYSTEM_LOCAL_MIN_RADIUS * 0.65) * systemScale
+/**
+ * Max XZ radius for a station orbiting a moon so its full circle stays outside
+ * the grandparent planet and does not cross other planet-level orbiters.
+ * Returns null if no safe radius exists (caller should pick another host).
+ */
+function maxOrbitRadiusForMoonHost(system, moon, ownClearance) {
+  if (!moon.parentId) return Infinity
+  const planet = system.bodies.find((b) => b.id === moon.parentId)
+  if (!planet || planet.kind !== 'planet') return Infinity
+
+  const moonR = xzOrbitRadius(moon.position, planet.position)
+  // Coplanar worst case: station on the near side of the moon toward the planet.
+  // Use the planet orbit gap so moon-hosted stations also stay ≥2000 from crust.
+  let maxR = moonR - ((planet.radius ?? 0) + ownClearance + STATION_PLANET_ORBIT_GAP)
+
+  // Other bodies orbiting the same planet (sibling moons, planet-hosted stations).
+  for (const b of system.bodies) {
+    if (b.parentId !== planet.id) continue
+    if (b.id === moon.id) continue
+    if (b.kind !== 'moon' && b.kind !== 'station') continue
+    const siblingR = xzOrbitRadius(b.position, planet.position)
+    const gap = Math.abs(siblingR - moonR)
+    maxR = Math.min(maxR, gap - (bodyShellRadius(b) + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN))
+  }
+
+  return maxR
+}
+
+/** Star-orbit avoid bands: planets, moons, and other star-orbiting stations. */
+function starOrbitAvoidBands(system, ownClearance) {
+  const bands = []
+  for (const b of system.bodies) {
+    if (b.kind === 'planet' || b.kind === 'moon') {
+      bands.push({
+        r: xzOrbitRadius(b.position),
+        halfWidth: (b.radius ?? 0) + ownClearance + clearanceMarginFor(b.kind)
+      })
+    } else if (b.kind === 'station' && b.orbitsStar) {
+      bands.push({
+        r: xzOrbitRadius(b.position),
+        halfWidth: STATION_CLEARANCE_RADIUS + ownClearance + MOON_ORBIT_CLEARANCE_MARGIN
+      })
+    }
+  }
+  return bands
+}
+
+// Station orbiting the system star (origin). Same avoid-band logic as host orbits.
+function localPositionStarOrbit(rng, systemScale, avoidBands = []) {
+  const minR = SYSTEM_LOCAL_MIN_RADIUS * 0.2 * systemScale
+  let maxR = SYSTEM_LOCAL_MIN_RADIUS * 0.65 * systemScale
+  for (const band of avoidBands) {
+    maxR = Math.max(maxR, band.r + band.halfWidth + STATION_CLEARANCE_RADIUS * 0.15)
+  }
+  // Also allow parking outside the outermost planet band if the default shell is busy.
+  for (const band of avoidBands) {
+    maxR = Math.max(maxR, band.r + band.halfWidth + STATION_CLEARANCE_RADIUS * 0.05)
+  }
+  if (maxR < minR) return null
+
+  function radiusOk(r) {
+    return avoidBands.every((b) => Math.abs(r - b.r) >= b.halfWidth)
+  }
+
+  let radius = null
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const candidate = range(rng, minR, maxR)
+    if (radiusOk(candidate)) {
+      radius = candidate
+      break
+    }
+  }
+  if (radius == null) {
+    radius = minR
+    for (const band of avoidBands) {
+      radius = Math.max(radius, band.r + band.halfWidth)
+    }
+    radius += range(rng, STATION_CLEARANCE_RADIUS * 0.05, STATION_CLEARANCE_RADIUS * 0.25)
+  }
+
   const theta = rng() * Math.PI * 2
   const y = range(rng, -radius * 0.08, radius * 0.08)
   return [radius * Math.cos(theta), y, radius * Math.sin(theta)]
@@ -194,15 +362,36 @@ function radiusFor(rng, kind, systemScale) {
   return null
 }
 
-function makePlanetOrMoon(rng, idCounter, kind, parent, systemScale) {
+function makePlanetOrMoon(rng, idCounter, kind, parent, systemScale, name, siblingMoons = []) {
   const radius = radiusFor(rng, kind, systemScale)
-  const position =
-    kind === 'moon'
-      ? localPositionNearBody(rng, parent.position, parent.radius, radius)
-      : localPosition(rng, systemScale)
+  let position
+  if (kind === 'moon') {
+    // Avoid co-hosted sibling moons so multi-moon orbits never share a shell.
+    const avoidBands = siblingMoons.map((m) => ({
+      r: xzOrbitRadius(m.position, parent.position),
+      halfWidth: (m.radius ?? 0) + radius + MOON_ORBIT_CLEARANCE_MARGIN
+    }))
+    position = localPositionNearBody(rng, parent.position, parent.radius, radius, avoidBands)
+    // Extremely tight family: park outside the outermost sibling band.
+    if (!position) {
+      let minR = parent.radius + radius + MOON_ORBIT_CLEARANCE_MARGIN
+      for (const band of avoidBands) minR = Math.max(minR, band.r + band.halfWidth)
+      const theta = rng() * Math.PI * 2
+      const xz = minR + range(rng, radius * 0.1, radius * 0.4)
+      position = [
+        parent.position[0] + xz * Math.cos(theta),
+        parent.position[1] + range(rng, -xz * 0.1, xz * 0.1),
+        parent.position[2] + xz * Math.sin(theta)
+      ]
+    }
+  } else {
+    position = localPosition(rng, systemScale)
+  }
   return {
     id: `body-${idCounter}`,
-    name: kind === 'moon' ? `${parent.name} Moon` : generateBodyName(rng, kind),
+    name:
+      name ??
+      (kind === 'moon' ? sequentialMoonName(parent.name) : generateBodyName(rng, kind)),
     kind,
     parentId: kind === 'moon' ? parent.id : undefined,
     position,
@@ -214,10 +403,10 @@ function makePlanetOrMoon(rng, idCounter, kind, parent, systemScale) {
   }
 }
 
-function makeAsteroidField(rng, idCounter, systemScale) {
+function makeAsteroidField(rng, idCounter, systemScale, usedNames) {
   return {
     id: `body-${idCounter}`,
-    name: generateBodyName(rng, 'asteroidField'),
+    name: generateBodyName(rng, 'asteroidField', usedNames),
     kind: 'asteroidField',
     position: localPosition(rng, systemScale),
     radius: radiusFor(rng, 'asteroidField', systemScale),
@@ -228,48 +417,108 @@ function makeAsteroidField(rng, idCounter, systemScale) {
   }
 }
 
+function tryStationPosition(rng, system, mode, host) {
+  if (mode === 'free') {
+    const position = localPosition(rng, system.sizeScale)
+    if (positionOverlapsBodies(position, STATION_CLEARANCE_RADIUS, system)) return null
+    return { position, parentId: undefined, orbitsStar: false }
+  }
+  if (mode === 'star') {
+    const avoidBands = starOrbitAvoidBands(system, STATION_CLEARANCE_RADIUS)
+    const position = localPositionStarOrbit(rng, system.sizeScale, avoidBands)
+    if (!position) return null
+    if (positionOverlapsBodies(position, STATION_CLEARANCE_RADIUS, system)) return null
+    return { position, parentId: undefined, orbitsStar: true }
+  }
+  // Hosted on a planet or moon.
+  const hostRadius = host.radius ?? 0
+  const avoidBands = orbitAvoidBandsForHost(system, host, STATION_CLEARANCE_RADIUS)
+  let maxOrbit = Infinity
+  if (host.kind === 'moon') {
+    maxOrbit = maxOrbitRadiusForMoonHost(system, host, STATION_CLEARANCE_RADIUS)
+    if (!(maxOrbit >= hostRadius + STATION_CLEARANCE_RADIUS + MOON_ORBIT_CLEARANCE_MARGIN)) {
+      return null
+    }
+  }
+  // Planets: enforce STATION_PLANET_ORBIT_GAP so stations never skim the crust.
+  const surfaceGap = host.kind === 'planet' ? STATION_PLANET_ORBIT_GAP : MOON_ORBIT_CLEARANCE_MARGIN
+  const position = localPositionNearBody(
+    rng,
+    host.position,
+    hostRadius,
+    STATION_CLEARANCE_RADIUS,
+    avoidBands,
+    maxOrbit,
+    surfaceGap
+  )
+  if (!position) return null
+  if (positionOverlapsBodies(position, STATION_CLEARANCE_RADIUS, system)) return null
+  return { position, parentId: host.id, orbitsStar: false }
+}
+
 function makeStation(rng, idCounter, system) {
   const planets = system.bodies.filter((b) => b.kind === 'planet')
   const moons = system.bodies.filter((b) => b.kind === 'moon')
+  // Prefer planet hosts: moon-hosted stations need a large moon–planet gap or
+  // they clip the grandparent over the full orbit (main.js animates both).
   const bodyHosts = [...planets, ...moons]
 
-  let position
-  let parentId
-  let orbitsStar = false
+  let placement = null
+  const preferFree = rng() < STATION_FREE_DRIFT_CHANCE
 
-  if (rng() < STATION_FREE_DRIFT_CHANCE) {
-    // Rare free-floating station.
-    position = localPosition(rng, system.sizeScale)
-  } else {
-    // Host pool: star + every planet/moon in the system.
-    const useStar = bodyHosts.length === 0 || rng() < 0.28
-    if (useStar) {
-      position = localPositionStarOrbit(rng, system.sizeScale)
-      orbitsStar = true
-    } else {
-      const host = pick(rng, bodyHosts)
-      const hostRadius = host.radius ?? 0
-      // Keep station orbital radius clear of co-hosted moons (and sibling stations).
-      // A planet may have both; they must not share / cross the same orbit shell.
-      const avoidBands = orbitAvoidBandsForHost(system, host, STATION_CLEARANCE_RADIUS)
-      position = localPositionNearBody(
-        rng,
-        host.position,
-        hostRadius,
-        STATION_CLEARANCE_RADIUS,
-        avoidBands
-      )
-      parentId = host.id
+  for (let attempt = 0; attempt < STATION_PLACE_ATTEMPTS && !placement; attempt++) {
+    if (preferFree && attempt < 8) {
+      placement = tryStationPosition(rng, system, 'free')
+      if (placement) break
     }
+
+    const useStar = bodyHosts.length === 0 || rng() < 0.28
+    if (useStar || bodyHosts.length === 0) {
+      placement = tryStationPosition(rng, system, 'star')
+      continue
+    }
+
+    const host = pick(rng, bodyHosts)
+    placement = tryStationPosition(rng, system, 'host', host)
+  }
+
+  // Last resort: star orbit outside every avoid band / solid body (expand outward).
+  if (!placement) {
+    for (let attempt = 0; attempt < STATION_PLACE_ATTEMPTS; attempt++) {
+      placement = tryStationPosition(rng, system, 'star')
+      if (placement) break
+      // Force a far free slot if star bands are packed.
+      const far = localPosition(rng, system.sizeScale)
+      // Push further out if needed.
+      const r = Math.hypot(far[0], far[2])
+      const boost = SYSTEM_LOCAL_MAX_RADIUS * system.sizeScale * (0.7 + attempt * 0.01)
+      if (r > 1e-6) {
+        const s = boost / r
+        far[0] *= s
+        far[2] *= s
+      } else {
+        far[0] = boost
+      }
+      if (!positionOverlapsBodies(far, STATION_CLEARANCE_RADIUS, system)) {
+        placement = { position: far, parentId: undefined, orbitsStar: false }
+        break
+      }
+    }
+  }
+
+  if (!placement) {
+    // Extremely dense system — park on +Z far outside system scale (static free).
+    const r = SYSTEM_LOCAL_MAX_RADIUS * (system.sizeScale ?? 1) * 1.2
+    placement = { position: [0, 0, r], parentId: undefined, orbitsStar: false }
   }
 
   return {
     id: `body-${idCounter}`,
-    name: generateBodyName(rng, 'station'),
+    name: generateBodyName(rng, 'station', system._usedNames),
     kind: 'station',
-    parentId,
-    orbitsStar: orbitsStar || undefined,
-    position,
+    parentId: placement.parentId,
+    orbitsStar: placement.orbitsStar || undefined,
+    position: placement.position,
     radius: null,
     economyTags: randomTags(rng),
     hasMissions: true,
@@ -286,25 +535,31 @@ function makeSettlement(rng, idCounter, system, { force = false } = {}) {
     if (fields.length) {
       const field = pick(rng, fields)
       // Sit just outside the field shell (still "in" the belt, not free deep space).
-      const pos = localPositionNearBody(rng, field.position, field.radius ?? 80, SETTLEMENT_CLEARANCE_RADIUS)
-      return {
-        id: `body-${idCounter}`,
-        name: generateBodyName(rng, 'settlement'),
-        kind: 'settlement',
-        parentId: field.id,
-        inAsteroidField: true,
-        position: pos,
-        radius: null,
-        economyTags: randomTags(rng),
-        hasMissions: true,
-        hasShipyard: false,
-        hasShipParts: rng() < 0.06
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const pos = localPositionNearBody(rng, field.position, field.radius ?? 80, SETTLEMENT_CLEARANCE_RADIUS)
+        if (!pos) continue
+        if (positionOverlapsBodies(pos, SETTLEMENT_CLEARANCE_RADIUS, system)) continue
+        return {
+          id: `body-${idCounter}`,
+          name: generateBodyName(rng, 'settlement', system._usedNames),
+          kind: 'settlement',
+          parentId: field.id,
+          inAsteroidField: true,
+          position: pos,
+          radius: null,
+          economyTags: randomTags(rng),
+          hasMissions: true,
+          hasShipyard: false,
+          hasShipParts: rng() < 0.06
+        }
       }
     }
   }
 
   // Surface settlements: at most ONE per planet family (planet OR one of its
   // moons — never both). If that body already has a station, only 5% chance.
+  // Surface points must still clear nearby station shells (a low orbit station
+  // can sit close enough to the crust that a random pad would clip it).
   const takenFamilies = familiesWithSettlements(system)
   const candidates = system.bodies.filter(
     (b) => (b.kind === 'planet' || b.kind === 'moon') && !takenFamilies.has(hostFamilyId(b))
@@ -316,22 +571,107 @@ function makeSettlement(rng, idCounter, system, { force = false } = {}) {
     const host = pool.splice(idx, 1)[0]
     if (!force && hostHasStation(system, host.id) && rng() >= SETTLEMENT_WITH_STATION_CHANCE) continue
 
-    const { position, surfaceOffset } = localPositionOnSurface(rng, host)
-    return {
-      id: `body-${idCounter}`,
-      name: generateBodyName(rng, 'settlement'),
-      kind: 'settlement',
-      parentId: host.id,
-      surfaceOffset,
-      position,
-      radius: null,
-      economyTags: randomTags(rng),
-      hasMissions: true,
-      hasShipyard: false,
-      hasShipParts: rng() < 0.06
+    for (let attempt = 0; attempt < 32; attempt++) {
+      const { position, surfaceOffset } = localPositionOnSurface(rng, host)
+      // Host is intentionally "touching" (surface pad); check everything else.
+      let clipped = false
+      for (const b of system.bodies) {
+        if (b.id === host.id) continue
+        if (
+          b.kind !== 'station' &&
+          b.kind !== 'settlement' &&
+          b.kind !== 'moon' &&
+          b.kind !== 'planet' &&
+          b.kind !== 'asteroidField'
+        ) {
+          continue
+        }
+        const need = SETTLEMENT_CLEARANCE_RADIUS + bodyShellRadius(b) + MOON_ORBIT_CLEARANCE_MARGIN
+        if (dist3(position, b.position) < need) {
+          clipped = true
+          break
+        }
+      }
+      if (clipped) continue
+
+      return {
+        id: `body-${idCounter}`,
+        name: generateBodyName(rng, 'settlement', system._usedNames),
+        kind: 'settlement',
+        parentId: host.id,
+        surfaceOffset,
+        position,
+        radius: null,
+        economyTags: randomTags(rng),
+        hasMissions: true,
+        hasShipyard: false,
+        hasShipParts: rng() < 0.06
+      }
     }
   }
   return null
+}
+
+/**
+ * Planets/moons that host a station or surface settlement may keep their
+ * catalog name ("Sarnosian III" / "Sarnosian III - Moon I") or roll a unique
+ * proper name (no numerals). Catalog moons of a renamed planet are retagged.
+ */
+function applyFacilityHostPlanetNames(systems, rng, usedNames) {
+  for (const system of systems) {
+    const hostPlanetIds = new Set()
+    const hostMoonIds = new Set()
+    for (const b of system.bodies) {
+      if (b.kind !== 'station' && b.kind !== 'settlement') continue
+      if (!b.parentId) continue
+      const parent = system.bodies.find((x) => x.id === b.parentId)
+      if (!parent) continue
+      if (parent.kind === 'planet') hostPlanetIds.add(parent.id)
+      if (parent.kind === 'moon') hostMoonIds.add(parent.id)
+    }
+
+    for (const planet of system.bodies) {
+      if (planet.kind !== 'planet' || !hostPlanetIds.has(planet.id)) continue
+      if (rng() >= PLANET_UNIQUE_NAME_CHANCE) continue
+      const oldName = planet.name
+      const unique = generateUniquePlanetName(rng, usedNames)
+      planet.name = unique
+      const moons = system.bodies.filter((m) => m.kind === 'moon' && m.parentId === planet.id)
+      moons.forEach((moon, i) => {
+        if (isSequentialMoonName(oldName, moon.name)) {
+          moon.name = sequentialMoonName(unique, i + 1)
+        }
+      })
+    }
+
+    for (const moon of system.bodies) {
+      if (moon.kind !== 'moon' || !hostMoonIds.has(moon.id)) continue
+      if (rng() >= MOON_UNIQUE_NAME_CHANCE) continue
+      // Only replace catalog-style names ("… - Moon I"); leave proper names alone.
+      if (!/ - Moon [IVXLCDM]+$/.test(moon.name)) continue
+      moon.name = generateUniqueMoonName(rng, usedNames)
+    }
+  }
+}
+
+/** When a system is renamed (e.g. → Whispers), retag sequential planets/moons. */
+function retagSequentialBodiesForSystemRename(system, oldName, newName) {
+  if (!oldName || oldName === newName) return
+  // Match "{OldSystem} III" / "{OldSystem} XII" catalog names only.
+  const re = new RegExp(`^${oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} ([IVXLCDM]+)$`)
+  for (const body of system.bodies) {
+    if (body.kind !== 'planet') continue
+    const m = body.name.match(re)
+    if (!m) continue
+    const oldPlanetName = body.name
+    body.name = `${newName} ${m[1]}`
+    const moons = system.bodies.filter((moon) => moon.kind === 'moon' && moon.parentId === body.id)
+    moons.forEach((moon, i) => {
+      if (isSequentialMoonName(oldPlanetName, moon.name)) {
+        moon.name = sequentialMoonName(body.name, i + 1)
+      }
+    })
+  }
 }
 
 function computeNeighborLanes(systems) {
@@ -362,6 +702,14 @@ export function ensureStartingSystemFacilities(system, rng, startId = 0) {
   }, 0)
   bodyIdCounter = Math.max(bodyIdCounter, maxExisting)
 
+  // Local uniqueness for names we mint here (home system only).
+  if (!system._usedNames) {
+    const used = new Set()
+    if (system.name) used.add(system.name.toLowerCase())
+    for (const b of system.bodies) if (b.name) used.add(b.name.toLowerCase())
+    system._usedNames = used
+  }
+
   while (system.bodies.filter((b) => b.kind === 'station').length < 1) {
     system.bodies.push(makeStation(rng, bodyIdCounter++, system))
   }
@@ -373,6 +721,12 @@ export function ensureStartingSystemFacilities(system, rng, startId = 0) {
     if (s) system.bodies.push(s)
     else break
   }
+  // Always at least one asteroid belt in the starting system (mining available at home).
+  if (!system.bodies.some((b) => b.kind === 'asteroidField')) {
+    system.bodies.push(makeAsteroidField(rng, bodyIdCounter++, system.sizeScale ?? 1, system._usedNames))
+  }
+  // Optional unique planet names for newly hosted worlds (home system polish).
+  applyFacilityHostPlanetNames([system], rng, system._usedNames)
   return bodyIdCounter
 }
 
@@ -389,6 +743,12 @@ export function generateGalaxy(seed, opts = {}) {
   const rng = mulberry32(seed)
   let bodyIdCounter = 0
 
+  // Galaxy-wide display-name registry (case-insensitive). Reserved specials first.
+  const usedNames = new Set([
+    WHISPERS_SYSTEM_NAME.toLowerCase(),
+    WHISPERS_STATION_NAME.toLowerCase()
+  ])
+
   const planetsPerSystem = []
   let remainingPlanets = totalPlanets
   for (let i = 0; i < systemCount; i++) {
@@ -403,18 +763,49 @@ export function generateGalaxy(seed, opts = {}) {
   const systems = []
   for (let i = 0; i < systemCount; i++) {
     const sizeScale = range(rng, ...SYSTEM_SCALE_VARIANCE)
+    const systemName = generateSystemName(rng, usedNames)
     const bodies = []
+    let planetIndex = 0
     for (let p = 0; p < planetsPerSystem[i]; p++) {
-      const planet = makePlanetOrMoon(rng, bodyIdCounter++, 'planet', null, sizeScale)
+      planetIndex += 1
+      const planet = makePlanetOrMoon(
+        rng,
+        bodyIdCounter++,
+        'planet',
+        null,
+        sizeScale,
+        sequentialPlanetName(systemName, planetIndex)
+      )
+      // Sequential planet labels share the system name — not separate usedNames entries.
       bodies.push(planet)
-      if (rng() < MOON_CHANCE) bodies.push(makePlanetOrMoon(rng, bodyIdCounter++, 'moon', planet, sizeScale))
+      // 0–3 moons: first at MOON_CHANCE, extras rarer (still ~23% of planets have ≥1).
+      let moonCount = 0
+      if (rng() < MOON_CHANCE) moonCount = 1
+      if (moonCount === 1 && rng() < 0.28) moonCount = 2
+      if (moonCount === 2 && rng() < 0.18) moonCount = 3
+      const moonsOfPlanet = []
+      for (let mi = 0; mi < moonCount; mi++) {
+        const moon = makePlanetOrMoon(
+          rng,
+          bodyIdCounter++,
+          'moon',
+          planet,
+          sizeScale,
+          sequentialMoonName(planet.name, mi + 1),
+          moonsOfPlanet
+        )
+        moonsOfPlanet.push(moon)
+        bodies.push(moon)
+      }
     }
     systems.push({
       id: `sys-${i}`,
-      name: generateBodyName(rng, 'system'),
+      name: systemName,
       galaxyPosition: spiralPosition(rng, i % ARM_COUNT),
       sizeScale,
-      bodies
+      bodies,
+      // Shared with makeStation/makeSettlement so facility names stay unique.
+      _usedNames: usedNames
     })
   }
 
@@ -429,13 +820,18 @@ export function generateGalaxy(seed, opts = {}) {
   }
   for (let i = 0; i < asteroidFieldCount; i++) {
     const system = pick(rng, systems)
-    system.bodies.push(makeAsteroidField(rng, bodyIdCounter++, system.sizeScale))
+    system.bodies.push(makeAsteroidField(rng, bodyIdCounter++, system.sizeScale, usedNames))
   }
+
+  applyFacilityHostPlanetNames(systems, rng, usedNames)
 
   computeNeighborLanes(systems)
 
   // Outer-rim landmark: rename the farthest system and guarantee SerNub's station.
-  bodyIdCounter = placeWhispersSystem(systems, bodyIdCounter)
+  bodyIdCounter = placeWhispersSystem(systems, bodyIdCounter, usedNames)
+
+  // Drop generation-only name sets so save JSON stays lean.
+  for (const system of systems) delete system._usedNames
 
   const species = []
   for (let i = 0; i < speciesCount; i++) species.push(generateSpeciesName(rng))
@@ -448,7 +844,7 @@ export function generateGalaxy(seed, opts = {}) {
  * as ambient-hostile-free, and ensures a station named SerNub's Pleasure Palace.
  * Deterministic from layout alone (no extra RNG) so seeds stay stable.
  */
-function placeWhispersSystem(systems, bodyIdCounter) {
+function placeWhispersSystem(systems, bodyIdCounter, usedNames = null) {
   let rim = systems[0]
   let bestDist = -1
   for (const system of systems) {
@@ -459,14 +855,21 @@ function placeWhispersSystem(systems, bodyIdCounter) {
     }
   }
 
-  // Avoid a second system keeping the same display name if procgen rolled it.
+  // Systems are already unique; still free the reserved Whispers name if it
+  // somehow landed elsewhere, then assign it to the rim system.
   for (const system of systems) {
     if (system !== rim && system.name === WHISPERS_SYSTEM_NAME) {
-      system.name = `${system.name} Reach`
+      const old = system.name
+      system.name = usedNames
+        ? generateSystemName(mulberry32(hashStringStable(system.id)), usedNames)
+        : `${system.name} Reach`
+      retagSequentialBodiesForSystemRename(system, old, system.name)
     }
   }
 
+  const previousName = rim.name
   rim.name = WHISPERS_SYSTEM_NAME
+  retagSequentialBodiesForSystemRename(rim, previousName, WHISPERS_SYSTEM_NAME)
   // main.js ambient spawn keys off this — permanent (not breakable like home peace).
   rim.noAmbientHostiles = true
   // Only trinary in the galaxy — starMesh / starTypeForSystem read this flag.
@@ -477,6 +880,8 @@ function placeWhispersSystem(systems, bodyIdCounter) {
     // Seeded only from system id so we don't perturb the main galaxy RNG stream.
     const idHash = [...rim.id].reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0)
     const stationRng = mulberry32(Math.abs(idHash) ^ 0x5e12ab)
+    // Ensure makeStation can claim unique facility names if _usedNames was cleared.
+    if (!rim._usedNames && usedNames) rim._usedNames = usedNames
     station = makeStation(stationRng, bodyIdCounter++, rim)
     rim.bodies.push(station)
   }
@@ -487,8 +892,83 @@ function placeWhispersSystem(systems, bodyIdCounter) {
   return bodyIdCounter
 }
 
+function hashStringStable(str) {
+  let h = 0
+  for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0
+  return Math.abs(h) || 1
+}
+
 export function canJumpTo(fromSystem, toSystemId) {
   return fromSystem.neighborIds.includes(toSystemId)
+}
+
+/**
+ * Shortest hyperspace path along neighbor lanes (BFS).
+ * Returns system ids from `fromSystemId` to `toSystemId` inclusive, or null
+ * if unreachable. Same system → single-element path.
+ */
+export function findHyperspaceRoute(galaxy, fromSystemId, toSystemId) {
+  if (!fromSystemId || !toSystemId) return null
+  if (fromSystemId === toSystemId) return [fromSystemId]
+
+  const byId = new Map(galaxy.systems.map((s) => [s.id, s]))
+  if (!byId.has(fromSystemId) || !byId.has(toSystemId)) return null
+
+  const prev = new Map([[fromSystemId, null]])
+  const queue = [fromSystemId]
+  for (let qi = 0; qi < queue.length; qi++) {
+    const id = queue[qi]
+    const system = byId.get(id)
+    if (!system) continue
+    for (const neighborId of system.neighborIds) {
+      if (prev.has(neighborId)) continue
+      prev.set(neighborId, id)
+      if (neighborId === toSystemId) {
+        const path = []
+        let cur = toSystemId
+        while (cur != null) {
+          path.push(cur)
+          cur = prev.get(cur)
+        }
+        path.reverse()
+        return path
+      }
+      queue.push(neighborId)
+    }
+  }
+  return null
+}
+
+/**
+ * After a jump, drop hops already arrived at from player.plottedRoute
+ * (remaining system ids, destination last). Recomputes if the player left
+ * the plotted chain so the route still leads to the same destination.
+ */
+export function advancePlottedRoute(gameState) {
+  const route = gameState.player.plottedRoute
+  if (!Array.isArray(route) || route.length === 0) {
+    gameState.player.plottedRoute = null
+    return
+  }
+  const current = gameState.player.currentSystemId
+  const idx = route.indexOf(current)
+  if (idx >= 0) {
+    const rest = route.slice(idx + 1)
+    gameState.player.plottedRoute = rest.length ? rest : null
+    return
+  }
+  // Jumped off the chain — replot from here to the original destination.
+  const dest = route[route.length - 1]
+  if (current === dest) {
+    gameState.player.plottedRoute = null
+    return
+  }
+  const path = findHyperspaceRoute(gameState.galaxy, current, dest)
+  if (!path || path.length < 2) {
+    gameState.player.plottedRoute = null
+    return
+  }
+  gameState.player.plottedRoute = path.slice(1)
 }
 
 export function coreFraction(system) {

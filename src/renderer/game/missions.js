@@ -1,4 +1,4 @@
-import { spawnNpc, spawnNpcWithClass } from './spawner.js'
+import { spawnNpc, spawnNpcWithClass, clearPositionOfBodies } from './spawner.js'
 import { pick } from '../procgen/prng.js'
 import { coreFraction, findBody, getSystem } from '../procgen/galaxy.js'
 
@@ -12,6 +12,49 @@ function pushMissionLog(mission, gameState, kind, text) {
   mission.log.push({ kind, text, simTime: gameState.simTime ?? 0 })
 }
 
+/**
+ * Place a probe-stirred hostile outside the surveyed body's shell, biased
+ * toward the player so they show up on radar instead of inside the mesh.
+ * body.radius can be thousands of units for scaled planets — a fixed offset
+ * of tens of units is always buried.
+ */
+function spawnHostileNearProbedBody(body, playerPosition, rng) {
+  const center = body?.position ?? playerPosition
+  // Clear surface / field shell, then a short combat-standoff so they aren't
+  // flush against the crust (and match ambient spawn "just past engagement").
+  const shell = (body?.radius ?? 0) + 200
+  let dx = playerPosition[0] - center[0]
+  let dy = playerPosition[1] - center[1]
+  let dz = playerPosition[2] - center[2]
+  let len = Math.hypot(dx, dy, dz)
+  if (len < 1e-3) {
+    const theta = rng() * Math.PI * 2
+    dx = Math.cos(theta)
+    dy = 0.15
+    dz = Math.sin(theta)
+    len = Math.hypot(dx, dy, dz)
+  }
+  dx /= len
+  dy /= len
+  dz /= len
+  // Small lateral jitter so the contact isn't exactly on the probe-return line.
+  const j = (rng() - 0.5) * 0.5
+  const jx = -dz * j
+  const jz = dx * j
+  dx += jx
+  dz += jz
+  len = Math.hypot(dx, dy, dz) || 1
+  dx /= len
+  dy /= len
+  dz /= len
+  const standOff = shell + 100 + rng() * 200
+  return [
+    center[0] + dx * standOff,
+    center[1] + dy * standOff,
+    center[2] + dz * standOff
+  ]
+}
+
 export function acceptMission(gameState, missionId, rng) {
   const mission = gameState.missions.available.find((m) => m.id === missionId)
   if (!mission) throw new Error('Mission not available')
@@ -21,10 +64,16 @@ export function acceptMission(gameState, missionId, rng) {
   gameState.missions.active.push(mission)
 
   if (mission.type === 'bounty') {
+    const system = getSystem(gameState.galaxy, mission.target.systemId)
+    const bodies = system?.bodies ?? []
+    // Clear of planets/stations (old saves may still have center-of-body hints).
+    const position = clearPositionOfBodies(mission.target.locationHint, bodies)
+    mission.target.locationHint = position
     const npc = spawnNpcWithClass(rng, {
       shipClassId: mission.target.shipClassId,
-      position: mission.target.locationHint,
-      faction: 'pirate'
+      position,
+      faction: 'pirate',
+      bodies
     })
     npc.missionId = mission.id
     gameState.npcs.push(npc)
@@ -38,16 +87,21 @@ export function acceptMission(gameState, missionId, rng) {
 // Re-materialize any incomplete mission with an npcShip target in this system
 // (bounties + investigation hostiles). NPCs are never persisted.
 export function ensureBountyNpcsForSystem(gameState, systemId, rng) {
+  const system = getSystem(gameState.galaxy, systemId)
+  const bodies = system?.bodies ?? []
   for (const mission of gameState.missions.active) {
     if (mission.objectiveComplete) continue
     if (mission.target.kind !== 'npcShip') continue
     if (mission.target.systemId !== systemId) continue
     if (gameState.npcs.some((n) => n.id === mission.target.npcId)) continue
 
+    const position = clearPositionOfBodies(mission.target.locationHint, bodies)
+    mission.target.locationHint = position
     const npc = spawnNpcWithClass(rng, {
       shipClassId: mission.target.shipClassId,
-      position: mission.target.locationHint,
-      faction: 'pirate'
+      position,
+      faction: 'pirate',
+      bodies
     })
     npc.missionId = mission.id
     gameState.npcs.push(npc)
@@ -56,7 +110,21 @@ export function ensureBountyNpcsForSystem(gameState, systemId, rng) {
 }
 
 export function markBodyVisited(gameState, bodyId) {
-  if (!gameState.visitedBodyIds.includes(bodyId)) gameState.visitedBodyIds.push(bodyId)
+  if (!bodyId) return
+  const id = String(bodyId)
+  gameState.visitedBodyIds ??= []
+  if (!gameState.visitedBodyIds.some((x) => String(x) === id)) {
+    gameState.visitedBodyIds.push(id)
+  }
+  // Exploration contracts complete on visit (dock / proximity / probe).
+  for (const mission of gameState.missions.active) {
+    if (mission.objectiveComplete) continue
+    if (mission.type !== 'exploration') continue
+    if (String(mission.target?.bodyId) === id) {
+      mission.objectiveComplete = true
+      pushMissionLog(mission, gameState, 'intel', 'Survey site visited — return to the mission giver')
+    }
+  }
 }
 
 // Distinct from visitedBodyIds: a probe mission requires actually launching a
@@ -64,16 +132,25 @@ export function markBodyVisited(gameState, bodyId) {
 export function markBodyProbed(gameState, bodyId) {
   if (!bodyId) return
   const id = String(bodyId)
-  if (!gameState.probedBodyIds.includes(id)) gameState.probedBodyIds.push(id)
+  gameState.probedBodyIds ??= []
+  if (!gameState.probedBodyIds.some((x) => String(x) === id)) {
+    gameState.probedBodyIds.push(id)
+  }
+  // Probing also counts as visiting for exploration-style survey contracts.
+  markBodyVisited(gameState, id)
   // Complete any matching open probe missions right here (don't rely solely on
   // a later updateMissionProgress call that can be skipped while menus/docked).
   for (const mission of gameState.missions.active) {
-    if (mission.type !== 'probe' || mission.objectiveComplete) continue
-    if (String(mission.target?.bodyId) === id) {
+    if (mission.objectiveComplete) continue
+    if (mission.type !== 'probe') continue
+    const targetId = mission.target?.bodyId
+    if (targetId != null && String(targetId) === id) {
       mission.objectiveComplete = true
       pushMissionLog(mission, gameState, 'intel', 'Survey complete — return to the mission giver')
     }
   }
+  // Catch-all in case logs/visit ordering left a probe open.
+  updateMissionProgress(gameState)
 }
 
 function pickInvestigationLead(gameState, mission, rng) {
@@ -112,7 +189,7 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
       m.type === 'investigation' &&
       !m.objectiveComplete &&
       m.target.kind === 'body' &&
-      m.target.bodyId === bodyId
+      String(m.target.bodyId) === String(bodyId)
   )
   if (!mission) return null
 
@@ -160,13 +237,21 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
   if (kind === 'hostile') {
     const system = getSystem(gameState.galaxy, mission.target.systemId)
     const body = findBody(gameState.galaxy, bodyId)
-    const base = body?.position ?? gameState.player.ship.position
-    // Offset so the contact isn't buried in the body mesh.
-    const position = [base[0] + 80, base[1] + 20, base[2] + 40]
+    // Must sit outside the body's physical radius — a flat +80 offset used to
+    // bury the contact inside scaled planets/moons (radii of thousands).
+    let position = spawnHostileNearProbedBody(
+      body,
+      gameState.player.ship.position,
+      rng
+    )
+    if (system?.bodies?.length) {
+      position = clearPositionOfBodies(position, system.bodies)
+    }
     const npc = spawnNpc(rng, {
       position,
       faction: 'pirate',
-      coreFraction: system ? coreFraction(system) : 0
+      coreFraction: system ? coreFraction(system) : 0,
+      bodies: system?.bodies
     })
     npc.missionId = mission.id
     gameState.npcs.push(npc)
@@ -177,12 +262,11 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
       npcId: npc.id,
       shipClassId: npc.shipClassId
     }
-    if (gameState.player.waypointBodyId === bodyId) {
-      gameState.player.waypointBodyId = null
-      gameState.player.waypointPosition = [...position]
-    }
+    // Point the waypoint at the live contact so the player can find it.
+    gameState.player.waypointBodyId = null
+    gameState.player.waypointPosition = [...position]
     pushMissionLog(mission, gameState, 'hostile', 'Hostile contact stirred by the probe — eliminate to proceed')
-    return { kind: 'hostile', mission }
+    return { kind: 'hostile', mission, npcId: npc.id, position: [...position] }
   }
 
   mission.objectiveComplete = true
@@ -191,8 +275,8 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
 }
 
 export function updateMissionProgress(gameState) {
-  const probed = gameState.probedBodyIds ?? []
-  const visited = gameState.visitedBodyIds ?? []
+  const probed = (gameState.probedBodyIds ?? []).map(String)
+  const visited = (gameState.visitedBodyIds ?? []).map(String)
   for (const mission of gameState.missions.active) {
     if (mission.objectiveComplete) continue
     if (mission.target?.kind === 'npcShip') {
@@ -200,12 +284,13 @@ export function updateMissionProgress(gameState) {
       if (npc?.destroyed) mission.objectiveComplete = true
     } else if (mission.type === 'probe') {
       const bodyId = mission.target?.bodyId
-      if (bodyId && probed.some((id) => String(id) === String(bodyId))) {
+      if (bodyId != null && probed.includes(String(bodyId))) {
         mission.objectiveComplete = true
       }
     } else if (mission.type === 'exploration') {
       const bodyId = mission.target?.bodyId
-      if (bodyId && visited.some((id) => String(id) === String(bodyId))) {
+      // Visited OR probed both count as surveying the site.
+      if (bodyId != null && (visited.includes(String(bodyId)) || probed.includes(String(bodyId)))) {
         mission.objectiveComplete = true
       }
     }

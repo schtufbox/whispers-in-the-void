@@ -127,7 +127,7 @@ export function createMissionsUI(container, gameState) {
     if (!active.length) {
       contentEl.innerHTML = `
         <div class="empty">No active missions.<br/>Accept contracts from station and settlement mission boards while docked.</div>
-        <div class="footer-note">Orange rings on the galaxy map mark systems with an active objective or turn-in. Track a mission to set it as your waypoint.</div>
+        <div class="footer-note">Orange rings on the galaxy map mark systems with an active objective or turn-in. Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located.</div>
       `
       return
     }
@@ -151,7 +151,7 @@ export function createMissionsUI(container, gameState) {
           </div>
         `
       }).join('')}
-      <div class="footer-note">Investigations: probe the target (P). Logs track leads, hostiles, and intel. Each lead raises the payout 5%.</div>
+      <div class="footer-note">Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located. Investigations: probe the target (P). Logs track leads, hostiles, and intel. Each lead raises the payout 5%.</div>
     `
 
     contentEl.querySelectorAll('.track').forEach((btn) =>

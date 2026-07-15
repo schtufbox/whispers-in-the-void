@@ -1,4 +1,9 @@
 import * as THREE from 'three'
+import {
+  createLightningGeometry,
+  createLightningMaterial,
+  rewriteSpiralLightningBolt
+} from './lightningBolt.js'
 
 // Screen-space motion wash (CSS) + 3D speed streaks. Intensity 0–1; supercruise
 // should pass ~0.85–1 so the effect reads as a different flight mode.
@@ -73,70 +78,77 @@ function respawnStreak(s, intensity, cruise) {
 }
 
 // Full-screen 3D star tunnel for supercruise — parented to the camera.
-// Cylinder walls + depth rings + vanishing-point core so it reads as a
-// corridor you fly through, not a flat particle spray.
-// Colors follow the current system's star (see setTint).
-const TUNNEL_WALL = 140
-const TUNNEL_INNER = 70
+// Helical lightning grows from the far mouth toward the ship (pinned at the
+// opposite end), then holds a full-span bolt while spinning. Depth rings +
+// haze sell the tube; colors follow the system star (see setTint).
+// All geometry stays past the chase-camera ship (~44u) so the hull stays clear.
+const TUNNEL_STREAMERS = 14
 const TUNNEL_RINGS = 8
 const TUNNEL_RADIUS = 22
 const DEFAULT_TUNNEL_TINT = new THREE.Color(0x6ec4ff)
+// Streamer depth range (camera at 0 looking down -Z).
+// Z_NEAR past the ship so bolts/haze sit behind the hull, not over it.
+const Z_FAR = -260
+const Z_NEAR = -58
+// Rings recycle before they reach the ship plane.
+const Z_RECYCLE = Z_NEAR + 4
+// grow: 0 → 1 bolts from far mouth toward ship; >1 holds full span, then recycle.
+const GROW_HOLD = 1.35
 
 function createCruiseStarTunnel() {
-  const map = buildStreakTexture()
   const group = new THREE.Group()
   group.visible = false
   group.frustumCulled = false
-  group.renderOrder = 5
+  // Below default ship order so opaque hull wins when depths are close.
+  group.renderOrder = 1
 
-  const geometry = new THREE.PlaneGeometry(1, 1)
-  // Live tint (system sun color). Streaks store a per-particle lightness jitter.
+  // Live tint (system sun color). Bolts store a per-bolt lightness jitter.
   const tint = DEFAULT_TUNNEL_TINT.clone()
   const tmpColor = new THREE.Color()
 
-  function makeStreak(lightJitter) {
-    const mat = new THREE.MeshBasicMaterial({
-      map,
-      color: tmpColor.copy(tint).offsetHSL(0, 0, lightJitter),
-      transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide
-    })
-    const mesh = new THREE.Mesh(geometry, mat)
-    mesh.frustumCulled = false
-    group.add(mesh)
+  function makeStreamer(lightJitter) {
+    const geo = createLightningGeometry()
+    const coreMat = createLightningMaterial(
+      tmpColor.copy(tint).offsetHSL(0, -0.05, 0.35 + lightJitter),
+      0.95
+    )
+    const glowMat = createLightningMaterial(
+      tmpColor.copy(tint).offsetHSL(0.02, 0.15, lightJitter * 0.5),
+      0.42
+    )
+    const core = new THREE.LineSegments(geo, coreMat)
+    const glow = new THREE.LineSegments(geo, glowMat)
+    core.frustumCulled = false
+    glow.frustumCulled = false
+    // Geometry is already in tunnel space — mesh stays at origin.
+    core.position.set(0, 0, 0)
+    glow.position.set(0, 0, 0)
+    group.add(glow)
+    group.add(core)
     return {
-      mesh,
+      mesh: core,
+      glow,
       lightJitter,
-      angle: 0,
+      angle0: 0,
       radius: TUNNEL_RADIUS,
-      z: -20,
-      speed: 100,
-      len: 12,
-      thick: 0.15,
-      layer: 'wall',
-      phase: Math.random()
+      twists: 1.2,
+      // How fast the whole spiral rotates (rad/s).
+      spin: 0.35,
+      // How fast the bolt grows far→near (grow units / s).
+      advance: 0.12,
+      phase: Math.random(),
+      flickerT: 0,
+      grow: 0
     }
   }
 
   const streaks = []
-  // Outer wall: denser cylinder of long streaks (the tunnel surface).
-  for (let i = 0; i < TUNNEL_WALL; i++) {
-    const s = makeStreak(0.08 + Math.random() * 0.18)
-    s.layer = 'wall'
-    streaks.push(s)
-  }
-  // Inner layer: thinner, faster filaments for depth inside the tube.
-  for (let i = 0; i < TUNNEL_INNER; i++) {
-    const s = makeStreak(0.12 + Math.random() * 0.2)
-    s.layer = 'inner'
-    streaks.push(s)
+  for (let i = 0; i < TUNNEL_STREAMERS; i++) {
+    streaks.push(makeStreamer(0.06 + Math.random() * 0.16))
   }
 
   // Concentric rings rushing toward the camera — strong tunnel depth cue.
+  // depthTest so the ship occludes rings behind it; recycle past ship plane.
   const rings = []
   const ringGeo = new THREE.RingGeometry(0.92, 1.08, 64)
   for (let i = 0; i < TUNNEL_RINGS; i++) {
@@ -148,7 +160,7 @@ function createCruiseStarTunnel() {
         opacity: 0.14,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        depthTest: false,
+        depthTest: true,
         side: THREE.DoubleSide
       })
     )
@@ -156,49 +168,58 @@ function createCruiseStarTunnel() {
     group.add(mesh)
     rings.push({
       mesh,
-      z: -25 - i * (110 / TUNNEL_RINGS),
+      z: Z_NEAR - 8 - i * (Math.abs(Z_FAR - Z_NEAR) * 0.9 / TUNNEL_RINGS),
       speed: 70 + i * 8,
       baseScale: TUNNEL_RADIUS * (0.95 + (i % 3) * 0.04)
     })
   }
 
-  // Soft cylindrical haze = tunnel walls (camera looks down -Z; cylinder along Z).
+  // Soft cylindrical haze = tunnel walls. Span Z_NEAR→Z_FAR (past the ship).
+  const hazeDepth = Math.abs(Z_FAR - Z_NEAR)
+  const hazeMid = (Z_FAR + Z_NEAR) * 0.5
   const haze = new THREE.Mesh(
-    new THREE.CylinderGeometry(TUNNEL_RADIUS * 1.15, TUNNEL_RADIUS * 1.05, 160, 40, 1, true),
+    new THREE.CylinderGeometry(TUNNEL_RADIUS * 1.15, TUNNEL_RADIUS * 1.05, hazeDepth, 40, 1, true),
     new THREE.MeshBasicMaterial({
       color: tint.clone().multiplyScalar(0.22),
       transparent: true,
-      opacity: 0.28,
+      opacity: 0.22,
       side: THREE.BackSide,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
       blending: THREE.AdditiveBlending
     })
   )
   haze.rotation.x = Math.PI / 2
-  haze.position.z = -55
+  haze.position.z = hazeMid
   haze.frustumCulled = false
   group.add(haze)
 
   // Second tighter haze for layered corridor.
   const hazeInner = new THREE.Mesh(
-    new THREE.CylinderGeometry(TUNNEL_RADIUS * 0.55, TUNNEL_RADIUS * 0.5, 120, 32, 1, true),
+    new THREE.CylinderGeometry(
+      TUNNEL_RADIUS * 0.55,
+      TUNNEL_RADIUS * 0.5,
+      hazeDepth * 0.9,
+      32,
+      1,
+      true
+    ),
     new THREE.MeshBasicMaterial({
       color: tint.clone().multiplyScalar(0.35),
       transparent: true,
-      opacity: 0.1,
+      opacity: 0.08,
       side: THREE.BackSide,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
       blending: THREE.AdditiveBlending
     })
   )
   hazeInner.rotation.x = Math.PI / 2
-  hazeInner.position.z = -45
+  hazeInner.position.z = hazeMid * 0.95
   hazeInner.frustumCulled = false
   group.add(hazeInner)
 
-  // Vanishing-point core.
+  // Vanishing-point core at the far mouth (where lightning originates).
   const coreCanvas = document.createElement('canvas')
   coreCanvas.width = coreCanvas.height = 64
   {
@@ -219,10 +240,10 @@ function createCruiseStarTunnel() {
       opacity: 0.55,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      depthTest: false
+      depthTest: true
     })
   )
-  core.position.set(0, 0, -95)
+  core.position.set(0, 0, Z_FAR * 0.92)
   core.scale.setScalar(28)
   core.frustumCulled = false
   group.add(core)
@@ -234,7 +255,8 @@ function createCruiseStarTunnel() {
     if (tint.getHex() === c.getHex()) return
     tint.copy(c)
     for (const s of streaks) {
-      s.mesh.material.color.copy(tint).offsetHSL(0, 0, s.lightJitter)
+      s.mesh.material.color.copy(tint).offsetHSL(0, -0.05, 0.35 + s.lightJitter)
+      if (s.glow) s.glow.material.color.copy(tint).offsetHSL(0.03, 0.2, s.lightJitter * 0.4)
     }
     for (const r of rings) {
       r.mesh.material.color.copy(tint).multiplyScalar(1.05)
@@ -244,86 +266,141 @@ function createCruiseStarTunnel() {
     core.material.color.copy(tint).lerp(new THREE.Color(1, 1, 1), 0.45)
   }
 
+  /**
+   * Rebuild streamer as a helix from the fixed far mouth toward a near tip.
+   * `grow` in [0,1]: tip advances from far→near; at 1 the bolt spans the corridor.
+   */
+  function reshapeStreamer(s) {
+    const twists = (1.15 + Math.random() * 1.25) * (s.spin >= 0 ? 1 : -1)
+    s.twists = twists
+    // Far end always pinned at Z_FAR; tip crawls toward Z_NEAR as grow → 1.
+    const g = Math.min(1, Math.max(0.04, s.grow ?? 1))
+    const zTip = Z_FAR + (Z_NEAR - Z_FAR) * g
+    rewriteSpiralLightningBolt(s.mesh.geometry, {
+      zStart: Z_FAR,
+      zEnd: zTip,
+      radius: s.radius,
+      angle0: 0,
+      twists,
+      jag: 0.85 + Math.random() * 1.0,
+      forks: 2 + Math.floor(Math.random() * 3),
+      thickness: 0.18 + Math.random() * 0.14
+    })
+    s.flickerT = 0.12 + Math.random() * 0.16
+  }
+
   function reset(s, intensity) {
-    s.angle = Math.random() * Math.PI * 2
-    if (s.layer === 'wall') {
-      // Tight band around the cylinder radius = solid tube wall.
-      s.radius = TUNNEL_RADIUS * (0.88 + Math.random() * 0.22)
-      s.speed = (110 + Math.random() * 200) * (0.6 + intensity * 0.85)
-      s.len = 10 + Math.random() * 36 * (0.7 + intensity)
-      s.thick = 0.08 + Math.random() * 0.32
-    } else {
-      // Inner filaments closer to the axis.
-      s.radius = TUNNEL_RADIUS * (0.2 + Math.random() * 0.55)
-      s.speed = (160 + Math.random() * 280) * (0.7 + intensity)
-      s.len = 8 + Math.random() * 28 * (0.6 + intensity)
-      s.thick = 0.04 + Math.random() * 0.18
-    }
-    s.z = -12 - Math.random() * 130
+    s.angle0 = Math.random() * Math.PI * 2
+    s.spin = (0.28 + Math.random() * 0.4) * (Math.random() < 0.5 ? 1 : -1)
+    // Growth speed: reaches the opposite end in ~1.2–2.2s at nominal rush.
+    s.advance = (0.55 + Math.random() * 0.35) * (0.75 + intensity * 0.45)
+    s.radius = TUNNEL_RADIUS * (0.82 + Math.random() * 0.28)
     s.phase = Math.random()
+    // Stagger start so not every bolt is mid-corridor at once.
+    s.grow = Math.random() * 0.35
+    reshapeStreamer(s)
   }
 
   for (const s of streaks) reset(s, 0.75)
 
+  const _aim = new THREE.Vector3()
+  const _eye = new THREE.Vector3()
+  const _up = new THREE.Vector3()
+  const _lookMat = new THREE.Matrix4()
+
   return {
     group,
     setTint: applyTint,
-    update(dt, intensity, camera, sunColor = null) {
+    /**
+     * @param {THREE.Camera} camera
+     * @param {THREE.Color|number|null} sunColor
+     * @param {THREE.Vector3|number[]|null} aimWorld - crosshair aim point; tunnel
+     *   vanishing point sits on the camera→aim ray (not screen center).
+     */
+    update(dt, intensity, camera, sunColor = null, aimWorld = null) {
       if (sunColor) applyTint(sunColor)
       if (intensity < 0.05 || !camera) {
         group.visible = false
         return
       }
       group.visible = true
-      // Stick to camera — corridor always fills the frame, center = vanishing point.
+      // Origin at camera; -Z toward crosshair (camera convention).
+      // Do NOT use Object3D.lookAt — for non-cameras it aims +Z at the target,
+      // which put the whole tunnel behind the lens.
       group.position.copy(camera.position)
-      group.quaternion.copy(camera.quaternion)
+      if (aimWorld) {
+        if (aimWorld.isVector3) _aim.copy(aimWorld)
+        else _aim.fromArray(aimWorld)
+        _eye.copy(camera.position)
+        if (_eye.distanceToSquared(_aim) > 1e-4) {
+          _up.copy(camera.up)
+          _lookMat.lookAt(_eye, _aim, _up)
+          group.quaternion.setFromRotationMatrix(_lookMat)
+        } else {
+          group.quaternion.copy(camera.quaternion)
+        }
+      } else {
+        group.quaternion.copy(camera.quaternion)
+      }
 
-      const rush = 0.7 + intensity * 1.75
+      const rush = 0.55 + intensity * 1.1
       const i = Math.min(1, Math.max(0.25, intensity))
 
       for (const s of streaks) {
-        s.z += s.speed * rush * dt
-        // Perspective flare: walls flare out as they approach the lens.
-        const depthT = Math.min(1, Math.max(0, (s.z + 140) / 150))
-        const flare = 1 + depthT * depthT * 0.85
-        const r = s.radius * flare
-        if (s.z > 14) reset(s, intensity)
+        // Spin helix + grow tip from far mouth toward the ship (far end stays put).
+        s.angle0 += s.spin * rush * dt
+        s.grow = (s.grow || 0) + s.advance * rush * dt
+        if (s.grow > GROW_HOLD) {
+          reset(s, intensity)
+          continue
+        }
 
-        s.mesh.position.set(Math.cos(s.angle) * r, Math.sin(s.angle) * r, s.z)
-        // Length along view (Z after rotX); radial thin edge faces the wall tangent.
-        const lenMul = 0.55 + i * 1.1
-        const thickMul = 0.65 + i * 0.9
-        s.mesh.scale.set(s.thick * thickMul, s.len * lenMul, 1)
-        s.mesh.rotation.set(Math.PI / 2, 0, s.angle)
-        // Dim in the distance, bright near the camera plane.
-        const nearFade = Math.min(1, (18 - s.z) / 22 + 0.25)
-        const farFade = Math.min(1, (-s.z) / 40 + 0.2)
-        s.mesh.material.opacity =
-          (s.layer === 'wall' ? 0.35 : 0.22) * (0.5 + i * 0.7) * (0.4 + s.phase * 0.6) * nearFade * farFade
+        s.flickerT -= dt
+        // Rebuild often while growing so the tip visibly crawls; slower when full.
+        if (s.flickerT <= 0) reshapeStreamer(s)
+
+        // Mesh fixed at origin — geometry itself spans far→tip in tunnel space.
+        s.mesh.rotation.set(0, 0, s.angle0)
+        s.mesh.position.set(0, 0, 0)
+        s.mesh.scale.set(1, 1, 1)
+        if (s.glow) {
+          s.glow.rotation.copy(s.mesh.rotation)
+          s.glow.position.copy(s.mesh.position)
+          s.glow.scale.set(1.1, 1.1, 1.1)
+        }
+
+        // Brighter once the bolt has reached the opposite (near) end.
+        const reach = Math.min(1, s.grow)
+        const holdFade = s.grow > 1 ? Math.max(0, 1 - (s.grow - 1) / (GROW_HOLD - 1)) : 1
+        const crackle = 0.62 + 0.38 * Math.sin(s.phase * 40 + s.angle0 * 2.5)
+        const baseOp =
+          0.9 * (0.5 + i * 0.7) * (0.55 + s.phase * 0.45) * (0.4 + reach * 0.6) * holdFade * crackle
+        s.mesh.material.opacity = Math.max(0, baseOp)
+        if (s.glow) s.glow.material.opacity = Math.max(0, baseOp * 0.48)
       }
 
       for (const r of rings) {
         r.z += r.speed * rush * dt
-        if (r.z > 16) {
-          r.z = -125 - Math.random() * 30
+        // Recycle before the ship plane — never fly through the hull.
+        if (r.z > Z_RECYCLE) {
+          r.z = Z_FAR * 0.95 - Math.random() * 40
           r.baseScale = TUNNEL_RADIUS * (0.9 + Math.random() * 0.2)
         }
-        const depthT = Math.min(1, Math.max(0, (r.z + 140) / 150))
+        const span = Math.abs(Z_FAR - Z_NEAR)
+        const depthT = Math.min(1, Math.max(0, (r.z - Z_FAR) / span))
         const sc = r.baseScale * (1 + depthT * 0.9) * (0.85 + i * 0.25)
         r.mesh.scale.set(sc, sc, sc)
         r.mesh.position.set(0, 0, r.z)
-        r.mesh.material.opacity = (0.05 + i * 0.16) * Math.min(1, (-r.z) / 30 + 0.3)
+        r.mesh.material.opacity = (0.05 + i * 0.16) * Math.min(1, (-r.z - 40) / 50 + 0.25)
       }
 
       // Haze cylinders breathe slightly with intensity.
-      haze.material.opacity = 0.14 + i * 0.28
-      haze.scale.set(0.95 + i * 0.12, 0.95 + i * 0.12, 0.9 + i * 0.25)
-      haze.position.z = -50 - (1 - i) * 15
-      hazeInner.material.opacity = 0.06 + i * 0.12
-      hazeInner.scale.set(0.9 + i * 0.15, 0.9 + i * 0.15, 0.85 + i * 0.2)
+      haze.material.opacity = 0.1 + i * 0.22
+      haze.scale.set(0.95 + i * 0.12, 0.95 + i * 0.12, 1)
+      hazeInner.material.opacity = 0.04 + i * 0.1
+      hazeInner.scale.set(0.9 + i * 0.15, 0.9 + i * 0.15, 1)
 
-      core.position.z = -100 - (1 - i) * 25
+      core.position.z = Z_FAR * 0.92
       core.scale.setScalar(18 + i * 32)
       core.material.opacity = 0.28 + i * 0.5
     },
@@ -448,8 +525,9 @@ export function createMotionEffects(container) {
      * @param {number} [throttle] - -1..1 main throttle (drives thrust streaks)
      * @param {THREE.Camera} [camera] - for full-screen cruise star tunnel
      * @param {THREE.Color|number} [starColor] - system sun tint for the cruise tunnel
+     * @param {THREE.Vector3|number[]} [aimWorld] - crosshair world aim (tunnel origin axis)
      */
-    update(dt, { speed, refSpeed, cruising, throttle = 0, shipPos, shipQuat, camera = null, starColor = null }) {
+    update(dt, { speed, refSpeed, cruising, throttle = 0, shipPos, shipQuat, camera = null, starColor = null, aimWorld = null }) {
       quat.fromArray(shipQuat)
       const shipP = new THREE.Vector3().fromArray(shipPos)
       const speedNorm = Math.min(1, speed / Math.max(1, refSpeed))
@@ -470,7 +548,7 @@ export function createMotionEffects(container) {
           }
         }
         updatePool(cruise, dt, intensity * 0.45, true, shipP, quat)
-        cruiseTunnel.update(dt, intensity, camera, starColor)
+        cruiseTunnel.update(dt, intensity, camera, starColor, aimWorld)
       } else {
         updatePool(normal, dt, intensity, false, shipP, quat)
         updatePool(cruise, dt, 0, true, shipP, quat)

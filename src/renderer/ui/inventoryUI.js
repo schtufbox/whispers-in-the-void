@@ -15,7 +15,13 @@ const STYLE = `
 }
 #inventory-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
 #inventory-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 18px 0 8px; }
-#inventory-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+#inventory-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 12px; }
+#inventory-ui .header-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+#inventory-ui .credits-display {
+  font-size: 13px; letter-spacing: 1px; color: #ffe08a;
+  text-shadow: 0 0 8px rgba(255,210,70,0.4);
+  white-space: nowrap;
+}
 #inventory-ui table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
 #inventory-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); }
 #inventory-ui td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
@@ -51,7 +57,10 @@ export function createInventoryUI(container, gameState) {
     <div class="panel">
       <div class="header">
         <h2>Inventory</h2>
-        <button class="close">Close</button>
+        <div class="header-right">
+          <span class="credits-display"></span>
+          <button class="close">Close</button>
+        </div>
       </div>
       <div class="content"></div>
     </div>
@@ -59,8 +68,14 @@ export function createInventoryUI(container, gameState) {
   container.appendChild(root)
 
   const contentEl = root.querySelector('.content')
+  const creditsEl = root.querySelector('.credits-display')
+
+  function formatCredits(n) {
+    return `${Math.max(0, Math.floor(Number(n) || 0)).toLocaleString()} cr`
+  }
 
   function render() {
+    creditsEl.textContent = formatCredits(gameState.player.credits)
     const ship = gameState.player.ship
     const shipClass = getShipClass(ship.classId)
     const cargoRows = Object.entries(ship.cargo).filter(([, qty]) => qty > 0)

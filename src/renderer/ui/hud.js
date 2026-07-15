@@ -105,6 +105,18 @@ const STYLE = `
   text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 8px rgba(127,230,255,0.55);
   white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
 }
+#hud .system-label .nearest-body {
+  display: none; margin-top: 4px; font-size: 11px; letter-spacing: 1px;
+  color: #b8d4f0; opacity: 0.9;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(79,195,217,0.4);
+  white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
+}
+#hud .system-label .nearest-body.visible { display: block; }
+#hud .system-label .nearest-body .nb-tag {
+  color: #7fe6ff; opacity: 0.75; letter-spacing: 1.5px; text-transform: uppercase; font-size: 9px;
+  margin-right: 6px;
+}
+#hud .system-label .nearest-body .nb-name { color: #eaffff; }
 
 /* Velocity gets its own bottom-center readout, separate from the shield/
    armor/hull status panel now up in the top-left corner. */
@@ -325,6 +337,53 @@ const STYLE = `
   90%, 91% { opacity: 0.8; }
   92% { opacity: 0.35; }
 }
+
+/* White-noise / static burst timed with the chromatic glitch windows. */
+#hud .static-noise {
+  position: fixed; inset: 0; pointer-events: none; z-index: 7;
+  opacity: 0;
+  mix-blend-mode: screen;
+  /* SVG fractal noise — no texture files; re-tiled via background-size animation. */
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+#hud.cruise-glitch .static-noise {
+  animation: hudCruiseStatic 12s steps(1) infinite;
+}
+@keyframes hudCruiseStatic {
+  0%, 78%, 100% {
+    opacity: 0;
+    background-position: 0 0;
+  }
+  79% {
+    opacity: 0.42;
+    background-position: -40px 12px;
+  }
+  80% {
+    opacity: 0.55;
+    background-position: 28px -22px;
+  }
+  81% {
+    opacity: 0.28;
+    background-position: -18px 36px;
+  }
+  82% {
+    opacity: 0;
+    background-position: 0 0;
+  }
+  90% {
+    opacity: 0.32;
+    background-position: 50px -30px;
+  }
+  91% {
+    opacity: 0.2;
+    background-position: -60px 20px;
+  }
+  92% {
+    opacity: 0;
+    background-position: 0 0;
+  }
+}
 `
 
 export function createHud(container) {
@@ -336,6 +395,7 @@ export function createHud(container) {
   hud.id = 'hud'
   hud.innerHTML = `
     <div class="scanlines"></div>
+    <div class="static-noise" aria-hidden="true"></div>
     <div class="cockpit-frame">
       <div class="corner tl"></div><div class="corner tr"></div>
       <div class="corner bl"></div><div class="corner br"></div>
@@ -343,9 +403,9 @@ export function createHud(container) {
     <div class="system-label">
       <span class="sys-tag">System</span>
       <span class="sys-name">—</span>
+      <span class="nearest-body"><span class="nb-tag">Nearest Body</span><span class="nb-name"></span></span>
     </div>
     <div class="status-panel">
-      <div class="panel-title">SHIP STATUS</div>
       <div class="row shield">
         <div class="row-label"><span>Shield</span><span class="value"></span></div>
         <div class="bar"><div class="fill"></div></div>
@@ -370,7 +430,6 @@ export function createHud(container) {
   radar.id = 'radar'
   radar.innerHTML = `
     <canvas width="160" height="160"></canvas>
-    <div class="radar-label">RADAR</div>
   `
   // Nested inside hud (position:fixed makes placement independent of parent)
   // so removing hud.element also cleans up the radar — no separate tracking.
@@ -393,7 +452,10 @@ export function createHud(container) {
   const velocityFill = hud.querySelector('.velocity .fill')
   const speedEl = hud.querySelector('.speed')
   const systemNameEl = hud.querySelector('.system-label .sys-name')
+  const nearestBodyEl = hud.querySelector('.system-label .nearest-body')
+  const nearestBodyNameEl = hud.querySelector('.system-label .nearest-body .nb-name')
   let lastSystemName = null
+  let lastNearestBodyName = undefined
 
   function pct(value, max) {
     return Math.max(0, Math.min(100, (value / max) * 100))
@@ -402,7 +464,9 @@ export function createHud(container) {
   return {
     // forwardSpeed is signed (negative while reversing), unlike speed which
     // is the overall (unsigned) velocity magnitude shown in the text readout.
-    update(shipState, shipClass, speed, forwardSpeed, systemName = null) {
+    // nearestBodyName: string when within HUD proximity of a planet/moon/star/
+    // station/settlement; null/undefined hides the line.
+    update(shipState, shipClass, speed, forwardSpeed, systemName = null, nearestBodyName = null) {
       const shieldPct = pct(shipState.shields, shipClass.stats.shields)
       const armorPct = pct(shipState.armor, shipClass.stats.armor)
       const hullPct = pct(shipState.hull, shipClass.stats.hull)
@@ -424,6 +488,18 @@ export function createHud(container) {
       if (systemName != null && systemName !== lastSystemName) {
         lastSystemName = systemName
         systemNameEl.textContent = systemName || '—'
+      }
+
+      const nb = nearestBodyName || null
+      if (nb !== lastNearestBodyName) {
+        lastNearestBodyName = nb
+        if (nb) {
+          nearestBodyNameEl.textContent = nb
+          nearestBodyEl.classList.add('visible')
+        } else {
+          nearestBodyNameEl.textContent = ''
+          nearestBodyEl.classList.remove('visible')
+        }
       }
     },
     // contacts: [{ x, z, kind }], already transformed into ship-local space

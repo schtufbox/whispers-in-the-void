@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { getSystem, canJumpTo, SYSTEM_ARRIVAL_POSITION } from '../procgen/galaxy.js'
+import { getSystem, canJumpTo, SYSTEM_ARRIVAL_POSITION, advancePlottedRoute } from '../procgen/galaxy.js'
 import { ensureBountyNpcsForSystem } from './missions.js'
 
 const _up = new THREE.Vector3(0, 1, 0)
@@ -36,6 +36,8 @@ export function hyperspaceJump(gameState, targetSystemId, rng) {
   // Arrival is offset above the ecliptic (y ≠ 0), so identity no longer aims
   // at the sun — face the system origin (star / binary primary) explicitly.
   gameState.player.ship.quaternion = quatFacingSun(gameState.player.ship.position)
+  // Drop hops already reached from any galaxy-map plotted route.
+  advancePlottedRoute(gameState)
   // NPCs, projectiles, and wrecks all belong to the system just left;
   // encounter state is never persisted (see the save/load design), so it's
   // simplest to drop them here too rather than track per-system entity lists.

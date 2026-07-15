@@ -1,13 +1,10 @@
 import * as THREE from 'three'
 
-// Stations/settlements never vary in size, so a fixed radius per kind is
-// enough — unlike planets/moons/asteroid fields, which store their own
-// per-instance radius on the body (see procgen/galaxy.js). Matches
-// main.js STATION_SCALE (16.875 = prior 11.25 × 1.5); main.js also layers a
-// small +/-15% per-body render variance that isn't mirrored here —
-// the DOCK_RANGE_COLLISION_MARGIN buffer comfortably absorbs that.
-const STATION_COLLISION_RADIUS = 337.5
-// Surface bases sit on the crust with a modest shell (+50% with station pass).
+// Stations: player shell is 500m so you can fly in close for docking.
+// Visual bulk is larger (STATION_SCALE); orbital packing uses a bigger
+// clearance in galaxy.js so stations don't spawn through each other.
+// Settlements stay modest — not part of the station behemoth pass.
+const STATION_COLLISION_RADIUS = 500
 const SETTLEMENT_COLLISION_RADIUS = 72
 
 export function collisionRadiusFor(body) {

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { buildHullGeometry } from '../procgen/hull.js'
 import { mulberry32 } from '../procgen/prng.js'
+import { stationMaterialMaps } from './textures.js'
 
 function hashString(str) {
   let h = 0
@@ -8,80 +9,80 @@ function hashString(str) {
   return Math.abs(h)
 }
 
-const hardpointMarkerGeometry = new THREE.ConeGeometry(0.18, 0.45, 6)
-const hardpointMarkerMaterial = new THREE.MeshStandardMaterial({
-  color: 0x2a2a30,
-  flatShading: true,
-  metalness: 0.7,
-  roughness: 0.4
-})
+// Shared CC0 metal/panel maps (same packs as stations). Materials are built
+// lazily inside buildShipMesh so node:test never hits TextureLoader at import.
+function hullMaps() {
+  return stationMaterialMaps('hull', 0.4)
+}
+function panelMaps() {
+  return stationMaterialMaps('panel', 0.35)
+}
+function radiatorMaps() {
+  return stationMaterialMaps('radiator', 0.35)
+}
 
-const canopyMaterial = new THREE.MeshStandardMaterial({
-  color: 0x152838,
-  flatShading: false,
-  transparent: true,
-  opacity: 0.88,
-  metalness: 0.15,
-  roughness: 0.08,
-  emissive: 0x0a2840,
-  emissiveIntensity: 0.45
-})
-const windowMaterial = new THREE.MeshStandardMaterial({
-  color: 0x1a4058,
-  emissive: 0x3a80a0,
-  emissiveIntensity: 0.55,
-  metalness: 0.2,
-  roughness: 0.2,
-  flatShading: true
-})
-const engineGlowMaterial = new THREE.MeshBasicMaterial({
-  color: 0x7fe6ff,
-  transparent: true,
-  opacity: 0.9,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
-  side: THREE.DoubleSide
-})
-const engineConeMaterial = new THREE.MeshBasicMaterial({
-  color: 0x4fc3d9,
-  transparent: true,
-  opacity: 0.32,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
-  side: THREE.DoubleSide
-})
-const panelMaterial = new THREE.MeshStandardMaterial({
-  color: 0x1a1e26,
-  flatShading: true,
-  metalness: 0.55,
-  roughness: 0.55
-})
-const radiatorMaterial = new THREE.MeshStandardMaterial({
-  color: 0x2a3038,
-  flatShading: true,
-  metalness: 0.75,
-  roughness: 0.35,
-  emissive: 0x1a1010,
-  emissiveIntensity: 0.15
-})
-const accentStripeMaterial = new THREE.MeshStandardMaterial({
-  color: 0xc45a18,
-  flatShading: true,
-  metalness: 0.4,
-  roughness: 0.5
-})
-const antennaMaterial = new THREE.MeshStandardMaterial({
-  color: 0x9aabbc,
-  flatShading: true,
-  metalness: 0.85,
-  roughness: 0.25
-})
-const nacelleMaterial = new THREE.MeshStandardMaterial({
-  color: 0x3a424c,
-  flatShading: true,
-  metalness: 0.7,
-  roughness: 0.4
-})
+function makeDetailMaterials() {
+  return {
+    hardpoint: new THREE.MeshStandardMaterial({
+      color: 0x2a2a30, metalness: 0.85, roughness: 0.4, ...panelMaps()
+    }),
+    canopy: new THREE.MeshStandardMaterial({
+      color: 0x152838,
+      flatShading: false,
+      transparent: true,
+      opacity: 0.88,
+      metalness: 0.15,
+      roughness: 0.08,
+      emissive: 0x0a2840,
+      emissiveIntensity: 0.45
+    }),
+    window: new THREE.MeshStandardMaterial({
+      color: 0x1a4058,
+      emissive: 0x3a80a0,
+      emissiveIntensity: 0.55,
+      metalness: 0.2,
+      roughness: 0.2
+    }),
+    engineGlow: new THREE.MeshBasicMaterial({
+      color: 0x7fe6ff,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    }),
+    engineCone: new THREE.MeshBasicMaterial({
+      color: 0x4fc3d9,
+      transparent: true,
+      opacity: 0.32,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    }),
+    panel: new THREE.MeshStandardMaterial({
+      color: 0x2a3038, metalness: 0.8, roughness: 0.55, ...panelMaps()
+    }),
+    radiator: new THREE.MeshStandardMaterial({
+      color: 0x4a3830,
+      metalness: 0.85,
+      roughness: 0.45,
+      emissive: 0x1a1010,
+      emissiveIntensity: 0.12,
+      ...radiatorMaps()
+    }),
+    accent: new THREE.MeshStandardMaterial({
+      color: 0xc45a18, metalness: 0.55, roughness: 0.5, ...panelMaps()
+    }),
+    antenna: new THREE.MeshStandardMaterial({
+      color: 0x9aabbc, metalness: 0.9, roughness: 0.3, ...hullMaps()
+    }),
+    nacelle: new THREE.MeshStandardMaterial({
+      color: 0x4a525c, metalness: 0.82, roughness: 0.42, ...hullMaps()
+    })
+  }
+}
+
+const hardpointMarkerGeometry = new THREE.ConeGeometry(0.18, 0.45, 6)
 
 function defaultStyle(hull, rng) {
   if (hull.style) return hull.style
@@ -118,7 +119,7 @@ function engineOffsets(layout, peakWidth) {
 
 // Cosmetic details on the parametric hull — canopy, engines, radiators,
 // greebles, cargo. Seeded per class id so every ship of a class matches.
-function addHullDetails(group, hull) {
+function addHullDetails(group, hull, mats) {
   const rng = mulberry32(hashString(group.name))
   const { length, stationWidths, stationHeights } = hull
   const peakWidth = Math.max(...stationWidths)
@@ -129,7 +130,7 @@ function addHullDetails(group, hull) {
   // Bridge / cockpit canopy — can sit off-center on asymmetric hulls.
   const canopy = new THREE.Mesh(
     new THREE.SphereGeometry(peakWidth * 0.32, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-    canopyMaterial
+    mats.canopy
   )
   canopy.scale.set(1.05, 0.5, 1.85)
   canopy.position.set(bridgeX, peakHeight * 0.78, length * 0.22)
@@ -140,7 +141,7 @@ function addHullDetails(group, hull) {
   for (let i = 0; i < windowCount; i++) {
     const w = new THREE.Mesh(
       new THREE.BoxGeometry(peakWidth * 0.08, peakHeight * 0.07, peakWidth * 0.06),
-      windowMaterial
+      mats.window
     )
     w.position.set(
       bridgeX + (i - (windowCount - 1) / 2) * peakWidth * 0.12,
@@ -154,7 +155,7 @@ function addHullDetails(group, hull) {
   if (style.bridgeSide !== 0 || rng() < 0.35) {
     const tower = new THREE.Mesh(
       new THREE.BoxGeometry(peakWidth * 0.35, peakHeight * 0.55, peakWidth * 0.5),
-      panelMaterial
+      mats.panel
     )
     tower.position.set(bridgeX, peakHeight * 0.95, length * 0.05)
     group.add(tower)
@@ -167,7 +168,7 @@ function addHullDetails(group, hull) {
   for (const [ox, oy] of offsets) {
     const nacelle = new THREE.Mesh(
       new THREE.CylinderGeometry(engineR * 0.95, engineR * 1.05, peakHeight * 0.85, 8),
-      nacelleMaterial
+      mats.nacelle
     )
     nacelle.rotation.x = Math.PI / 2
     nacelle.position.set(ox, oy, -length / 2 + peakHeight * 0.35)
@@ -176,20 +177,20 @@ function addHullDetails(group, hull) {
     // Bell / nozzle flare.
     const bell = new THREE.Mesh(
       new THREE.CylinderGeometry(engineR * 1.15, engineR * 0.75, peakHeight * 0.35, 8),
-      panelMaterial
+      mats.panel
     )
     bell.rotation.x = Math.PI / 2
     bell.position.set(ox, oy, -length / 2 - 0.05)
     group.add(bell)
 
-    const glow = new THREE.Mesh(new THREE.CircleGeometry(engineR * 0.85, 12), engineGlowMaterial)
+    const glow = new THREE.Mesh(new THREE.CircleGeometry(engineR * 0.85, 12), mats.engineGlow)
     glow.position.set(ox, oy, -length / 2 - peakHeight * 0.2)
     glow.rotation.y = Math.PI
     group.add(glow)
 
     const cone = new THREE.Mesh(
       new THREE.ConeGeometry(engineR * 0.55, peakHeight * 1.1, 8, 1, true),
-      engineConeMaterial
+      mats.engineCone
     )
     cone.rotation.x = -Math.PI / 2
     cone.position.set(ox, oy, -length / 2 - peakHeight * 0.55)
@@ -200,7 +201,7 @@ function addHullDetails(group, hull) {
       const strutLen = Math.hypot(ox, oy)
       const strut = new THREE.Mesh(
         new THREE.BoxGeometry(strutLen, peakHeight * 0.12, peakHeight * 0.18),
-        panelMaterial
+        mats.panel
       )
       strut.position.set(ox * 0.5, oy * 0.5, -length / 2 + peakHeight * 0.5)
       strut.rotation.z = Math.atan2(oy, ox)
@@ -214,7 +215,7 @@ function addHullDetails(group, hull) {
     const radW = peakWidth * (0.9 + rng() * 0.6)
     const radH = peakHeight * (0.08 + rng() * 0.06)
     const radL = length * (0.28 + rng() * 0.2)
-    const rad = new THREE.Mesh(new THREE.BoxGeometry(radW, radH, radL), radiatorMaterial)
+    const rad = new THREE.Mesh(new THREE.BoxGeometry(radW, radH, radL), mats.radiator)
     rad.position.set(side * (peakWidth * 0.55 + radW * 0.45), peakHeight * 0.15, -length * 0.05)
     rad.rotation.z = side * 0.15
     group.add(rad)
@@ -222,7 +223,7 @@ function addHullDetails(group, hull) {
     for (let i = 0; i < 4; i++) {
       const rib = new THREE.Mesh(
         new THREE.BoxGeometry(radW * 0.95, radH * 1.4, radL * 0.03),
-        panelMaterial
+        mats.panel
       )
       rib.position.set(
         side * (peakWidth * 0.55 + radW * 0.45),
@@ -240,7 +241,7 @@ function addHullDetails(group, hull) {
       const pw = peakWidth * (0.35 + rng() * 0.25)
       const ph = peakHeight * (0.35 + rng() * 0.2)
       const pl = length * (0.12 + rng() * 0.1)
-      const pod = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pl), panelMaterial)
+      const pod = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pl), mats.panel)
       const side = style.asymmetric && i === 0 ? (rng() < 0.5 ? -1 : 1) : (i % 2 === 0 ? -1 : 1)
       pod.position.set(
         side * peakWidth * (0.55 + rng() * 0.2),
@@ -254,7 +255,7 @@ function addHullDetails(group, hull) {
   // Hazard / fleet accent stripe.
   const stripe = new THREE.Mesh(
     new THREE.BoxGeometry(peakWidth * 0.1, peakHeight * 0.06, length * 0.5),
-    accentStripeMaterial
+    mats.accent
   )
   stripe.position.set(bridgeX * 0.3, peakHeight * 0.48, length * 0.02)
   group.add(stripe)
@@ -264,13 +265,13 @@ function addHullDetails(group, hull) {
     const mastX = style.asymmetric ? peakWidth * (0.2 + rng() * 0.25) * (rng() < 0.5 ? -1 : 1) : peakWidth * 0.12
     const mast = new THREE.Mesh(
       new THREE.CylinderGeometry(peakWidth * 0.018, peakWidth * 0.028, peakHeight * 0.7, 5),
-      antennaMaterial
+      mats.antenna
     )
     mast.position.set(mastX, peakHeight * 1.05, length * 0.3)
     group.add(mast)
     const dish = new THREE.Mesh(
       new THREE.CircleGeometry(peakWidth * 0.12, 10),
-      antennaMaterial
+      mats.antenna
     )
     dish.position.set(mastX, peakHeight * 1.35, length * 0.3)
     dish.rotation.x = -Math.PI / 3
@@ -279,7 +280,7 @@ function addHullDetails(group, hull) {
     if (rng() < 0.6) {
       const whip = new THREE.Mesh(
         new THREE.CylinderGeometry(peakWidth * 0.01, peakWidth * 0.01, peakHeight * 0.9, 4),
-        antennaMaterial
+        mats.antenna
       )
       whip.position.set(-mastX * 0.7, peakHeight * 1.1, length * 0.15)
       whip.rotation.z = 0.2
@@ -291,7 +292,7 @@ function addHullDetails(group, hull) {
   if (style.hasDockingRing) {
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(peakWidth * 0.55, peakWidth * 0.06, 6, 14),
-      nacelleMaterial
+      mats.nacelle
     )
     ring.position.set(0, 0, length * 0.35)
     group.add(ring)
@@ -301,7 +302,7 @@ function addHullDetails(group, hull) {
   for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const rcs = new THREE.Mesh(
       new THREE.BoxGeometry(peakWidth * 0.1, peakHeight * 0.1, peakWidth * 0.12),
-      nacelleMaterial
+      mats.nacelle
     )
     rcs.position.set(sx * peakWidth * 0.85, sy * peakHeight * 0.55, length * 0.05)
     group.add(rcs)
@@ -313,7 +314,7 @@ function addHullDetails(group, hull) {
     const w = peakWidth * (0.05 + rng() * 0.14)
     const h = peakHeight * (0.04 + rng() * 0.1)
     const d = peakWidth * (0.08 + rng() * 0.25)
-    const greeble = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), panelMaterial)
+    const greeble = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats.panel)
     const sideBias = style.asymmetric && rng() < 0.4 ? (rng() < 0.5 ? -0.3 : 0.3) : 0
     greeble.position.set(
       (rng() - 0.5 + sideBias) * peakWidth * 1.5,
@@ -327,7 +328,7 @@ function addHullDetails(group, hull) {
   // Underside cargo bay / heat shield plate.
   const plate = new THREE.Mesh(
     new THREE.BoxGeometry(peakWidth * 0.85, peakHeight * 0.07, length * 0.32),
-    panelMaterial
+    mats.panel
   )
   plate.position.set(style.asymmetric ? peakWidth * 0.08 * style.bridgeSide : 0, -peakHeight * 0.5, -length * 0.05)
   group.add(plate)
@@ -336,7 +337,7 @@ function addHullDetails(group, hull) {
   const hatchSide = style.asymmetric ? (style.bridgeSide !== 0 ? -style.bridgeSide : 1) : (rng() < 0.5 ? -1 : 1)
   const hatch = new THREE.Mesh(
     new THREE.CylinderGeometry(peakHeight * 0.22, peakHeight * 0.22, peakWidth * 0.08, 10),
-    nacelleMaterial
+    mats.nacelle
   )
   hatch.rotation.z = Math.PI / 2
   hatch.position.set(hatchSide * peakWidth * 0.95, 0, length * 0.1)
@@ -346,37 +347,39 @@ function addHullDetails(group, hull) {
 export function buildShipMesh(shipClass) {
   const group = new THREE.Group()
   group.name = shipClass.id
+  const mats = makeDetailMaterials()
 
   const geometry = buildHullGeometry(shipClass.hull)
   const baseColor = new THREE.Color(shipClass.hull.color)
+  // Smooth + metal PBR maps; hull.color tints the shared metal albedo.
   const material = new THREE.MeshStandardMaterial({
     color: baseColor,
-    flatShading: true,
     side: THREE.DoubleSide,
-    metalness: 0.58,
-    roughness: 0.42
+    metalness: 0.88,
+    roughness: 0.48,
+    ...hullMaps()
   })
   const hullMesh = new THREE.Mesh(geometry, material)
   group.add(hullMesh)
 
-  // Dark panel seams.
+  // Softer seams so they don't fight the normal maps.
   const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry, 18),
-    new THREE.LineBasicMaterial({ color: 0x0a0c10, transparent: true, opacity: 0.75 })
+    new THREE.EdgesGeometry(geometry, 22),
+    new THREE.LineBasicMaterial({ color: 0x0a0c10, transparent: true, opacity: 0.4 })
   )
   group.add(edges)
 
   // Soft hull rim highlight against black space.
   const rim = new THREE.LineSegments(
     new THREE.EdgesGeometry(geometry, 35),
-    new THREE.LineBasicMaterial({ color: 0x6a8aaa, transparent: true, opacity: 0.22 })
+    new THREE.LineBasicMaterial({ color: 0x6a8aaa, transparent: true, opacity: 0.18 })
   )
   group.add(rim)
 
-  addHullDetails(group, shipClass.hull)
+  addHullDetails(group, shipClass.hull, mats)
 
   for (const hp of shipClass.hardpoints ?? []) {
-    const marker = new THREE.Mesh(hardpointMarkerGeometry, hardpointMarkerMaterial)
+    const marker = new THREE.Mesh(hardpointMarkerGeometry, mats.hardpoint)
     marker.position.set(...hp.position)
     marker.rotation.x = Math.PI / 2
     group.add(marker)
