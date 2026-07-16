@@ -4,6 +4,7 @@ const CONTROLS = [
   ['Space', 'Enter / exit mouse-aim flight mode'],
   ['Mouse', 'Aim (pitch & yaw) while in flight mode'],
   ['Alt + Mouse', 'Free-look — orbit chase camera around ship'],
+  ['Alt + Enter', 'Toggle fullscreen'],
   ['W / S', 'Throttle forward / reverse'],
   ['A / D', 'Strafe left / right'],
   ['X / Z', 'Strafe up / down'],
@@ -24,7 +25,6 @@ const CONTROLS = [
   ['F1', 'Character sheet'],
   ['Esc', 'Pause / resume'],
   ['F5', 'Quick save'],
-  ['Alt+Enter', 'Toggle borderless fullscreen / windowed'],
   ['Free mouse', 'Click system overview (left) to set waypoints']
 ]
 

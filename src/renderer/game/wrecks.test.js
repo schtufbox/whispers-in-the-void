@@ -58,3 +58,29 @@ test('lootWreck adds loot to cargo, spare weapons, and removes the wreck', () =>
 
   assert.throws(() => lootWreck(gameState, shipClass, 'w-1'), /no longer there/)
 })
+
+test('alien wrecks only drop alien blueprints, never human industry BPs', () => {
+  const rng = () => 0.001 // force rare rolls
+  const wreck = spawnWreck([0, 0, 0], 0, rng, 'void_cyst')
+  if (wreck.loot.blueprints) {
+    for (const id of Object.keys(wreck.loot.blueprints)) {
+      assert.ok(id.startsWith('ship:') || id.startsWith('weapon:'))
+      assert.ok(
+        id.includes('void_') || id.includes('spine_') || id.includes('chor_') ||
+        id.includes('zealot_') || id.includes('neural_') || id.includes('singularity_') ||
+        id.includes('phase_') || id.includes('spore_'),
+        `unexpected BP ${id}`
+      )
+      assert.equal(id.includes('rapid_laser') || id.includes('bravia'), false)
+    }
+  }
+  // Human wreck never gets alien BP from tryRollBlueprintDrop path
+  let alienOnHuman = false
+  for (let i = 0; i < 200; i++) {
+    const w = spawnWreck([0, 0, 0], 0, () => Math.random() * 0.02, 'interceptor')
+    for (const id of Object.keys(w.loot.blueprints ?? {})) {
+      if (id.includes('void_cyst') || id.includes('void_lance') || id.includes('singularity')) alienOnHuman = true
+    }
+  }
+  assert.equal(alienOnHuman, false)
+})

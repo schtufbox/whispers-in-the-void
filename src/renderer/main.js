@@ -12,6 +12,7 @@ import { buildStarMesh, updateStarMesh } from './render/starMesh.js'
 import { buildAsteroidFieldMesh, getAsteroidRocks } from './render/asteroidFieldMesh.js'
 import { buildProjectileMesh, buildImpactFlash, preloadProjectileMeshes } from './render/projectileMesh.js'
 import { buildStationInteriorMesh, updateStationInterior } from './render/stationInterior.js'
+import { preloadInteriorModels } from './render/interiorModels.js'
 import { buildWreckMesh, updateWreckMesh } from './render/wreckMesh.js'
 import { buildProbeMesh, updateProbeMesh } from './render/probeMesh.js'
 import {
@@ -43,7 +44,12 @@ import { createGameState } from './game/state.js'
 import { advanceGameClock, reanchorGameClock } from './game/gameClock.js'
 import { createInputState, createMouseAimState, updateFlight } from './game/flight.js'
 import { updateSupercruise, ignoreBodyAsCruiseObstacle } from './game/supercruise.js'
-import { spawnEncounterNear, spawnPoliceResponse, ensureStationPolicePatrols } from './game/spawner.js'
+import {
+  spawnEncounterNear,
+  spawnPoliceResponse,
+  ensureStationPolicePatrols,
+  spawnMiningPirateAmbush
+} from './game/spawner.js'
 import {
   fireProjectile,
   updateProjectiles,
@@ -81,7 +87,8 @@ import {
   rockOreMax,
   isFieldDepleted,
   fieldRespawnRemainingS,
-  formatRespawnTime
+  formatRespawnTime,
+  rollMiningPirateAmbush
 } from './game/mining.js'
 import { pruneWrecks, lootWreck } from './game/wrecks.js'
 import { updateCraftingJobs, ensureBlueprintMaps } from './game/crafting.js'
@@ -99,7 +106,15 @@ import {
 } from './game/probe.js'
 import { saveGame as persistSaveGame, loadGame as persistLoadGame, hasSave } from './game/save.js'
 import { hyperspaceJump } from './game/hyperspace.js'
-import { getSystem, findBody, findSystemOfBody, coreFraction, canJumpTo, ensureSystemSecurity } from './procgen/galaxy.js'
+import {
+  getSystem,
+  findBody,
+  findSystemOfBody,
+  coreFraction,
+  canJumpTo,
+  ensureSystemSecurity,
+  WHISPERS_STATION_NAME
+} from './procgen/galaxy.js'
 import { createHud } from './ui/hud.js'
 import { createDockingUI } from './ui/dockingUI.js'
 import { createMenu } from './ui/menu.js'
@@ -356,6 +371,8 @@ hudReticleDot.visible = false
 // Escape while pointer-locked often only unlocks the cursor (keydown may not
 // fire). Suppress auto-pause when we exit lock ourselves (menus / Space).
 let suppressPointerUnlockPause = false
+/** Alt held for free-look; free-look only activates once the mouse moves. */
+let altHeldForFreeLook = false
 /** Keep suppress true for N animation frames (WebGL dispose / re-lock churn). */
 function suppressUnlockPauseForFrames(frames = 3) {
   suppressPointerUnlockPause = true
@@ -503,6 +520,7 @@ function exitFlightMode() {
   flightMode = false
   laserFireHeld = false
   missileFireHeld = false
+  altHeldForFreeLook = false
   setChaseFreeLook(false)
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
@@ -646,39 +664,63 @@ document.addEventListener('pointerlockchange', () => {
   }
 })
 
+// Alt + mouse: orbit chase cam around the ship; release Alt snaps back to seat.
+// Important: do NOT arm free-look on bare Alt keydown — that regresses Alt+Enter
+// fullscreen (free-look sticks when the OS swallows Alt keyup mid-toggle).
+function isAltKey(code) {
+  return code === 'AltLeft' || code === 'AltRight'
+}
+
+function clearChaseFreeLook() {
+  altHeldForFreeLook = false
+  setChaseFreeLook(false)
+}
+
+function isAltEnterChord(e) {
+  return (
+    e.altKey &&
+    (e.code === 'Enter' ||
+      e.code === 'NumpadEnter' ||
+      e.key === 'Enter' ||
+      e.key === 'Return')
+  )
+}
+
 window.addEventListener('blur', () => {
   keys.clear()
   laserFireHeld = false
   missileFireHeld = false
-  setChaseFreeLook(false)
+  clearChaseFreeLook()
 })
 
 window.addEventListener('focus', () => {
   tryRestoreFlightMode()
 })
 
-// Alt + mouse: orbit chase cam around the ship; release Alt snaps back to seat.
-function isAltKey(code) {
-  return code === 'AltLeft' || code === 'AltRight'
-}
 window.addEventListener('keydown', (e) => {
-  // Alt+Enter is fullscreen (main process) — never arm free-look for that chord.
-  if (e.altKey && (e.code === 'Enter' || e.code === 'NumpadEnter' || e.key === 'Enter')) {
-    setChaseFreeLook(false)
+  // Alt+Enter → fullscreen. Never free-look. Dual-path: main before-input + IPC.
+  if (isAltEnterChord(e)) {
+    e.preventDefault()
+    e.stopPropagation()
+    clearChaseFreeLook()
+    window.electronAPI?.toggleFullscreen?.()
     return
   }
   if (!isAltKey(e.code)) return
-  if (!gameState || paused || docked || jumpEffect || navMapOpen || inventoryOpen || missionsOpen || characterOpen) return
-  e.preventDefault()
-  setChaseFreeLook(true)
+  if (!gameState || paused || docked || jumpEffect || navMapOpen || inventoryOpen || missionsOpen || characterOpen) {
+    clearChaseFreeLook()
+    return
+  }
+  // Hold only — free-look engages on mouse movement in the game loop.
+  altHeldForFreeLook = true
 })
 window.addEventListener('keyup', (e) => {
   if (!isAltKey(e.code)) return
-  setChaseFreeLook(false)
+  clearChaseFreeLook()
 })
-// Fullscreen toggle often drops the Alt keyup while free-look is still on.
+// Fullscreen transition often drops Alt keyup while free-look would stick.
 if (typeof window.electronAPI?.onFullscreenChanged === 'function') {
-  window.electronAPI.onFullscreenChanged(() => setChaseFreeLook(false))
+  window.electronAPI.onFullscreenChanged(() => clearChaseFreeLook())
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -854,23 +896,46 @@ function hashStringForOrbit(str) {
   return Math.abs(h)
 }
 
-/** Stations get fancy neon lighting; settlements use the baseline bay. */
-function ensureInteriorMesh(fancy = false) {
-  if (!interiorMesh || interiorMesh.userData.fancy !== fancy) {
+/**
+ * Pick docking-bay theme from body + current system location.
+ * - SerNub's Pleasure Palace → palace (fanciest)
+ * - settlements → slightly dirty
+ * - core stations (coreFraction < 0.3) → polished core
+ * - mid stations → decent fancy
+ * - outer rim stations (coreFraction ≥ 0.9) → rusty / gritty
+ */
+function resolveInteriorTheme(body) {
+  if (body?.name === WHISPERS_STATION_NAME) return 'palace'
+  if (body?.kind === 'settlement') return 'settlement'
+  if (body?.kind !== 'station') return 'settlement'
+  let f = 0.5
+  if (gameState) {
+    const system =
+      findSystemOfBody(gameState.galaxy, body.id) ||
+      getSystem(gameState.galaxy, gameState.player.currentSystemId)
+    if (system) f = coreFraction(system)
+  }
+  if (f >= 0.9) return 'outer'
+  if (f < 0.3) return 'core'
+  return 'mid'
+}
+
+/** Rebuild bay mesh when theme changes (station vs settlement vs rim band). */
+function ensureInteriorMesh(theme = 'mid') {
+  if (!interiorMesh || interiorMesh.userData.theme !== theme) {
     if (interiorMesh) {
       scene.remove(interiorMesh)
       interiorMesh.traverse((obj) => {
         if (obj.geometry) obj.geometry.dispose?.()
       })
     }
-    interiorMesh = buildStationInteriorMesh({ fancy })
+    interiorMesh = buildStationInteriorMesh({ theme })
     interiorMesh.position.copy(DOCKING_BAY_ORIGIN)
   }
   return interiorMesh
 }
 
 // Docking swaps the whole exterior scene out for the bay interior (and back).
-// Station bays rebuild as fancy when kind differs from the last dock.
 function swapToInterior(body) {
   for (const mesh of bodyMeshes.values()) scene.remove(mesh)
   for (const mesh of npcMeshes.values()) scene.remove(mesh)
@@ -878,8 +943,7 @@ function swapToInterior(body) {
   for (const mesh of wreckMeshes.values()) scene.remove(mesh)
   for (const flash of impactFlashes) scene.remove(flash.mesh)
   if (starMesh) scene.remove(starMesh)
-  const fancy = body?.kind === 'station'
-  scene.add(ensureInteriorMesh(fancy))
+  scene.add(ensureInteriorMesh(resolveInteriorTheme(body)))
 }
 
 function swapToExterior() {
@@ -1171,6 +1235,8 @@ function onProjectileHit({
         lastOreFullToastAt = gameState.simTime
       }
     }
+    // Sec 0–3: 10% chance mining attracts a pirate (cooldown inside roll helper).
+    maybeSpawnMiningPirateAmbush()
   } else if (destroyed && !hitPlayer) {
     // NPC kill via projectile — mark so mesh teardown doesn't double-play.
     const killed = targetNpcId
@@ -1235,6 +1301,28 @@ function toastIfDepletedField(bodyId) {
       : `${field.name} depleted`,
     4.5
   )
+}
+
+/** Sec 0–3 mining: 10% chance a pirate drops out of the dark. */
+function maybeSpawnMiningPirateAmbush() {
+  if (!gameState || docked || jumpEffect) return
+  const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (!system) return
+  ensureSystemSecurity(system)
+  if (!rollMiningPirateAmbush(Math.random, gameState, system)) return
+  const npc = spawnMiningPirateAmbush(
+    Math.random,
+    gameState.player.ship.position,
+    coreFraction(system),
+    system.bodies
+  )
+  gameState.npcs.push(npc)
+  if (factionToastEl) {
+    factionToastEl.style.color = '#e05a5a'
+    setHudGlitchText(factionToastEl, 'Pirates attracted by your mining!')
+    showHudGlitch(factionToastEl)
+    factionToastUntil = gameState.simTime + FACTION_TOAST_DURATION_S
+  }
 }
 
 const deathScreen = createDeathScreen(appEl, () => returnToMenu())
@@ -1530,6 +1618,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
     if (gameState !== sessionToken) return
     if (stationModelsReady()) loadBodiesForCurrentSystem()
   })
+  preloadInteriorModels()
 
   hud = createHud(appEl)
   dockingUI = createDockingUI(appEl, gameState, Math.random, {
@@ -4279,10 +4368,19 @@ function animate() {
   let thrustState = null
   // Alt free-look works in normal flight and supercruise — consume mouse so
   // it never steers the ship while panning the camera.
-  if (isChaseFreeLook() && (flightMode || cruising)) {
-    addChaseFreeLookDelta(mouseAim.dx, mouseAim.dy)
-    mouseAim.dx = 0
-    mouseAim.dy = 0
+  // Engage only once Alt is held AND the mouse actually moves (not bare Alt).
+  if (altHeldForFreeLook && (flightMode || cruising)) {
+    if (!isChaseFreeLook() && (mouseAim.dx !== 0 || mouseAim.dy !== 0)) {
+      setChaseFreeLook(true)
+    }
+    if (isChaseFreeLook()) {
+      addChaseFreeLookDelta(mouseAim.dx, mouseAim.dy)
+      mouseAim.dx = 0
+      mouseAim.dy = 0
+    }
+  } else if (isChaseFreeLook()) {
+    // Failsafe if alt flag was cleared without setChaseFreeLook(false).
+    setChaseFreeLook(false)
   }
   if (cruising) {
     const wp = getActiveWaypoint()
@@ -4891,8 +4989,19 @@ function animate() {
 }
 animate()
 
-// Kick station GLB preload early so New Game / Load often hit ready models.
+// Kick station + interior GLB preload early so New Game / Load hit ready models.
 preloadStationModels()
+preloadInteriorModels().then(() => {
+  // If already docked on a procedural-only bay, rebuild with kit props.
+  if (!gameState || !docked || !interiorMesh) return
+  const bodyId = gameState.player.dockedBodyId
+  const body = bodyId ? findBody(gameState.galaxy, bodyId) : null
+  if (!body) return
+  const theme = resolveInteriorTheme(body)
+  if (interiorMesh.parent) scene.remove(interiorMesh)
+  interiorMesh = null
+  scene.add(ensureInteriorMesh(theme))
+})
 
 // Intro/menu — apply saved sound default, then title screen.
 // Display mode is already applied by the main process on window create.

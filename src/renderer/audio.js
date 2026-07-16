@@ -1,6 +1,8 @@
 let ctx = null
-/** Master mute for Web Audio graph (SFX/synths). HTML music uses .muted. */
-let soundEnabled = true
+/** Web Audio graph (SFX, thrusters, weapons, synth) + voice callouts. */
+let sfxEnabled = true
+/** HTMLAudio title / ambient / death tracks. */
+let musicEnabled = true
 let masterGain = null
 
 function getContext() {
@@ -9,36 +11,59 @@ function getContext() {
   return ctx
 }
 
-/** Shared output so mute can zero the whole Web Audio graph at once. */
+/** Shared output so SFX mute can zero the whole Web Audio graph at once. */
 function getMasterDestination() {
   const audio = getContext()
   if (!masterGain) {
     masterGain = audio.createGain()
-    masterGain.gain.value = soundEnabled ? 1 : 0
+    masterGain.gain.value = sfxEnabled ? 1 : 0
     masterGain.connect(audio.destination)
   }
   return masterGain
 }
 
 function applyMusicMute() {
-  const muted = !soundEnabled
+  const muted = !musicEnabled
   if (titleMusic) titleMusic.muted = muted
   if (deathMusic) deathMusic.muted = muted
   if (ambientMusic) ambientMusic.muted = muted
 }
 
-export function isSoundEnabled() {
-  return soundEnabled
-}
-
-/** Master sound on/off — SFX, loops, music, and speech. */
-export function setSoundEnabled(enabled) {
-  soundEnabled = enabled !== false
-  if (masterGain) masterGain.gain.value = soundEnabled ? 1 : 0
-  applyMusicMute()
-  if (!soundEnabled && window.speechSynthesis) {
+function applySfxMute() {
+  if (masterGain) masterGain.gain.value = sfxEnabled ? 1 : 0
+  if (!sfxEnabled && window.speechSynthesis) {
     try { window.speechSynthesis.cancel() } catch { /* */ }
   }
+}
+
+export function isSfxEnabled() {
+  return sfxEnabled
+}
+
+export function isMusicEnabled() {
+  return musicEnabled
+}
+
+/** @deprecated true if either channel is on */
+export function isSoundEnabled() {
+  return sfxEnabled || musicEnabled
+}
+
+export function setSfxEnabled(enabled) {
+  sfxEnabled = enabled !== false
+  applySfxMute()
+}
+
+export function setMusicEnabled(enabled) {
+  musicEnabled = enabled !== false
+  applyMusicMute()
+}
+
+/** Master on/off — sets both SFX and music (legacy). */
+export function setSoundEnabled(enabled) {
+  const on = enabled !== false
+  setSfxEnabled(on)
+  setMusicEnabled(on)
 }
 
 // Browsers/Electron require a user gesture before audio can start — this
@@ -222,6 +247,7 @@ const WEAPON_SAMPLES = {
   rocket_pod: { file: 'rocket.ogg', volume: 0.74, rate: 0.72 },
   seeker_missile: { file: 'missile.ogg', volume: 0.78, rate: 0.68 },
   torpedo: { file: 'torpedo.ogg', volume: 0.84, rate: 0.62 }
+  // Alien weapons: synth-only (no ogg) — organic/void character in fallbacks.
 }
 
 const WEAPON_SYNTH_FALLBACK = {
@@ -271,15 +297,52 @@ const WEAPON_SYNTH_FALLBACK = {
     noiseBurst({ duration: 0.85, filterFreq: 160, peak: 0.52, drive: 4, delay: 0.05 })
     noiseBurst({ duration: 1.15, filterFreq: 400, peak: 0.22, delay: 0.14 })
     tone({ type: 'sine', freq: 32, freqEnd: 15, duration: 1.05, peak: 0.58 })
+  },
+  // Alien — wet chirps, sub-growls, dissonant inharmonics (no human zap).
+  phase_spit: () => {
+    tone({ type: 'sine', freq: 180, freqEnd: 48, duration: 0.2, peak: 0.28 })
+    tone({ type: 'triangle', freq: 920, freqEnd: 210, duration: 0.16, peak: 0.18 })
+    tone({ type: 'sawtooth', freq: 67, freqEnd: 28, duration: 0.22, peak: 0.2 })
+    noiseBurst({ duration: 0.12, filterFreq: 900, peak: 0.16, drive: 2.2 })
+  },
+  void_lance: () => {
+    tone({ type: 'sine', freq: 55, freqEnd: 22, duration: 0.45, peak: 0.42 })
+    tone({ type: 'sawtooth', freq: 1400, freqEnd: 90, duration: 0.38, peak: 0.16 })
+    tone({ type: 'triangle', freq: 280, freqEnd: 60, duration: 0.4, peak: 0.22, delay: 0.04 })
+    noiseBurst({ duration: 0.35, filterFreq: 280, peak: 0.28, drive: 3.2 })
+    noiseBurst({ duration: 0.2, filterFreq: 1800, peak: 0.14, delay: 0.05 })
+  },
+  neural_sear: () => {
+    tone({ type: 'square', freq: 480, freqEnd: 120, duration: 0.14, peak: 0.22 })
+    tone({ type: 'sine', freq: 510, freqEnd: 95, duration: 0.15, peak: 0.2, delay: 0.02 })
+    tone({ type: 'triangle', freq: 1100, freqEnd: 200, duration: 0.12, peak: 0.12 })
+    noiseBurst({ duration: 0.1, filterFreq: 2400, peak: 0.18, drive: 1.8 })
+  },
+  spore_pod: () => {
+    noiseBurst({ duration: 0.2, filterFreq: 600, peak: 0.32, drive: 2.4 })
+    noiseBurst({ duration: 0.7, filterFreq: 140, peak: 0.4, drive: 3.5, delay: 0.04 })
+    tone({ type: 'sine', freq: 70, freqEnd: 24, duration: 0.75, peak: 0.38 })
+    tone({ type: 'triangle', freq: 210, freqEnd: 40, duration: 0.5, peak: 0.14, delay: 0.08 })
+    // Wet "pop" layers
+    tone({ type: 'sine', freq: 340, freqEnd: 80, duration: 0.18, peak: 0.16, delay: 0.02 })
+  },
+  singularity_seed: () => {
+    tone({ type: 'sine', freq: 28, freqEnd: 12, duration: 1.1, peak: 0.55 })
+    tone({ type: 'sawtooth', freq: 90, freqEnd: 18, duration: 0.95, peak: 0.28 })
+    noiseBurst({ duration: 0.25, filterFreq: 400, peak: 0.35, drive: 3 })
+    noiseBurst({ duration: 1.0, filterFreq: 90, peak: 0.48, drive: 4.5, delay: 0.06 })
+    tone({ type: 'triangle', freq: 600, freqEnd: 40, duration: 0.6, peak: 0.12, delay: 0.1 })
   }
 }
 
 export function playWeaponFire(weaponId) {
   ensureSfx()
-  const sample = WEAPON_SAMPLES[weaponId] ?? WEAPON_SAMPLES.pulse_laser
+  const sample = WEAPON_SAMPLES[weaponId]
   // Slight rate jitter so rapid fire doesn't sound like a stuck sample.
-  const rate = sample.rate * (0.97 + Math.random() * 0.06)
-  if (playSample(sample.file, { volume: sample.volume, rate })) return
+  if (sample) {
+    const rate = sample.rate * (0.97 + Math.random() * 0.06)
+    if (playSample(sample.file, { volume: sample.volume, rate })) return
+  }
   const fallback = WEAPON_SYNTH_FALLBACK[weaponId] ?? WEAPON_SYNTH_FALLBACK.pulse_laser
   fallback()
 }
@@ -839,7 +902,7 @@ function playAnnounceReverbBloom(durationS = 0.9) {
 }
 
 export function announce(text) {
-  if (!soundEnabled || !window.speechSynthesis) return
+  if (!sfxEnabled || !window.speechSynthesis) return
   window.speechSynthesis.cancel() // don't queue up stale callouts behind a new one
   if (!femaleVoice) refreshFemaleVoice()
 
@@ -1202,7 +1265,7 @@ function playFile(name, { loop = false, volume = 0.5 } = {}) {
   const el = new Audio(`audio/${name}`)
   el.loop = loop
   el.volume = volume
-  el.muted = !soundEnabled
+  el.muted = !musicEnabled
   el.play().catch(() => {}) // blocked without a user gesture; the existing
   // click/keydown listeners above already resume the Web Audio context on
   // first interaction, and the menu/game is always reached via a click.

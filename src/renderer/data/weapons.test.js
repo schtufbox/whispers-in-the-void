@@ -35,3 +35,14 @@ test('defaultLoadoutFor equips every hardpoint with its category base weapon', (
 test('getWeapon throws on an unknown id', () => {
   assert.throws(() => getWeapon('nonexistent'), /Unknown weapon/)
 })
+
+test('alien weapons are never sold in market helpers', async () => {
+  const { WEAPONS, purchasableWeapons, weaponsForCategory, isAlienWeapon, defaultLoadoutFor } = await import('./weapons.js')
+  const { ALIEN_SHIP_CLASSES } = await import('./shipClasses.js')
+  assert.ok(WEAPONS.some((w) => w.alien))
+  assert.equal(purchasableWeapons().some((w) => w.alien), false)
+  assert.equal(weaponsForCategory('laser').some((w) => w.alien), false)
+  assert.equal(isAlienWeapon('void_lance'), true)
+  const load = defaultLoadoutFor(ALIEN_SHIP_CLASSES[0])
+  assert.equal(load.fwd1, 'phase_spit')
+})

@@ -3,6 +3,17 @@ import { coreFraction } from '../procgen/galaxy.js'
 import { MINED_ORE_GOOD_IDS, getGood } from '../data/goods.js'
 import { effectiveMiningCapacity } from '../data/accessories.js'
 import { getWeapon, BASE_WEAPON_ID } from '../data/weapons.js'
+import { getSystemSecurity } from './security.js'
+
+/** Security 0–3: mining can draw pirate attention. */
+export const MINING_PIRATE_MAX_SECURITY = 3
+/** Chance per successful mine hit to spawn a pirate ambush. */
+export const MINING_PIRATE_CHANCE = 0.1
+/**
+ * Min sim-time between mining ambush spawns.
+ * Without this, a 0.25s laser would nearly guarantee a fleet in seconds.
+ */
+export const MINING_PIRATE_SPAWN_COOLDOWN_S = 60
 
 // Default laser (pulse_laser, damage 6) → 1 ore; default missile (rocket_pod, 30) → 2.
 const LASER_BASE_DAMAGE = 6
@@ -218,4 +229,37 @@ export function mineRock(gameState, shipClass, system, fieldId, index, amount = 
     amount: stripped,
     destroyed
   }
+}
+
+/**
+ * Roll whether mining just attracted pirates (Sec 0–3 only, 10% per hit).
+ * Stamps a cooldown on success so laser spam cannot stack ambushes.
+ *
+ * @param {() => number} rng 0–1
+ * @param {object} gameState
+ * @param {object | null | undefined} system
+ * @returns {boolean}
+ */
+export function rollMiningPirateAmbush(rng, gameState, system) {
+  if (!gameState || !system) return false
+  if (getSystemSecurity(system) > MINING_PIRATE_MAX_SECURITY) return false
+  // Same peace rule as ambient hostiles: home system stays quiet until broken.
+  if (
+    gameState.player?.currentSystemId === gameState.player?.startingSystemId &&
+    !gameState.flags?.startingSystemPeaceBroken
+  ) {
+    return false
+  }
+  const last = gameState.flags?.lastMiningPirateAmbushAt
+  if (
+    last != null &&
+    Number.isFinite(last) &&
+    gameState.simTime - last < MINING_PIRATE_SPAWN_COOLDOWN_S
+  ) {
+    return false
+  }
+  if ((rng?.() ?? Math.random()) >= MINING_PIRATE_CHANCE) return false
+  gameState.flags ??= {}
+  gameState.flags.lastMiningPirateAmbushAt = gameState.simTime
+  return true
 }

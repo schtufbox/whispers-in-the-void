@@ -84,7 +84,10 @@ const STATION_ROLE = {
   shipHull: { prefix: 'painted', repeatU: 2.4, repeatV: 1.6 },
   shipStructure: { prefix: 'shipmetal', repeatU: 2.0, repeatV: 1.4 },
   shipArmor: { prefix: 'armor', repeatU: 1.8, repeatV: 1.3 },
-  shipTrim: { prefix: 'trim', repeatU: 2.2, repeatV: 1.5 }
+  shipTrim: { prefix: 'trim', repeatU: 2.2, repeatV: 1.5 },
+  // Alien hulls — ambientCG Rock035 (organic) + MetalPlates006 (chitin plates), CC0.
+  alienHull: { prefix: 'alienbio', repeatU: 1.8, repeatV: 1.4 },
+  alienPlate: { prefix: 'alienplate', repeatU: 2.2, repeatV: 1.6 }
 }
 
 export function getStationTextures(role) {

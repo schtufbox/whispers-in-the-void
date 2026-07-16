@@ -8,9 +8,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   quitApp: () => ipcRenderer.invoke('quit-app'),
   getDisplayMode: () => ipcRenderer.invoke('get-display-mode'),
   setDisplayMode: (mode) => ipcRenderer.invoke('set-display-mode', mode),
+  toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
   getSoundEnabled: () => ipcRenderer.invoke('get-sound-enabled'),
   setSoundEnabled: (enabled) => ipcRenderer.invoke('set-sound-enabled', enabled),
-  // Main fires this on enter/leave full screen (Alt+Enter, menu, etc.).
+  getSfxEnabled: () => ipcRenderer.invoke('get-sfx-enabled'),
+  setSfxEnabled: (enabled) => ipcRenderer.invoke('set-sfx-enabled', enabled),
+  getMusicEnabled: () => ipcRenderer.invoke('get-music-enabled'),
+  setMusicEnabled: (enabled) => ipcRenderer.invoke('set-music-enabled', enabled),
+  // Main fires this if the OS enters/leaves fullscreen (e.g. green button).
   onFullscreenChanged: (cb) => {
     const handler = (_event, isFullscreen) => cb(isFullscreen)
     ipcRenderer.on('fullscreen-changed', handler)

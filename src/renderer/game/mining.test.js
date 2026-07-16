@@ -8,7 +8,10 @@ import {
   mineYieldForWeapon,
   isFieldDepleted,
   fieldRespawnRemainingS,
-  formatRespawnTime
+  formatRespawnTime,
+  rollMiningPirateAmbush,
+  MINING_PIRATE_CHANCE,
+  MINING_PIRATE_SPAWN_COOLDOWN_S
 } from './mining.js'
 import { GALAXY_MAX_RADIUS } from '../procgen/galaxy.js'
 import { MINED_ORE_GOOD_IDS } from '../data/goods.js'
@@ -162,4 +165,56 @@ test('isFieldDepleted and fieldRespawnRemainingS track a fully mined belt', () =
   assert.ok(formatRespawnTime(rem).length > 0)
   assert.equal(formatRespawnTime(3661), '1h 1m')
   assert.equal(formatRespawnTime(90), '1m 30s')
+})
+
+test('mining pirate ambush only rolls in security 0–3', () => {
+  const always = () => 0 // always succeed the 10% roll
+  const base = {
+    simTime: 100,
+    flags: {},
+    player: { currentSystemId: 'a', startingSystemId: 'home' }
+  }
+  assert.equal(rollMiningPirateAmbush(always, base, { securityRating: 0 }), true)
+  base.flags = {}
+  assert.equal(rollMiningPirateAmbush(always, base, { securityRating: 3 }), true)
+  base.flags = {}
+  assert.equal(rollMiningPirateAmbush(always, base, { securityRating: 4 }), false)
+  base.flags = {}
+  assert.equal(rollMiningPirateAmbush(always, base, { securityRating: 6 }), false)
+})
+
+test('mining pirate ambush is 10% and stamps cooldown on success', () => {
+  assert.equal(MINING_PIRATE_CHANCE, 0.1)
+  const gs = {
+    simTime: 50,
+    flags: {},
+    player: { currentSystemId: 'rim', startingSystemId: 'home' }
+  }
+  const system = { securityRating: 1 }
+  assert.equal(rollMiningPirateAmbush(() => 0.099, gs, system), true)
+  assert.equal(gs.flags.lastMiningPirateAmbushAt, 50)
+  // Still inside cooldown — no second spawn even with a guaranteed roll.
+  gs.simTime = 50 + MINING_PIRATE_SPAWN_COOLDOWN_S - 1
+  assert.equal(rollMiningPirateAmbush(() => 0, gs, system), false)
+  // After cooldown, can roll again.
+  gs.simTime = 50 + MINING_PIRATE_SPAWN_COOLDOWN_S
+  assert.equal(rollMiningPirateAmbush(() => 0, gs, system), true)
+  // Failed roll does not stamp cooldown.
+  gs.flags = {}
+  gs.simTime = 200
+  assert.equal(rollMiningPirateAmbush(() => 0.5, gs, system), false)
+  assert.equal(gs.flags?.lastMiningPirateAmbushAt, undefined)
+})
+
+test('mining pirate ambush respects unbroken home-system peace', () => {
+  const always = () => 0
+  const gs = {
+    simTime: 10,
+    flags: {},
+    player: { currentSystemId: 'home', startingSystemId: 'home' }
+  }
+  // Even if someone forced low security on home, peace blocks hostiles.
+  assert.equal(rollMiningPirateAmbush(always, gs, { securityRating: 0 }), false)
+  gs.flags.startingSystemPeaceBroken = true
+  assert.equal(rollMiningPirateAmbush(always, gs, { securityRating: 0 }), true)
 })

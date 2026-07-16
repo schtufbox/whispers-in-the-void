@@ -2,22 +2,25 @@ import { app } from 'electron'
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-/** @typedef {'borderless' | 'windowed'} DisplayMode */
-
-/** Classic windowed default (original game size). */
-export const DEFAULT_WINDOWED_WIDTH = 1280
-export const DEFAULT_WINDOWED_HEIGHT = 800
+/**
+ * Default outer window size (title bar + borders included).
+ * Matches BrowserWindow getBounds() / setBounds(), not content-only size.
+ */
+export const DEFAULT_WINDOWED_WIDTH = 1600
+export const DEFAULT_WINDOWED_HEIGHT = 900
 
 const DEFAULTS = {
-  /** Fullscreen borderless windowed by default. */
-  displayMode: /** @type {DisplayMode} */ ('borderless'),
+  /** Outer width including OS frame chrome. */
   windowedWidth: DEFAULT_WINDOWED_WIDTH,
+  /** Outer height including title bar + frame. */
   windowedHeight: DEFAULT_WINDOWED_HEIGHT,
-  /** Optional saved position; null = center on next windowed apply. */
+  /** Optional saved position; null = center on next launch. */
   windowedX: null,
   windowedY: null,
-  /** Master sound on/off (SFX + music + VO). */
-  soundEnabled: true
+  /** Sound effects + synth + voice callouts. */
+  sfxEnabled: true,
+  /** Title / ambient / death music tracks. */
+  musicEnabled: true
 }
 
 function settingsPath() {
@@ -37,10 +40,6 @@ export function loadSettings() {
   if (!existsSync(path)) return { ...DEFAULTS }
   try {
     const data = JSON.parse(readFileSync(path, 'utf-8'))
-    const displayMode =
-      data.displayMode === 'windowed' || data.displayMode === 'borderless'
-        ? data.displayMode
-        : DEFAULTS.displayMode
     const windowedWidth = clampInt(data.windowedWidth, 640, 7680, DEFAULTS.windowedWidth)
     const windowedHeight = clampInt(data.windowedHeight, 480, 4320, DEFAULTS.windowedHeight)
     const windowedX =
@@ -51,16 +50,32 @@ export function loadSettings() {
       data.windowedY == null || data.windowedY === ''
         ? null
         : clampInt(data.windowedY, -10000, 10000, null)
-    const soundEnabled = data.soundEnabled === false ? false : true
+    // Migrate legacy master mute: soundEnabled false → both off.
+    const legacyMaster = data.soundEnabled
+    const sfxEnabled =
+      data.sfxEnabled === false
+        ? false
+        : data.sfxEnabled === true
+          ? true
+          : legacyMaster === false
+            ? false
+            : true
+    const musicEnabled =
+      data.musicEnabled === false
+        ? false
+        : data.musicEnabled === true
+          ? true
+          : legacyMaster === false
+            ? false
+            : true
     return {
       ...DEFAULTS,
-      ...data,
-      displayMode,
       windowedWidth,
       windowedHeight,
       windowedX,
       windowedY,
-      soundEnabled
+      sfxEnabled,
+      musicEnabled
     }
   } catch {
     return { ...DEFAULTS }
@@ -73,24 +88,37 @@ export function saveSettings(partial) {
   return next
 }
 
-export function getDisplayMode() {
-  return loadSettings().displayMode
+export function getSfxEnabled() {
+  return loadSettings().sfxEnabled !== false
 }
 
-export function setDisplayMode(mode) {
-  const displayMode = mode === 'windowed' ? 'windowed' : 'borderless'
-  return saveSettings({ displayMode })
+export function setSfxEnabled(enabled) {
+  const sfxEnabled = enabled !== false
+  const next = saveSettings({ sfxEnabled })
+  return next.sfxEnabled !== false
 }
 
+export function getMusicEnabled() {
+  return loadSettings().musicEnabled !== false
+}
+
+export function setMusicEnabled(enabled) {
+  const musicEnabled = enabled !== false
+  const next = saveSettings({ musicEnabled })
+  return next.musicEnabled !== false
+}
+
+/** @deprecated use getSfxEnabled / getMusicEnabled */
 export function getSoundEnabled() {
-  return loadSettings().soundEnabled !== false
+  const s = loadSettings()
+  return s.sfxEnabled !== false || s.musicEnabled !== false
 }
 
+/** @deprecated sets both channels for older callers */
 export function setSoundEnabled(enabled) {
-  const soundEnabled = enabled !== false
-  const next = saveSettings({ soundEnabled })
-  // Return the persisted boolean so the renderer can trust the write.
-  return next.soundEnabled !== false
+  const on = enabled !== false
+  const next = saveSettings({ sfxEnabled: on, musicEnabled: on })
+  return next.sfxEnabled !== false
 }
 
 export function getWindowedBounds() {
@@ -103,7 +131,10 @@ export function getWindowedBounds() {
   }
 }
 
-/** Persist manually resized / moved windowed geometry. */
+/**
+ * Persist outer window geometry (from BrowserWindow.getBounds()).
+ * width/height include the native title bar and borders.
+ */
 export function saveWindowedBounds({ width, height, x, y }) {
   return saveSettings({
     windowedWidth: clampInt(width, 640, 7680, DEFAULT_WINDOWED_WIDTH),

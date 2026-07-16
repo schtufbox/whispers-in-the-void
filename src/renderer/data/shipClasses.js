@@ -698,7 +698,198 @@ for (const c of HAND_CRAFTED_SHIP_CLASSES) {
 const SHIP_ROSTER_SEED = 918273645
 const GENERATED_SHIP_CLASSES = generateShipClassRoster(mulberry32(SHIP_ROSTER_SEED), 82)
 
-export const SHIP_CLASSES = [...HAND_CRAFTED_SHIP_CLASSES, ...GENERATED_SHIP_CLASSES]
+/**
+ * Alien hulls — organic / non-human silhouettes. Never sold in shipyards
+ * (npcOnly + alien). Craft only from extremely rare alien wreck blueprints.
+ * Stats are competitive with mid–high human hulls; look is the main differentiator.
+ */
+export const ALIEN_SHIP_CLASSES = [
+  {
+    id: 'void_cyst',
+    name: 'Void Cyst',
+    role: 'fighter',
+    price: 48000,
+    alien: true,
+    npcOnly: true,
+    faction: 'alien',
+    droneBays: 0,
+    stats: { hull: 85, shields: 95, armor: 15, cargoCapacity: 12, speed: 200, turnRate: 2.6, accel: 50 },
+    hardpoints: [
+      { id: 'fwd1', position: [-0.8, 0.4, 7.5], type: 'laser' },
+      { id: 'fwd2', position: [0.8, 0.4, 7.5], type: 'laser' }
+    ],
+    accessorySlots: 1,
+    hull: {
+      length: 16,
+      // Bulbous cyst: fat mid, pinched "mouth", stub tail.
+      stationWidths: [0.45, 0.9, 1.6, 2.1, 2.35, 2.2, 1.8, 1.3, 0.9, 0.55, 0.4, 0.55],
+      stationHeights: [0.5, 1.0, 1.7, 2.2, 2.4, 2.15, 1.7, 1.2, 0.85, 0.55, 0.4, 0.5],
+      crossSectionSides: 11,
+      superellipseExponent: 1.55,
+      wings: [
+        { atStation: 5, span: 2.8, sweep: 0.7, thickness: 0.55, side: 'both', tipOffsetY: 0.6, chordScale: 1.2 },
+        { atStation: 3, span: 1.4, sweep: -0.4, thickness: 0.4, side: 'top', tipOffsetX: 0.3, chordScale: 0.7 },
+        { atStation: 7, span: 1.9, sweep: 0.5, thickness: 0.45, side: 'bottom', chordScale: 0.85 }
+      ],
+      stationOffsetsX: [0, 0.05, 0.12, 0.08, 0, -0.1, -0.18, -0.12, 0, 0.06, 0.1, 0],
+      stationOffsetsY: [0.1, 0.15, 0.2, 0.12, 0, -0.08, -0.12, -0.05, 0.05, 0.12, 0.18, 0.1],
+      color: '#3a6b4a',
+      style: {
+        alien: true,
+        asymmetric: true,
+        bridgeSide: 1,
+        engineLayout: 'organic',
+        hasRadiator: false,
+        hasCargoPods: false,
+        hasSensorMast: false,
+        detailDensity: 2.4
+      }
+    }
+  },
+  {
+    id: 'spine_skimmer',
+    name: 'Spine Skimmer',
+    role: 'fighter',
+    price: 62000,
+    alien: true,
+    npcOnly: true,
+    faction: 'alien',
+    droneBays: 0,
+    stats: { hull: 65, shields: 70, armor: 8, cargoCapacity: 8, speed: 260, turnRate: 3.1, accel: 62 },
+    hardpoints: [
+      { id: 'fwd1', position: [0, 0.2, 11], type: 'laser' },
+      { id: 'fwd2', position: [0, -0.3, 10.5], type: 'missile' }
+    ],
+    accessorySlots: 1,
+    hull: {
+      length: 28,
+      // Needle-spine: long thin body with staggered "vertebrae" offsets.
+      stationWidths: [0.25, 0.35, 0.45, 0.55, 0.7, 0.85, 0.75, 0.55, 0.4, 0.3, 0.22, 0.18],
+      stationHeights: [0.3, 0.45, 0.55, 0.7, 0.9, 1.1, 0.95, 0.7, 0.5, 0.35, 0.25, 0.2],
+      crossSectionSides: 7,
+      superellipseExponent: 1.3,
+      wings: [
+        { atStation: 4, span: 3.5, sweep: 1.1, thickness: 0.22, side: 'both', tipOffsetY: -0.8, chordScale: 0.55 },
+        { atStation: 6, span: 2.6, sweep: 0.9, thickness: 0.2, side: 'both', tipOffsetY: 0.9, chordScale: 0.5 },
+        { atStation: 2, span: 1.8, sweep: -0.6, thickness: 0.25, side: 'top', chordScale: 0.6 },
+        { atStation: 8, span: 1.2, sweep: 0.4, thickness: 0.18, side: 'bottom', chordScale: 0.45 }
+      ],
+      stationOffsetsX: [0, 0.15, -0.2, 0.25, -0.15, 0.1, -0.22, 0.18, -0.1, 0.08, 0, 0],
+      stationOffsetsY: [0.2, 0.1, 0, -0.1, 0.05, 0.15, 0.05, -0.1, -0.15, -0.05, 0.1, 0.2],
+      color: '#5a3a78',
+      style: {
+        alien: true,
+        asymmetric: true,
+        bridgeSide: -1,
+        engineLayout: 'organic',
+        hasRadiator: false,
+        hasCargoPods: false,
+        hasSensorMast: false,
+        detailDensity: 2.6
+      }
+    }
+  },
+  {
+    id: 'chor_lathe',
+    name: 'Chor Lathe',
+    role: 'explorer',
+    price: 88000,
+    alien: true,
+    npcOnly: true,
+    faction: 'alien',
+    droneBays: 1,
+    stats: { hull: 140, shields: 100, armor: 35, cargoCapacity: 35, speed: 140, turnRate: 1.6, accel: 32 },
+    hardpoints: [
+      { id: 'fwd1', position: [-1.5, 0.5, 8], type: 'laser' },
+      { id: 'fwd2', position: [1.5, 0.5, 8], type: 'laser' },
+      { id: 'fwd3', position: [0, -0.4, 7.5], type: 'missile' }
+    ],
+    accessorySlots: 2,
+    hull: {
+      length: 22,
+      // Disc midsection (lathe) with flared rim and recessed core.
+      stationWidths: [0.6, 1.0, 1.8, 2.8, 3.4, 3.6, 3.3, 2.6, 1.6, 0.9, 0.5, 0.35],
+      stationHeights: [0.5, 0.7, 0.9, 1.1, 1.2, 1.15, 1.0, 0.85, 0.7, 0.55, 0.4, 0.3],
+      crossSectionSides: 16,
+      superellipseExponent: 2.6,
+      wings: [
+        { atStation: 5, span: 4.2, sweep: 0.15, thickness: 0.5, side: 'both', tipOffsetY: 0.2, chordScale: 1.4 },
+        { atStation: 5, span: 3.0, sweep: 0.1, thickness: 0.35, side: 'top', chordScale: 1.1 },
+        { atStation: 5, span: 2.5, sweep: 0.1, thickness: 0.35, side: 'bottom', chordScale: 1.0 },
+        { atStation: 2, span: 1.5, sweep: -0.5, thickness: 0.3, side: 'both', chordScale: 0.7 }
+      ],
+      stationOffsetsX: [0, 0, 0.05, 0.1, 0, -0.05, 0, 0.08, 0, 0, 0, 0],
+      stationOffsetsY: [0, 0.05, 0.08, 0.05, 0, -0.05, 0, 0.05, 0.08, 0.05, 0, 0],
+      color: '#2a5a5e',
+      style: {
+        alien: true,
+        asymmetric: false,
+        bridgeSide: 0,
+        engineLayout: 'organic',
+        hasRadiator: false,
+        hasCargoPods: false,
+        hasSensorMast: false,
+        detailDensity: 2.2
+      }
+    }
+  },
+  {
+    id: 'zealot_carapace',
+    name: 'Zealot Carapace',
+    role: 'fighter',
+    price: 125000,
+    alien: true,
+    npcOnly: true,
+    faction: 'alien',
+    droneBays: 1,
+    stats: { hull: 220, shields: 120, armor: 70, cargoCapacity: 28, speed: 100, turnRate: 1.2, accel: 24 },
+    hardpoints: [
+      { id: 'fwd1', position: [-1.8, 0.6, 9], type: 'laser' },
+      { id: 'fwd2', position: [1.8, 0.6, 9], type: 'laser' },
+      { id: 'fwd3', position: [0, 1.0, 8], type: 'missile' },
+      { id: 'fwd4', position: [0, -0.5, 8.5], type: 'missile' }
+    ],
+    accessorySlots: 2,
+    hull: {
+      length: 26,
+      // Heavy beetle shell: tall dorsal hump, armored plates, blunt snout.
+      stationWidths: [1.0, 1.6, 2.4, 3.0, 3.3, 3.4, 3.2, 2.8, 2.2, 1.5, 1.0, 0.7],
+      stationHeights: [1.2, 1.8, 2.4, 2.9, 3.2, 3.3, 3.0, 2.5, 1.9, 1.3, 0.9, 0.6],
+      crossSectionSides: 9,
+      superellipseExponent: 1.8,
+      wings: [
+        { atStation: 4, span: 2.2, sweep: 0.3, thickness: 0.7, side: 'both', tipOffsetY: -0.4, chordScale: 1.3 },
+        { atStation: 6, span: 1.8, sweep: 0.2, thickness: 0.6, side: 'both', tipOffsetY: 0.3, chordScale: 1.1 },
+        { atStation: 3, span: 2.0, sweep: -0.2, thickness: 0.55, side: 'top', chordScale: 1.2 },
+        { atStation: 7, span: 1.4, sweep: 0.4, thickness: 0.5, side: 'bottom', chordScale: 0.9 }
+      ],
+      stationOffsetsX: [0, 0.08, 0.12, 0.05, 0, -0.08, -0.12, -0.05, 0.05, 0.1, 0.05, 0],
+      stationOffsetsY: [0.15, 0.2, 0.25, 0.2, 0.1, 0, -0.05, 0, 0.1, 0.15, 0.1, 0.05],
+      color: '#6b2a3a',
+      style: {
+        alien: true,
+        asymmetric: true,
+        bridgeSide: 1,
+        engineLayout: 'organic',
+        hasRadiator: false,
+        hasCargoPods: false,
+        hasSensorMast: false,
+        detailDensity: 2.5
+      }
+    }
+  }
+]
+
+for (const c of ALIEN_SHIP_CLASSES) {
+  c.droneBays ??= 0
+  c.stats.miningCapacity = computeMiningCapacity(c.price, c.role)
+}
+
+export const SHIP_CLASSES = [
+  ...HAND_CRAFTED_SHIP_CLASSES,
+  ...GENERATED_SHIP_CLASSES,
+  ...ALIEN_SHIP_CLASSES
+]
 
 export function getShipClass(id) {
   const cls = SHIP_CLASSES.find((c) => c.id === id)
@@ -706,6 +897,23 @@ export function getShipClass(id) {
   return cls
 }
 
+export function isAlienShipClass(shipClassOrId) {
+  if (!shipClassOrId) return false
+  if (typeof shipClassOrId === 'string') {
+    try {
+      return !!getShipClass(shipClassOrId).alien
+    } catch {
+      return false
+    }
+  }
+  return !!shipClassOrId.alien
+}
+
+/** Human/police market ships only — never alien tech. */
 export function purchasableShipClasses() {
-  return SHIP_CLASSES.filter((c) => !c.npcOnly)
+  return SHIP_CLASSES.filter((c) => !c.npcOnly && !c.alien)
+}
+
+export function alienShipClasses() {
+  return ALIEN_SHIP_CLASSES
 }

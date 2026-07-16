@@ -1,5 +1,5 @@
-import { SHIP_CLASSES, getShipClass } from './shipClasses.js'
-import { WEAPONS, getWeapon } from './weapons.js'
+import { SHIP_CLASSES, getShipClass, isAlienShipClass } from './shipClasses.js'
+import { WEAPONS, getWeapon, isAlienWeapon } from './weapons.js'
 import { ACCESSORIES, getAccessory } from './accessories.js'
 import { MINED_ORE_GOOD_IDS, getGood } from './goods.js'
 
@@ -79,10 +79,12 @@ export function getBlueprint(blueprintId) {
   }
 }
 
-/** All craftable blueprints (ships + paid weapons + accessories). Free base weapons excluded. */
+/** All craftable blueprints (ships + paid weapons + accessories). Free / unpriced excluded. */
 export function allBlueprints() {
   const list = []
   for (const shipClass of SHIP_CLASSES) {
+    // npcOnly police (price 0) is not a craft recipe.
+    if (shipClass.price <= 0) continue
     list.push(getBlueprint(blueprintIdForShip(shipClass.id)))
   }
   for (const weapon of WEAPONS) {
@@ -94,6 +96,36 @@ export function allBlueprints() {
     list.push(getBlueprint(blueprintIdForAccessory(acc.id)))
   }
   return list
+}
+
+/** Human industry loot pool — never rolls alien tech. */
+export function humanBlueprints() {
+  return allBlueprints().filter((bp) => {
+    if (bp.kind === 'ship') return !isAlienShipClass(bp.itemId)
+    if (bp.kind === 'weapon') return !isAlienWeapon(bp.itemId)
+    return true
+  })
+}
+
+/** Alien-only craftables (ships + paid alien weapons). ONLY from alien wrecks. */
+export function alienBlueprints() {
+  return allBlueprints().filter((bp) => {
+    if (bp.kind === 'ship') return isAlienShipClass(bp.itemId)
+    if (bp.kind === 'weapon') return isAlienWeapon(bp.itemId)
+    return false
+  })
+}
+
+function weightedPickBlueprintId(list, rng) {
+  if (!list.length) return null
+  const weights = list.map((bp) => 1 / Math.sqrt(Math.max(1, bp.listPrice)))
+  const sum = weights.reduce((a, b) => a + b, 0)
+  let r = rng() * sum
+  for (let i = 0; i < list.length; i++) {
+    r -= weights[i]
+    if (r <= 0) return list[i].id
+  }
+  return list[list.length - 1].id
 }
 
 // Craft duration bands: weapons/accessories low; ships upper band.
@@ -255,15 +287,12 @@ export function formatOreCost(cost) {
     .join(', ')
 }
 
-/** Weighted random blueprint for rare loot (slight bias toward mid-price). */
+/** Weighted random human blueprint for probe / ordinary wreck loot. */
 export function rollRandomBlueprintId(rng = Math.random) {
-  const list = allBlueprints()
-  const weights = list.map((bp) => 1 / Math.sqrt(Math.max(1, bp.listPrice)))
-  const sum = weights.reduce((a, b) => a + b, 0)
-  let r = rng() * sum
-  for (let i = 0; i < list.length; i++) {
-    r -= weights[i]
-    if (r <= 0) return list[i].id
-  }
-  return list[list.length - 1].id
+  return weightedPickBlueprintId(humanBlueprints(), rng)
+}
+
+/** Weighted random alien blueprint — only used by alien wreck drops. */
+export function rollAlienBlueprintId(rng = Math.random) {
+  return weightedPickBlueprintId(alienBlueprints(), rng)
 }

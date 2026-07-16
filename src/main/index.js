@@ -3,15 +3,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { registerSaveHandlers } from './ipc.js'
-import { getDisplayMode } from './settings.js'
 import {
-  applyDisplayMode,
+  applyWindowedLayout,
   attachWindowBoundsPersistence,
-  borderlessCreateOptions,
+  windowCreateOptions,
   getMainWindow,
   notifyDisplayModeForMain,
   setMainWindow,
-  toggleDisplayMode
+  toggleFullscreen
 } from './display.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -214,8 +213,7 @@ function setupApplicationMenu() {
   })
 
   // Arcade game: no View / Help / Edit chrome in the window.
-  // Display mode (borderless / windowed) is toggled via Alt+Enter or pause menu;
-  // quit is still available in-game and by closing the window.
+  // Quit is available in-game and by closing the window.
   if (process.platform === 'darwin') {
     // Custom About (not role:about) so we can show build/icon.png — macOS's
     // native About panel won't use iconPath and falls back to Electron's icon in dev.
@@ -247,7 +245,7 @@ function setupApplicationMenu() {
 
 function createWindow() {
   const icon = appIconPath()
-  const opts = borderlessCreateOptions()
+  const opts = windowCreateOptions()
 
   const win = new BrowserWindow({
     width: opts.width,
@@ -255,9 +253,12 @@ function createWindow() {
     x: opts.x,
     y: opts.y,
     center: opts.center,
-    // Frameless for borderless fullscreen so there is no title bar over the game.
-    frame: opts.frame,
+    // Always windowed with native OS title bar and borders.
+    // useContentSize:false → width/height are outer size (chrome included).
+    frame: true,
+    useContentSize: false,
     fullscreen: false,
+    fullscreenable: true,
     autoHideMenuBar: true,
     title: APP_NAME,
     show: false,
@@ -271,7 +272,7 @@ function createWindow() {
   })
 
   setMainWindow(win)
-  // Remember manual windowed resize/position as the new default.
+  // Remember manual resize/position as the new default for next launch.
   attachWindowBoundsPersistence(win)
 
   // Prevent the renderer document title from overwriting APP_NAME with "Electron".
@@ -280,29 +281,34 @@ function createWindow() {
     win.setTitle(APP_NAME)
   })
 
-  // Alt+Enter toggles borderless ↔ windowed and persists the choice.
-  win.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return
-    if (!input.alt || input.control || input.meta || input.shift) return
-    if (input.key !== 'Enter' && input.key !== 'Return') return
-    toggleDisplayMode()
-    event.preventDefault()
-  })
-
-  // Tell the renderer so Alt free-look can snap back — fullscreen often
-  // swallows the Alt keyup and leaves the chase cam stuck in orbit mode.
+  // Tell the renderer so Alt free-look can snap back if fullscreen changes.
   const notifyFullscreen = () => notifyDisplayModeForMain()
   win.on('enter-full-screen', notifyFullscreen)
   win.on('leave-full-screen', notifyFullscreen)
   win.on('enter-html-full-screen', notifyFullscreen)
   win.on('leave-html-full-screen', notifyFullscreen)
 
+  // Alt/Option+Enter toggles native fullscreen (works with pointer lock).
+  // Match codes + keys broadly — macOS Option can report key as "Enter"/"Return".
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.isAutoRepeat) return
+    const enter =
+      input.code === 'Enter' ||
+      input.code === 'NumpadEnter' ||
+      input.key === 'Enter' ||
+      input.key === 'Return'
+    if (!enter) return
+    if (!input.alt) return
+    event.preventDefault()
+    toggleFullscreen(win)
+  })
+
   win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     console.log(`[renderer] ${message} (${sourceId}:${line})`)
   })
 
   win.once('ready-to-show', () => {
-    applyDisplayMode(win, getDisplayMode())
+    applyWindowedLayout(win)
     win.show()
     notifyDisplayModeForMain()
   })

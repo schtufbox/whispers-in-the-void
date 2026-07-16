@@ -11,7 +11,7 @@ import { mineRock, isRockAlive, mineYieldForWeapon } from './mining.js'
 import { spawnWreck } from './wrecks.js'
 import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
 import { rockCollisionRadius } from './collision.js'
-import { getWeapon, BASE_WEAPON_ID } from '../data/weapons.js'
+import { getWeapon, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID } from '../data/weapons.js'
 import { damageDrone } from './drones.js'
 import {
   applyLawPenaltyForAttack,
@@ -192,12 +192,14 @@ export function fireProjectile(
   for (const hp of hardpoints) {
     const mountType = hp.type === 'missile' ? 'missile' : 'laser'
     if (weaponTypeFilter && mountType !== weaponTypeFilter) continue
-    let weaponId = shooter.equippedWeapons?.[hp.id] ?? BASE_WEAPON_ID[mountType]
+    const alienHull = !!shooterShipClass?.alien
+    const baseIds = alienHull ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
+    let weaponId = shooter.equippedWeapons?.[hp.id] ?? baseIds[mountType]
     let weapon
     try {
       weapon = getWeapon(weaponId)
     } catch {
-      weaponId = BASE_WEAPON_ID[mountType]
+      weaponId = baseIds[mountType]
       weapon = getWeapon(weaponId)
     }
     const readyAt = shooter.hardpointCooldowns[hp.id] ?? -Infinity

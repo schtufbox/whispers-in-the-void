@@ -15,7 +15,7 @@
 
 ---
 
-A desktop space sim with ~**1500** planets across ~**450** star systems, **100** ship classes, real-time mouse-aim flight and combat, station industry crafting, system security and law standing, and **permadeath**.
+A desktop space sim with ~**1500** planets across ~**450** star systems, **100+** ship classes (including exclusive alien hulls), real-time mouse-aim flight and combat, station industry crafting, system security and law standing, and **permadeath**.
 
 New Game starts you in a **Bravia Mk2** near the galactic core (always **Security 6**) with a normal starter loadout.
 
@@ -24,28 +24,29 @@ New Game starts you in a **Bravia Mk2** near the galactic core (always **Securit
 - **One seeded galaxy** — systems, planets, moons, stations, settlements, and asteroid fields from a single seed. Systems vary in scale; new games start near the core (never on a binary/trinary).
 - **Whispers** — outer-rim landmark system with a unique trinary sun, a named station, and no ambient hostiles.
 - **Textured worlds** — CC0 photo textures under procedural surface detail; stars with coronas, flares, and binary/trinary energy rings.
-- **100 ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**.
+- **100+ ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**.
+- **Alien ships & weapons** — four exclusive organic hulls (Void Cyst, Spine Skimmer, Chor Lathe, Zealot Carapace) with alien guns and unique fire SFX. **Never sold.** Craft only if you salvage an **extremely rare** alien blueprint from an alien wreck (the only source of alien tech).
 - **Real-time flight and combat** — mouse-aim flight; **LMB** lasers and **RMB** missiles can fire together; boresight weapons; shield/armour/hull; NPC AI. Core systems are busier; the rim is quieter and more alien, with tougher pirates. Pirates may truce with you against aliens.
 - **Combat drones** — launch (**G**) / recall (**H**) wingmen from ships with drone bays; they engage only after shots are exchanged.
 - **System security & law** — security rating **0–6** per system (core safer, rim often lawless). **Law standing 0–10** (start 10): attacking innocents only costs law in Sec 3–6. Low law draws police, station docking refusals, and eventually shoot-on-sight. Police patrol stations; black/white livery with red/blue flashers.
 - **Combat FX** — hit sparks/smoke, missile models and contrails, rock explosions, ship death FX; projectiles pass through station/settlement mesh so geometry does not block fire.
 - **Wall-clock campaign time** — `simTime` tracks real time while you play; offline catch-up on load (asteroid respawns, cooldowns). Industry jobs use wall-clock timestamps and continue while you fly elsewhere.
-- **Crafting / Industry** — rare blueprints from wrecks and probes (1-shot, not sellable); assemble ships, weapons, and accessories at station/settlement bays from stored ore + bay fee. Drag ore/BPs on Industry; ore bay is a side panel.
-- **Every station has a shipyard** — Ships / Armoury / Accessories tabs: buy into **station storage**, sell from storage; loadout and repair (settlements repair only). Role **Bonus** listed under ship stats.
+- **Crafting / Industry** — rare blueprints from wrecks and probes (1-shot, not sellable); assemble ships, weapons, and accessories at station/settlement bays from stored ore + bay fee. Drag ore/BPs on Industry; ore bay is a side panel. Alien BPs are separate and wreck-only.
+- **Every station has a shipyard** — Ships / Armoury / Accessories tabs: buy into **station storage**, sell from storage; loadout and repair (settlements repair only). Role **Bonus** listed under ship stats. Alien tech is craft/equip only (no buy).
 - **Accessories** — optional slots (Autopilot multi-hop jumps, Extra Ore Storage ×5 hold, …).
 - **Trading economy** — tag-driven prices; **market stock** (Available) per bay; demand and scarcity raise prices. Buy/sell goods and ore use **station storage** (transfer to ship yourself). Outer rim: low-grade ore stays cheap and thin; rare ore is deeper and ~**20%** cheaper.
-- **Docking & storage** — dock into a bay interior; per-station cargo, ore, parts, ships, weapons, accessories, blueprints. Drag-and-drop ship ↔ bay (cargo/parts on Storage; ore/BPs on Industry).
+- **Docking & storage** — dock into a themed bay interior; per-station cargo, ore, parts, ships, weapons, accessories, blueprints. Drag-and-drop ship ↔ bay (cargo/parts on Storage; ore/BPs on Industry).
 - **Inventory (I)** — cargo, ore, ship parts, **blueprints on board**, remote stored assets, industry jobs.
 - **Character (F1)** — pilot portrait, law standing, credits, ship summary; available anytime in-session.
 - **Missions** — bounty, exploration, investigation, and probe contracts. **J** tracks active work; orange rings on the galaxy map mark objectives and turn-ins. Mission waypoints advance as you complete steps.
-- **Mining** — fire weapons at individual asteroids for ore; finite yield per rock, rarer tiers toward the rim; depleted rocks explode and respawn on the campaign clock.
-- **Probing** — scan planets, moons, asteroid fields, and stars for survey data, classification reports, and rare blueprints; probe auto-returns after scan.
-- **Wrecks & salvage** — loot trade goods, occasional ship parts, rare blueprints; salvaged weapons equip or sell at the armoury. **F** prefers wreck loot over dock when both are in range.
+- **Mining** — fire weapons at individual asteroids for ore; finite yield per rock, rarer tiers toward the rim; depleted rocks explode and respawn on the campaign clock. In **Security 0–3**, mining has a **10%** chance per hit to attract pirates (with a cooldown so laser spam cannot stack fleets).
+- **Probing** — scan planets, moons, asteroid fields, and stars for survey data, classification reports, and rare **human** blueprints; probe auto-returns after scan.
+- **Wrecks & salvage** — loot trade goods, occasional ship parts, rare blueprints; salvaged weapons equip or sell at the armoury. Alien wrecks can drop alien weapons and (rarely) alien blueprints. **F** prefers wreck loot over dock when both are in range.
 - **Hyperspace & supercruise** — neighbor-only jumps; supercruise to a waypoint with standoff arrival. System overview under the radar for local bodies (clickable with free mouse).
-- **Chase camera** — centered behind the ship; **hold Alt + mouse** free-look, release to snap back.
+- **Chase camera** — centered behind the ship; **hold Alt + mouse** free-look (only arms when the mouse moves — bare Alt does not stick free-look), release to snap back.
 - **HUD** — status bars, radar, canopy braces, scanlines, tab-target panel; subtle starfield tint from the local sun. Galaxy map shows system security.
-- **Music & SFX** — title/ambient/death music; sample thrusters, weapons, dock, and synthesized combat layers. Master sound on/off in **Settings** (saved).
-- **Display & settings** — default **borderless fullscreen** on the current display; **windowed** (default 1280×800, size/position remembered). **Settings** on main menu and pause menu: display mode + sound. **Alt+Enter** toggles display. Preferences persist in app `settings.json`.
+- **Music & SFX** — title/ambient/death music; sample thrusters, weapons, dock, and synthesized combat layers. **Separate Sound Effects and Music** toggles in **Settings** (saved). Alien weapons use distinct synth fire sounds.
+- **Windowed app + fullscreen** — default **windowed** with OS frame (**1600×900 outer** including title bar/borders; size/position remembered). **Alt + Enter** toggles native fullscreen. **Settings** on main menu and pause menu. Preferences persist in app `settings.json`.
 - **Permadeath** — no respawns; death screen shows killer and law consequence.
 
 ## Getting started
@@ -63,6 +64,7 @@ Launches the app with hot module reloading. Editing `src/renderer/main.js` while
 npm run build     # electron-vite build
 npm run package   # build + electron-builder --dir (unpacked)
 npm run make      # build + electron-builder (installer for the current platform)
+npm run make:all  # mac + linux + windows installers
 ```
 
 macOS arm64 only (local test):
@@ -93,6 +95,7 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **Space** | Enter / exit mouse-aim flight mode |
 | **Mouse movement** | Aim (yaw/pitch) while flight mode is on |
 | **Alt + mouse** | Free-look camera around the ship (release Alt to restore chase) |
+| **Alt + Enter** | Toggle fullscreen |
 | **Left click** | Fire lasers (can hold with RMB) |
 | **Right click** | Fire missiles/rockets (can hold with LMB) |
 | **W / S** | Throttle forward / reverse (coasts down when released; reverse capped at 25% of max) |
@@ -113,10 +116,9 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **F1** | Character sheet |
 | **Esc** | Pause / resume |
 | **F5** | Quick save |
-| **Alt+Enter** | Toggle borderless fullscreen / windowed |
 | **Free mouse** | Click system overview (left) to set waypoints |
 
-Main menu and pause menu both open **Settings** (display mode + sound on/off). Preferences are saved for the next launch.
+Main menu and pause menu both open **Settings** (sound effects + music). Preferences are saved for the next launch.
 
 ## Tech stack
 
@@ -125,6 +127,8 @@ Main menu and pause menu both open **Settings** (display mode + sound on/off). P
 - Plain DOM for HUD, menus, and docking UI (in-game dialogs via `gameDialog.js` — no `window.alert`/`prompt`)
 - Node’s built-in test runner (`node:test`)
 - SFX samples: [Kenney Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds) (CC0)
+- Ship/alien PBR textures: [ambientCG](https://ambientcg.com/) (CC0)
+- Station bay kit pieces: [Kenney Space Station Kit](https://kenney.nl/assets/space-station-kit) (CC0); selected props from [Quaternius Ultimate Space Kit](https://quaternius.com/packs/ultimatespacekit.html) (CC0)
 
 ## License / credit
 

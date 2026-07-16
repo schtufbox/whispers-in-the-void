@@ -1,5 +1,6 @@
 import { pick, range, intRange } from '../procgen/prng.js'
-import { SHIP_CLASSES } from '../data/shipClasses.js'
+import { SHIP_CLASSES, ALIEN_SHIP_CLASSES } from '../data/shipClasses.js'
+import { defaultLoadoutFor } from '../data/weapons.js'
 import { generateHumanName } from '../procgen/names.js'
 import {
   exteriorRadiusFor,
@@ -10,8 +11,10 @@ import {
 let npcCounter = 0
 
 // Sorted once so pirate difficulty can be picked as a position in this list
-// rather than re-sorting per spawn.
-const SHIP_CLASSES_BY_PRICE = [...SHIP_CLASSES].sort((a, b) => a.price - b.price)
+// rather than re-sorting per spawn. Exclude alien + police (not pirate hulls).
+const SHIP_CLASSES_BY_PRICE = [...SHIP_CLASSES]
+  .filter((c) => !c.alien && c.faction !== 'police')
+  .sort((a, b) => a.price - b.price)
 // Fraction of the roster a pirate is drawn from around its difficulty band —
 // wide enough that pirates at any given distance from the core still vary,
 // rather than every pirate at a given coreFraction flying the same hull.
@@ -182,7 +185,7 @@ export function spawnNpcWithClass(rng, { shipClassId, position, faction = 'pirat
     shipClassId: shipClass.id,
     pilotName,
     faction: faction === 'police' || shipClass.faction === 'police' ? 'police' : faction,
-    isAlien: species !== null,
+    isAlien: species !== null || !!shipClass.alien,
     position: clearPos,
     velocity: [0, 0, 0],
     quaternion: [0, 0, 0, 1],
@@ -194,12 +197,23 @@ export function spawnNpcWithClass(rng, { shipClassId, position, faction = 'pirat
     lastHitAt: -Infinity,
     lastFireAt: -Infinity,
     destroyed: false,
-    equippedWeapons: {}
+    equippedWeapons: defaultLoadoutFor(shipClass)
   }
-  // Police get best guns; other NPCs use class defaults at fire time.
+  // Police get best guns; aliens keep alien default loadout; others may stay base.
   if (npc.faction === 'police') {
     for (const hp of shipClass.hardpoints ?? []) {
       npc.equippedWeapons[hp.id] = hp.type === 'missile' ? 'torpedo' : 'plasma_cannon'
+    }
+  } else if (shipClass.alien) {
+    // Tier up paid alien guns on heavier hulls.
+    for (const hp of shipClass.hardpoints ?? []) {
+      if (hp.type === 'missile' && shipClass.price >= 100000) {
+        npc.equippedWeapons[hp.id] = 'singularity_seed'
+      } else if (hp.type === 'laser' && shipClass.price >= 80000) {
+        npc.equippedWeapons[hp.id] = 'void_lance'
+      } else if (hp.type === 'laser' && shipClass.price >= 55000) {
+        npc.equippedWeapons[hp.id] = 'neural_sear'
+      }
     }
   }
   return npc
@@ -295,8 +309,26 @@ export function ensureStationPolicePatrols(rng, gameState, system, securityRatin
   return spawned
 }
 
+function pickAlienShipClass(rng, coreFraction) {
+  if (!ALIEN_SHIP_CLASSES.length) return pick(rng, SHIP_CLASSES)
+  // Mild rim bias toward heavier alien hulls (higher price).
+  const sorted = [...ALIEN_SHIP_CLASSES].sort((a, b) => a.price - b.price)
+  const t = Math.max(0, Math.min(1, coreFraction))
+  const idx = Math.min(sorted.length - 1, Math.floor(t * sorted.length + rng() * 0.8))
+  // Mix: sometimes pick any hull so rim fights aren't always the same carapace.
+  if (rng() < 0.35) return pick(rng, sorted)
+  return sorted[idx]
+}
+
 export function spawnNpc(rng, { position, faction = 'pirate', species = null, coreFraction = 0, bodies = null }) {
-  const shipClass = faction === 'pirate' ? pickPirateShipClass(rng, coreFraction) : pick(rng, SHIP_CLASSES)
+  let shipClass
+  if (faction === 'pirate') shipClass = pickPirateShipClass(rng, coreFraction)
+  else if (faction === 'alien') shipClass = pickAlienShipClass(rng, coreFraction)
+  else {
+    // Traders / civilians — human hulls only.
+    const human = SHIP_CLASSES.filter((c) => !c.alien && c.faction !== 'police')
+    shipClass = pick(rng, human.length ? human : SHIP_CLASSES)
+  }
   return spawnNpcWithClass(rng, {
     shipClassId: shipClass.id,
     position,
@@ -317,19 +349,8 @@ const PIRATE_CHANCE = 0.25
 // so this stays decoupled from the galaxy/system shape.
 const ALIEN_MAX_CHANCE = 0.4
 
-// forceNeutral (used for the player's starting system before its peace is
-// ever broken — see main.js) skips the pirate/alien rolls entirely and
-// always spawns a trader, so ambient traffic still occurs there but never a
-// hostile encounter.
-// bodies: system bodies to stay outside of (planets, stations, …).
-export function spawnEncounterNear(
-  rng,
-  playerPosition,
-  galaxy,
-  coreFraction = 0,
-  forceNeutral = false,
-  bodies = null
-) {
+/** Random point near the player, clear of body shells (and the sun). */
+function pickSpawnPositionNear(rng, playerPosition, bodies = null) {
   let position = null
   for (let attempt = 0; attempt < 48; attempt++) {
     const dist = range(rng, MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE)
@@ -357,6 +378,23 @@ export function spawnEncounterNear(
   } else {
     position = clearPositionOfBodies(position, bodies ?? [])
   }
+  return position
+}
+
+// forceNeutral (used for the player's starting system before its peace is
+// ever broken — see main.js) skips the pirate/alien rolls entirely and
+// always spawns a trader, so ambient traffic still occurs there but never a
+// hostile encounter.
+// bodies: system bodies to stay outside of (planets, stations, …).
+export function spawnEncounterNear(
+  rng,
+  playerPosition,
+  galaxy,
+  coreFraction = 0,
+  forceNeutral = false,
+  bodies = null
+) {
+  const position = pickSpawnPositionNear(rng, playerPosition, bodies)
 
   if (forceNeutral) return spawnNpc(rng, { position, faction: 'trader', bodies })
   const alienChance = coreFraction * ALIEN_MAX_CHANCE
@@ -371,4 +409,21 @@ export function spawnEncounterNear(
     })
   }
   return spawnNpc(rng, { position, faction: 'trader', bodies })
+}
+
+/**
+ * Mining ambush — always a pirate, already in attack posture.
+ * Spawns just beyond engagement range so radar picks them up first.
+ */
+export function spawnMiningPirateAmbush(rng, playerPosition, coreFraction = 0, bodies = null) {
+  const position = pickSpawnPositionNear(rng, playerPosition, bodies)
+  const npc = spawnNpc(rng, {
+    position,
+    faction: 'pirate',
+    coreFraction,
+    bodies
+  })
+  npc.aiState = 'attack'
+  npc.miningAmbush = true
+  return npc
 }

@@ -8,7 +8,7 @@ import {
 } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { findBody, findSystemOfBody, coreFraction } from '../procgen/galaxy.js'
-import { getWeapon, BASE_WEAPON_ID, defaultLoadoutFor } from '../data/weapons.js'
+import { getWeapon, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID, defaultLoadoutFor } from '../data/weapons.js'
 import {
   getAccessory,
   defaultAccessoriesFor,
@@ -306,6 +306,7 @@ function mergeInto(target, source) {
 // player's active ship.
 export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
   const newClass = getShipClass(newClassId)
+  if (newClass.alien || newClass.npcOnly) throw new Error('That hull is not for sale')
   if (gameState.player.credits < newClass.price) throw new Error('Not enough credits')
 
   gameState.player.credits -= newClass.price
@@ -590,6 +591,7 @@ export function useShipPart(gameState) {
 // activateStoredShip swaps it in.
 export function buyWeapon(gameState, bodyId, weaponId, quantity = 1) {
   const weapon = getWeapon(weaponId)
+  if (weapon.alien) throw new Error('Alien weapons cannot be purchased')
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   if (qty < 1) throw new Error('Invalid quantity')
   const cost = weapon.price * qty
@@ -626,7 +628,8 @@ export function equipWeapon(gameState, bodyId, hardpointId, weaponId) {
   const storage = storageFor(gameState, bodyId)
   ship.spareWeapons ??= {}
   ship.equippedWeapons ??= {}
-  const previousId = ship.equippedWeapons[hardpointId] ?? BASE_WEAPON_ID[mountType]
+  const baseIds = shipClass.alien ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
+  const previousId = ship.equippedWeapons[hardpointId] ?? baseIds[mountType]
   if (previousId === weaponId) return
 
   const fromStorage = (storage.weapons[weaponId] ?? 0) > 0

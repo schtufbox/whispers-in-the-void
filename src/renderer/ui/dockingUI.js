@@ -30,7 +30,7 @@ import {
   formatOreCost
 } from '../data/blueprints.js'
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
-import { WEAPONS, BASE_WEAPON_ID, getWeapon, weaponsForCategory } from '../data/weapons.js'
+import { WEAPONS, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID, getWeapon, weaponsForCategory, allWeaponsForCategory } from '../data/weapons.js'
 import { ACCESSORIES, getAccessory, accessorySlotCount, effectiveMiningCapacity } from '../data/accessories.js'
 import { EXPLORER_PROBE_LOOT_BONUS } from '../game/probe.js'
 import { findBody, findSystemOfBody } from '../procgen/galaxy.js'
@@ -1139,8 +1139,16 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     `
     const weaponBlocks = activeClass.hardpoints.map((hp) => {
       const mountType = hp.type === 'missile' ? 'missile' : 'laser'
-      const equippedId = ship.equippedWeapons?.[hp.id] ?? BASE_WEAPON_ID[mountType]
-      const options = weaponsForCategory(mountType).map((w) => {
+      const baseIds = activeClass.alien ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
+      const equippedId = ship.equippedWeapons?.[hp.id] ?? baseIds[mountType]
+      // Shop list is human-only; equip list includes owned/equipped alien tech.
+      const catalog = allWeaponsForCategory(mountType).filter((w) => {
+        if (!w.alien) return true
+        const inStorage = storageWeapons[w.id] ?? 0
+        const onShip = spareWeapons[w.id] ?? 0
+        return w.id === equippedId || inStorage > 0 || onShip > 0
+      })
+      const options = catalog.map((w) => {
         const isEquipped = w.id === equippedId
         const inStorage = storageWeapons[w.id] ?? 0
         const onShip = spareWeapons[w.id] ?? 0
@@ -1300,15 +1308,15 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy into station storage. Sell column sells from storage (salvaged weapons listed separately).</p>
           <table>
             <thead><tr><th>Weapon</th><th>Cat</th><th>Dmg</th><th>Price</th><th>St</th><th>Buy</th><th>Sell</th></tr></thead>
-            <tbody>${WEAPONS.map((w) => {
+            <tbody>${WEAPONS.filter((w) => !w.alien || (storageWeapons[w.id] ?? 0) > 0 || (spareWeapons[w.id] ?? 0) > 0).map((w) => {
               const st = storageWeapons[w.id] ?? 0
               const sal = spareWeapons[w.id] ?? 0
               const unitSell = Math.round(w.price * 0.5)
               return `
               <tr>
-                <td>${w.name}</td><td>${w.category}</td><td>${w.damage}</td><td>${w.price}cr</td>
+                <td>${w.name}${w.alien ? ' <span style="color:#9bff4a">◆</span>' : ''}</td><td>${w.category}</td><td>${w.damage}</td><td>${w.alien ? '—' : `${w.price}cr`}</td>
                 <td>${st}</td>
-                <td><button class="buy-weapon" data-weapon="${w.id}" data-price="${w.price}">Buy</button></td>
+                <td>${w.alien || w.price <= 0 ? '' : `<button class="buy-weapon" data-weapon="${w.id}" data-price="${w.price}">Buy</button>`}</td>
                 <td>
                   ${st > 0
                     ? `<button class="sell-weapon" data-weapon="${w.id}" data-held="${st}" data-src="storage" data-price="${unitSell}">Sell</button>`

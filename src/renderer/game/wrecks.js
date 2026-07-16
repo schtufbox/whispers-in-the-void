@@ -1,7 +1,12 @@
 import { GOODS, MINED_ORE_GOOD_IDS, SHIP_PARTS_GOOD_ID, SURVEY_DATA_GOOD_ID } from '../data/goods.js'
-import { WEAPONS, BASE_WEAPON_ID } from '../data/weapons.js'
-import { getShipClass } from '../data/shipClasses.js'
-import { WRECK_BLUEPRINT_DROP_CHANCE, tryRollBlueprintDrop } from './crafting.js'
+import { WEAPONS } from '../data/weapons.js'
+import { getShipClass, isAlienShipClass } from '../data/shipClasses.js'
+import {
+  WRECK_BLUEPRINT_DROP_CHANCE,
+  ALIEN_WRECK_BLUEPRINT_DROP_CHANCE,
+  tryRollBlueprintDrop,
+  tryRollAlienBlueprintDrop
+} from './crafting.js'
 
 let wreckCounter = 0
 
@@ -34,8 +39,14 @@ function rollWeaponDrop(rng, shipClassId) {
     (shipClass.hardpoints ?? []).map((hp) => (hp.type === 'missile' ? 'missile' : 'laser'))
   )
   if (!mountTypes.size) return null
-  // Paid weapons only — free pulse laser / rocket pod aren't salvage finds.
-  const candidates = WEAPONS.filter((w) => w.price > 0 && mountTypes.has(w.category))
+  const alienHull = !!shipClass.alien
+  // Paid weapons only. Alien hulls only drop alien guns; human hulls never alien.
+  const candidates = WEAPONS.filter(
+    (w) =>
+      w.price > 0 &&
+      mountTypes.has(w.category) &&
+      !!w.alien === alienHull
+  )
   if (!candidates.length) return null
   return candidates[Math.floor(rng() * candidates.length)].id
 }
@@ -43,15 +54,21 @@ function rollWeaponDrop(rng, shipClassId) {
 // Loot is rolled once at spawn time (not re-rolled per loot attempt) — small
 // amounts of a single standard trade good, plus rare ship parts / weapons.
 // shipClassId (optional) sizes weapon drops off the destroyed NPC's mounts.
+// Alien wrecks: only alien blueprints (extremely rare); never human industry BPs.
 export function spawnWreck(position, simTime, rng = Math.random, shipClassId = null) {
   const good = LOOTABLE_GOODS[Math.floor(rng() * LOOTABLE_GOODS.length)]
   const loot = { cargo: { [good.id]: 1 + Math.floor(rng() * 3) } }
   if (rng() < SHIP_PART_DROP_CHANCE) loot.shipParts = 1
   const weaponId = rollWeaponDrop(rng, shipClassId)
   if (weaponId) loot.weapons = { [weaponId]: 1 }
-  // Very rare industry blueprint (ships/weapons catalog).
-  const blueprintId = tryRollBlueprintDrop(rng, WRECK_BLUEPRINT_DROP_CHANCE)
-  if (blueprintId) loot.blueprints = { [blueprintId]: 1 }
+
+  if (isAlienShipClass(shipClassId)) {
+    const blueprintId = tryRollAlienBlueprintDrop(rng, ALIEN_WRECK_BLUEPRINT_DROP_CHANCE)
+    if (blueprintId) loot.blueprints = { [blueprintId]: 1 }
+  } else {
+    const blueprintId = tryRollBlueprintDrop(rng, WRECK_BLUEPRINT_DROP_CHANCE)
+    if (blueprintId) loot.blueprints = { [blueprintId]: 1 }
+  }
   return { id: `wreck-${wreckCounter++}`, position: [...position], spawnedAt: simTime, loot }
 }
 

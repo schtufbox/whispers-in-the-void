@@ -4,6 +4,7 @@ import {
   oreCostForBlueprint,
   creditCostForBlueprint,
   rollRandomBlueprintId,
+  rollAlienBlueprintId,
   parseBlueprintId
 } from '../data/blueprints.js'
 import { getShipClass } from '../data/shipClasses.js'
@@ -15,6 +16,8 @@ import { MINED_ORE_GOOD_IDS } from '../data/goods.js'
 // Very rare blueprint finds.
 export const WRECK_BLUEPRINT_DROP_CHANCE = 0.025
 export const PROBE_BLUEPRINT_DROP_CHANCE = 0.012
+/** Extremely rare alien ship/weapon blueprint — only from alien wrecks. */
+export const ALIEN_WRECK_BLUEPRINT_DROP_CHANCE = 0.018
 
 let craftCounter = 0
 
@@ -240,10 +243,16 @@ export function jobsAtBody(gameState, bodyId) {
   return gameState.craftingJobs.filter((j) => j.bodyId === bodyId)
 }
 
-/** Roll a blueprint into an object map (wreck loot / probe result). */
+/** Roll a human blueprint into an object map (wreck loot / probe result). */
 export function tryRollBlueprintDrop(rng, chance) {
   if (rng() >= chance) return null
   return rollRandomBlueprintId(rng)
+}
+
+/** Alien wreck only — never from probes or human salvage. */
+export function tryRollAlienBlueprintDrop(rng, chance = ALIEN_WRECK_BLUEPRINT_DROP_CHANCE) {
+  if (rng() >= chance) return null
+  return rollAlienBlueprintId(rng)
 }
 
 export function grantShipBlueprint(gameState, blueprintId) {

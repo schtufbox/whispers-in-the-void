@@ -1,7 +1,14 @@
 import { app, ipcMain } from 'electron'
 import { saveGame, loadGame, deleteSave, hasSave } from './save.js'
-import { getDisplayMode, getSoundEnabled, setSoundEnabled } from './settings.js'
-import { requestDisplayMode } from './display.js'
+import {
+  getSoundEnabled,
+  setSoundEnabled,
+  getSfxEnabled,
+  setSfxEnabled,
+  getMusicEnabled,
+  setMusicEnabled
+} from './settings.js'
+import { getDisplayMode, getMainWindow, toggleFullscreen } from './display.js'
 
 export function registerSaveHandlers() {
   ipcMain.handle('save-game', (_event, data) => saveGame(data))
@@ -10,8 +17,26 @@ export function registerSaveHandlers() {
   ipcMain.handle('has-save', () => hasSave())
   ipcMain.handle('quit-app', () => app.quit())
   ipcMain.handle('get-display-mode', () => getDisplayMode())
-  ipcMain.handle('set-display-mode', (_event, mode) => requestDisplayMode(mode))
+  ipcMain.handle('set-display-mode', (_event, mode) => {
+    const win = getMainWindow()
+    if (!win || win.isDestroyed()) return getDisplayMode()
+    const wantFs = mode === 'fullscreen' || mode === 'full' || mode === true
+    const isFs = getDisplayMode(win) === 'fullscreen'
+    if (wantFs !== isFs) toggleFullscreen(win)
+    return getDisplayMode(win)
+  })
+  ipcMain.handle('toggle-fullscreen', () => {
+    const win = getMainWindow()
+    if (!win || win.isDestroyed()) return getDisplayMode()
+    toggleFullscreen(win)
+    return getDisplayMode(win)
+  })
+  // Legacy master mute (sets both SFX + music).
   ipcMain.handle('get-sound-enabled', () => getSoundEnabled())
-  // Persists to userData/settings.json — restored on next launch.
   ipcMain.handle('set-sound-enabled', (_event, enabled) => setSoundEnabled(enabled))
+  // Separate channels — persisted in userData/settings.json.
+  ipcMain.handle('get-sfx-enabled', () => getSfxEnabled())
+  ipcMain.handle('set-sfx-enabled', (_event, enabled) => setSfxEnabled(enabled))
+  ipcMain.handle('get-music-enabled', () => getMusicEnabled())
+  ipcMain.handle('set-music-enabled', (_event, enabled) => setMusicEnabled(enabled))
 }

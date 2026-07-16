@@ -22,6 +22,12 @@ function shipArmorMaps(normalStrength = 0.62) {
 function shipTrimMaps(normalStrength = 0.45) {
   return stationMaterialMaps('shipTrim', normalStrength)
 }
+function alienHullMaps(normalStrength = 0.7) {
+  return stationMaterialMaps('alienHull', normalStrength)
+}
+function alienPlateMaps(normalStrength = 0.65) {
+  return stationMaterialMaps('alienPlate', normalStrength)
+}
 
 function makeDetailMaterials(hullTint) {
   const tint = hullTint?.clone?.() ?? new THREE.Color(0x8899aa)
@@ -767,6 +773,88 @@ function getCachedHullGeometries(shipClass) {
 }
 
 /**
+ * Organic alien add-ons — cysts, tendrils, glow nodules (not industrial plates).
+ */
+function addAlienDetails(group, hull, mats, baseColor) {
+  const length = hull.length ?? 18
+  const peakW = Math.max(...(hull.stationWidths ?? [1]))
+  const peakH = Math.max(...(hull.stationHeights ?? [1]))
+  const glowCol = baseColor.clone().offsetHSL(0.08, 0.4, 0.15)
+
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: glowCol,
+    transparent: true,
+    opacity: 0.75,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  })
+
+  // Mid-body cysts / blisters.
+  for (let i = 0; i < 5; i++) {
+    const u = (i / 4) * 0.7 - 0.15
+    const side = i % 2 === 0 ? 1 : -1
+    const blister = new THREE.Mesh(
+      new THREE.SphereGeometry(peakH * (0.18 + (i % 3) * 0.05), 10, 8),
+      mats.panel
+    )
+    blister.scale.set(1.1, 0.75, 1.3)
+    blister.position.set(side * peakW * 0.55, peakH * (0.2 + (i % 2) * 0.15), u * length)
+    group.add(blister)
+    const node = new THREE.Mesh(new THREE.SphereGeometry(peakH * 0.08, 8, 6), glowMat)
+    node.position.copy(blister.position).add(new THREE.Vector3(side * peakW * 0.12, peakH * 0.08, 0))
+    group.add(node)
+  }
+
+  // Forward sensory stalks.
+  for (const side of [-1, 1]) {
+    const stalk = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakW * 0.04, peakW * 0.07, peakH * 0.9, 6),
+      mats.structure
+    )
+    stalk.rotation.z = side * 0.55
+    stalk.rotation.x = 0.4
+    stalk.position.set(side * peakW * 0.35, peakH * 0.45, length * 0.28)
+    group.add(stalk)
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(peakH * 0.1, 8, 6), glowMat)
+    eye.position.set(side * peakW * 0.55, peakH * 0.85, length * 0.38)
+    group.add(eye)
+  }
+
+  // Aft organic thruster orifices (not human engine cones).
+  for (let i = 0; i < 3; i++) {
+    const ang = ((i - 1) / 2) * 0.9
+    const orifice = new THREE.Mesh(
+      new THREE.TorusGeometry(peakW * 0.12, peakW * 0.04, 6, 12),
+      mats.engineGlow ?? glowMat
+    )
+    orifice.position.set(Math.sin(ang) * peakW * 0.35, Math.cos(ang) * peakH * 0.2, -length * 0.42)
+    orifice.rotation.y = Math.PI / 2
+    group.add(orifice)
+    const jet = new THREE.Mesh(
+      new THREE.ConeGeometry(peakW * 0.1, peakH * 0.5, 8),
+      mats.engineCone ?? glowMat
+    )
+    jet.rotation.x = Math.PI / 2
+    jet.position.set(orifice.position.x, orifice.position.y, -length * 0.52)
+    group.add(jet)
+  }
+
+  // Lateral tendril fins (extra weirdness beyond hull.wings).
+  for (const side of [-1, 1]) {
+    for (let k = 0; k < 3; k++) {
+      const t = new THREE.Mesh(
+        new THREE.CapsuleGeometry(peakW * 0.06, peakW * (0.6 + k * 0.15), 4, 6),
+        mats.structure
+      )
+      t.rotation.z = side * (0.9 + k * 0.15)
+      t.rotation.y = k * 0.2
+      t.position.set(side * peakW * 0.7, -peakH * 0.1 + k * 0.12, -length * 0.05 + k * length * 0.08)
+      group.add(t)
+    }
+  }
+}
+
+/**
  * @param {object} shipClass
  * @param {{ lite?: boolean }} [opts] lite=true for NPCs: skip edge overlays (big CPU save).
  */
@@ -777,12 +865,47 @@ export function buildShipMesh(shipClass, opts = {}) {
 
   const isPolice =
     shipClass.faction === 'police' || !!shipClass.hull?.style?.policeLivery
+  const isAlien = !!(shipClass.alien || shipClass.hull?.style?.alien)
 
   // Police: bright white hull (skip heavy PBR maps — they mute pure white).
   const baseColor = isPolice
     ? new THREE.Color(0xf4f7fb)
     : new THREE.Color(shipClass.hull.color)
   const mats = makeDetailMaterials(isPolice ? new THREE.Color(0x1a1c20) : baseColor)
+
+  // Alien detail mats: organic rock + plate PBR, emissive green/violet sheen.
+  if (isAlien) {
+    mats.panel = new THREE.MeshStandardMaterial({
+      color: baseColor.clone().multiplyScalar(0.75),
+      metalness: 0.35,
+      roughness: 0.62,
+      emissive: baseColor.clone().multiplyScalar(0.12),
+      emissiveIntensity: 0.35,
+      ...alienPlateMaps(0.72)
+    })
+    mats.structure = new THREE.MeshStandardMaterial({
+      color: baseColor.clone().offsetHSL(0.05, 0.1, -0.1),
+      metalness: 0.28,
+      roughness: 0.7,
+      ...alienHullMaps(0.8)
+    })
+    mats.engineGlow = new THREE.MeshBasicMaterial({
+      color: 0x9bff4a,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+    mats.engineCone = new THREE.MeshBasicMaterial({
+      color: 0xc44bff,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+  }
 
   const { geometry, seams, rim: rimGeo } = getCachedHullGeometries(shipClass)
   const material = isPolice
@@ -793,14 +916,25 @@ export function buildShipMesh(shipClass, opts = {}) {
         roughness: 0.48,
         envMapIntensity: 0.85
       })
-    : new THREE.MeshStandardMaterial({
-        color: baseColor,
-        side: THREE.DoubleSide,
-        metalness: 0.72,
-        roughness: 0.42,
-        envMapIntensity: 1.05,
-        ...shipHullMaps(0.58)
-      })
+    : isAlien
+      ? new THREE.MeshStandardMaterial({
+          color: baseColor,
+          side: THREE.DoubleSide,
+          metalness: 0.32,
+          roughness: 0.58,
+          emissive: baseColor.clone().multiplyScalar(0.08),
+          emissiveIntensity: 0.28,
+          envMapIntensity: 0.7,
+          ...alienHullMaps(0.75)
+        })
+      : new THREE.MeshStandardMaterial({
+          color: baseColor,
+          side: THREE.DoubleSide,
+          metalness: 0.72,
+          roughness: 0.42,
+          envMapIntensity: 1.05,
+          ...shipHullMaps(0.58)
+        })
   const hullMesh = new THREE.Mesh(geometry, material)
   group.add(hullMesh)
 
@@ -810,9 +944,9 @@ export function buildShipMesh(shipClass, opts = {}) {
       new THREE.LineSegments(
         seams,
         new THREE.LineBasicMaterial({
-          color: isPolice ? 0x1a2030 : 0x0a0c10,
+          color: isPolice ? 0x1a2030 : isAlien ? 0x1a3020 : 0x0a0c10,
           transparent: true,
-          opacity: isPolice ? 0.55 : 0.35
+          opacity: isPolice ? 0.55 : isAlien ? 0.45 : 0.35
         })
       )
     )
@@ -820,9 +954,9 @@ export function buildShipMesh(shipClass, opts = {}) {
       new THREE.LineSegments(
         rimGeo,
         new THREE.LineBasicMaterial({
-          color: isPolice ? 0xc8d4e8 : 0x6a8aaa,
+          color: isPolice ? 0xc8d4e8 : isAlien ? 0x7fff6a : 0x6a8aaa,
           transparent: true,
-          opacity: isPolice ? 0.35 : 0.16
+          opacity: isPolice ? 0.35 : isAlien ? 0.28 : 0.16
         })
       )
     )
@@ -831,7 +965,22 @@ export function buildShipMesh(shipClass, opts = {}) {
   // Full bolted-on detail for the player ship only — NPC detail is a major
   // cost when many contacts mesh on the same combat frame.
   if (!lite) {
-    addHullDetails(group, shipClass.hull, mats)
+    if (isAlien) addAlienDetails(group, shipClass.hull, mats, baseColor)
+    else addHullDetails(group, shipClass.hull, mats)
+  } else if (isAlien) {
+    // Lite alien NPCs still get a couple glow nodes so they read as non-human.
+    const glow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 6, 6),
+      new THREE.MeshBasicMaterial({
+        color: 0x9bff4a,
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    )
+    glow.position.set(0, 0.8, 2)
+    group.add(glow)
   }
 
   for (const hp of shipClass.hardpoints ?? []) {

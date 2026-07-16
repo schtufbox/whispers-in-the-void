@@ -1,9 +1,13 @@
 /**
- * Shared Settings panel markup + wiring for main menu and pause menu.
- * Display mode + sound on/off; preferences persist as launch defaults.
+ * Shared Settings panel for main menu and pause menu.
+ * Separate SFX and music toggles; window size is remembered by the main process.
  */
 import * as audio from '../audio.js'
-import { loadSoundPreference, persistSoundEnabled } from '../preferences.js'
+import {
+  loadSoundPreference,
+  persistSfxEnabled,
+  persistMusicEnabled
+} from '../preferences.js'
 
 /** Shared styles — scope with a parent id (#pause-menu / #main-menu). */
 export const SETTINGS_VIEW_CSS = `
@@ -33,85 +37,68 @@ export function settingsViewHTML() {
   return `
     <h2>Settings</h2>
     <div class="settings-section">
-      <div class="settings-label">Display</div>
+      <div class="settings-label">Sound Effects</div>
       <div class="settings-btns">
-        <button type="button" class="mode-borderless" data-mode="borderless">Fullscreen<br/>(borderless)</button>
-        <button type="button" class="mode-windowed" data-mode="windowed">Windowed</button>
+        <button type="button" class="sfx-on">On</button>
+        <button type="button" class="sfx-off">Off</button>
       </div>
-      <p class="settings-note">Alt+Enter also toggles. Saved as your default.</p>
+      <p class="settings-note">Weapons, thrusters, docks, and voice callouts.</p>
     </div>
     <div class="settings-section">
-      <div class="settings-label">Sound</div>
+      <div class="settings-label">Music</div>
       <div class="settings-btns">
-        <button type="button" class="sound-on" data-sound="on">On</button>
-        <button type="button" class="sound-off" data-sound="off">Off</button>
+        <button type="button" class="music-on">On</button>
+        <button type="button" class="music-off">Off</button>
       </div>
-      <p class="settings-note">Music, effects, and voice. Saved as your default.</p>
+      <p class="settings-note">Title, ambient, and death tracks. Saved as defaults.</p>
     </div>
     <button type="button" class="settings-back">Back</button>
   `
 }
 
 /**
- * Wire display + sound controls inside a settings view root.
- * @param {HTMLElement} rootEl element containing the settings HTML
+ * Wire SFX + music controls inside a settings view root.
+ * @param {HTMLElement} rootEl
  * @param {{ onBack: () => void }} opts
  * @returns {{ refresh: () => Promise<void> }}
  */
 export function bindSettingsView(rootEl, { onBack }) {
-  const btnBorderless = rootEl.querySelector('.mode-borderless')
-  const btnWindowed = rootEl.querySelector('.mode-windowed')
-  const btnSoundOn = rootEl.querySelector('.sound-on')
-  const btnSoundOff = rootEl.querySelector('.sound-off')
+  const btnSfxOn = rootEl.querySelector('.sfx-on')
+  const btnSfxOff = rootEl.querySelector('.sfx-off')
+  const btnMusicOn = rootEl.querySelector('.music-on')
+  const btnMusicOff = rootEl.querySelector('.music-off')
 
-  function refreshSoundButtons() {
-    const on = audio.isSoundEnabled()
-    btnSoundOn.classList.toggle('active', on)
-    btnSoundOff.classList.toggle('active', !on)
-  }
-
-  async function refreshDisplayButtons() {
-    let mode = 'borderless'
-    try {
-      mode = (await window.electronAPI?.getDisplayMode?.()) || 'borderless'
-    } catch {
-      /* */
-    }
-    btnBorderless.classList.toggle('active', mode === 'borderless')
-    btnWindowed.classList.toggle('active', mode === 'windowed')
+  function refreshButtons() {
+    const sfx = audio.isSfxEnabled()
+    const music = audio.isMusicEnabled()
+    btnSfxOn.classList.toggle('active', sfx)
+    btnSfxOff.classList.toggle('active', !sfx)
+    btnMusicOn.classList.toggle('active', music)
+    btnMusicOff.classList.toggle('active', !music)
   }
 
   async function refresh() {
-    // Re-load from disk so the UI matches saved defaults (not just session state).
     await loadSoundPreference()
-    await refreshDisplayButtons()
-    refreshSoundButtons()
+    refreshButtons()
   }
 
-  async function setMode(mode) {
-    try {
-      // Main process writes displayMode to userData/settings.json.
-      await window.electronAPI?.setDisplayMode?.(mode)
-    } catch (err) {
-      console.error('setDisplayMode failed', err)
-    }
-    refreshDisplayButtons()
-  }
-
-  async function setSound(enabled) {
-    await persistSoundEnabled(enabled)
-    refreshSoundButtons()
-  }
-
-  btnBorderless.addEventListener('click', () => setMode('borderless'))
-  btnWindowed.addEventListener('click', () => setMode('windowed'))
-  btnSoundOn.addEventListener('click', () => setSound(true))
-  btnSoundOff.addEventListener('click', () => setSound(false))
+  btnSfxOn.addEventListener('click', async () => {
+    await persistSfxEnabled(true)
+    refreshButtons()
+  })
+  btnSfxOff.addEventListener('click', async () => {
+    await persistSfxEnabled(false)
+    refreshButtons()
+  })
+  btnMusicOn.addEventListener('click', async () => {
+    await persistMusicEnabled(true)
+    refreshButtons()
+  })
+  btnMusicOff.addEventListener('click', async () => {
+    await persistMusicEnabled(false)
+    refreshButtons()
+  })
   rootEl.querySelector('.settings-back').addEventListener('click', () => onBack())
-
-  if (typeof window.electronAPI?.onDisplayModeChanged === 'function') {
-    window.electronAPI.onDisplayModeChanged(() => refreshDisplayButtons())
-  }
 
   return { refresh }
 }
