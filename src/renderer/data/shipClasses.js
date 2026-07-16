@@ -276,6 +276,49 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
+    // Authority response fighter — white/black livery, top guns + missiles.
+    id: 'system_patrol',
+    name: 'System Patrol',
+    role: 'fighter',
+    price: 0,
+    npcOnly: true,
+    faction: 'police',
+    stats: { hull: 110, shields: 120, armor: 40, cargoCapacity: 15, speed: 190, turnRate: 2.6, accel: 48 },
+    hardpoints: [
+      { id: 'turret1', position: [0, 1.2, 2], type: 'laser' },
+      { id: 'turret2', position: [0, 1.1, -1], type: 'laser' },
+      { id: 'fwd1', position: [-1.1, 0.1, 9], type: 'missile' },
+      { id: 'fwd2', position: [1.1, 0.1, 9], type: 'missile' }
+    ],
+    accessorySlots: 0,
+    hull: {
+      length: 22,
+      stationWidths: [0.14, 0.38, 0.7, 1.05, 1.25, 1.2, 1.15, 1.3, 1.2, 0.8, 0.4, 0.16],
+      stationHeights: [0.1, 0.28, 0.48, 0.62, 0.72, 0.7, 0.68, 0.75, 0.7, 0.45, 0.24, 0.12],
+      crossSectionSides: 12,
+      superellipseExponent: 2.3,
+      wings: [
+        { atStation: 6, span: 6.5, sweep: 0.85, thickness: 0.2, side: 'both', tipOffsetY: -0.1, chordScale: 1.05 },
+        { atStation: 2, span: 2.0, sweep: -0.3, thickness: 0.16, side: 'top', chordScale: 0.85 }
+      ],
+      // Bright white hull; black panels + light bar applied in shipMesh police livery.
+      color: '#f4f7fb',
+      style: {
+        asymmetric: false,
+        bridgeSide: 0,
+        engineLayout: 'twin',
+        hasRadiator: true,
+        hasCargoPods: false,
+        hasSensorMast: true,
+        cockpitMount: 'top',
+        radarDishes: ['top', 'side'],
+        hasDockingRing: false,
+        detailDensity: 2.1,
+        policeLivery: true
+      }
+    }
+  },
+  {
     id: 'clipper',
     name: 'Clipper',
     role: 'explorer',
@@ -312,6 +355,332 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         detailDensity: 2.0
       }
     }
+  },
+  // --- Drone-bay hulls (Asp Light Combat escorts) ---
+  {
+    id: 'pathfinder',
+    name: 'Pathfinder',
+    role: 'explorer',
+    price: 22000,
+    droneBays: 1,
+    stats: { hull: 75, shields: 55, armor: 12, cargoCapacity: 35, speed: 165, turnRate: 2.0, accel: 38 },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.2, 10], type: 'laser' }],
+    accessorySlots: 2,
+    hull: {
+      length: 22,
+      stationWidths: [0.15, 0.4, 0.7, 1.0, 1.2, 1.25, 1.15, 0.95, 0.7, 0.45, 0.25, 0.12],
+      stationHeights: [0.12, 0.3, 0.5, 0.7, 0.82, 0.85, 0.78, 0.62, 0.45, 0.3, 0.16, 0.1],
+      crossSectionSides: 14,
+      superellipseExponent: 2.2,
+      wings: [
+        { atStation: 6, span: 4.2, sweep: 0.5, thickness: 0.16, side: 'both', chordScale: 1.0 },
+        { atStation: 2, span: 1.5, sweep: -0.2, thickness: 0.12, side: 'top', chordScale: 0.8 }
+      ],
+      color: '#6a9a88',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: false,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'bottom'], hasDockingRing: false, detailDensity: 2.0
+      }
+    }
+  },
+  {
+    id: 'surveyor',
+    name: 'Surveyor',
+    role: 'explorer',
+    price: 26000,
+    droneBays: 1,
+    stats: { hull: 85, shields: 60, armor: 18, cargoCapacity: 50, speed: 155, turnRate: 1.7, accel: 32 },
+    hardpoints: [
+      { id: 'fwd1', position: [0, 0.25, 11], type: 'laser' },
+      { id: 'fwd2', position: [0, -0.1, 10], type: 'missile' }
+    ],
+    accessorySlots: 2,
+    hull: {
+      length: 24,
+      stationWidths: [0.2, 0.5, 0.85, 1.15, 1.35, 1.4, 1.3, 1.1, 0.85, 0.55, 0.3, 0.15],
+      stationHeights: [0.14, 0.35, 0.58, 0.78, 0.9, 0.92, 0.85, 0.7, 0.5, 0.32, 0.18, 0.1],
+      crossSectionSides: 14,
+      superellipseExponent: 2.3,
+      wings: [
+        { atStation: 5, span: 5.0, sweep: 0.4, thickness: 0.18, side: 'both', chordScale: 1.05 },
+        { atStation: 2, span: 1.8, sweep: -0.25, thickness: 0.14, side: 'top', chordScale: 0.85 }
+      ],
+      color: '#5a8a7a',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'side', 'bottom'], hasDockingRing: false, detailDensity: 2.1
+      }
+    }
+  },
+  {
+    id: 'wayfarer',
+    name: 'Wayfarer',
+    role: 'explorer',
+    price: 38000,
+    droneBays: 2,
+    stats: { hull: 100, shields: 70, armor: 22, cargoCapacity: 70, speed: 145, turnRate: 1.55, accel: 30 },
+    hardpoints: [
+      { id: 'fwd1', position: [-0.8, 0.2, 12], type: 'laser' },
+      { id: 'fwd2', position: [0.8, 0.2, 12], type: 'laser' }
+    ],
+    accessorySlots: 3,
+    hull: {
+      length: 30,
+      stationWidths: [0.22, 0.55, 0.95, 1.35, 1.6, 1.65, 1.55, 1.35, 1.05, 0.7, 0.4, 0.18],
+      stationHeights: [0.15, 0.38, 0.65, 0.9, 1.05, 1.08, 1.0, 0.85, 0.62, 0.4, 0.22, 0.12],
+      crossSectionSides: 14,
+      superellipseExponent: 2.25,
+      wings: [
+        { atStation: 6, span: 6.5, sweep: 0.55, thickness: 0.2, side: 'both', tipOffsetY: -0.1, chordScale: 1.05 },
+        { atStation: 2, span: 2.2, sweep: -0.3, thickness: 0.16, side: 'top', chordScale: 0.9 }
+      ],
+      color: '#4a7a90',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: true, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'side'], hasDockingRing: true, detailDensity: 2.2
+      }
+    }
+  },
+  {
+    id: 'odyssey',
+    name: 'Odyssey',
+    role: 'explorer',
+    price: 52000,
+    droneBays: 2,
+    stats: { hull: 120, shields: 85, armor: 30, cargoCapacity: 90, speed: 135, turnRate: 1.4, accel: 26 },
+    hardpoints: [
+      { id: 'fwd1', position: [0, 0.3, 14], type: 'laser' },
+      { id: 'fwd2', position: [0, -0.15, 12], type: 'missile' }
+    ],
+    accessorySlots: 3,
+    hull: {
+      length: 34,
+      stationWidths: [0.25, 0.6, 1.05, 1.5, 1.8, 1.85, 1.75, 1.5, 1.15, 0.75, 0.42, 0.2],
+      stationHeights: [0.16, 0.42, 0.72, 1.0, 1.15, 1.18, 1.1, 0.92, 0.68, 0.45, 0.24, 0.12],
+      crossSectionSides: 14,
+      superellipseExponent: 2.35,
+      wings: [
+        { atStation: 5, span: 7.2, sweep: 0.48, thickness: 0.24, side: 'both', chordScale: 1.1 },
+        { atStation: 8, span: 2.0, sweep: 0.3, thickness: 0.14, side: 'both', chordScale: 0.75 },
+        { atStation: 2, span: 2.5, sweep: -0.35, thickness: 0.18, side: 'top', chordScale: 0.9 }
+      ],
+      color: '#3d6a7a',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: true, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'bottom', 'side'], hasDockingRing: true, detailDensity: 2.3
+      }
+    }
+  },
+  {
+    id: 'wasp',
+    name: 'Wasp',
+    role: 'fighter',
+    price: 30000,
+    droneBays: 1,
+    stats: { hull: 65, shields: 75, armor: 12, cargoCapacity: 12, speed: 210, turnRate: 2.9, accel: 58 },
+    hardpoints: [
+      { id: 'fwd1', position: [-0.9, 0, 8.5], type: 'laser' },
+      { id: 'fwd2', position: [0.9, 0, 8.5], type: 'laser' }
+    ],
+    accessorySlots: 1,
+    hull: {
+      length: 18,
+      stationWidths: [0.1, 0.3, 0.55, 0.8, 0.95, 0.9, 0.85, 1.0, 1.05, 0.65, 0.3, 0.12],
+      stationHeights: [0.08, 0.22, 0.38, 0.5, 0.55, 0.5, 0.48, 0.55, 0.58, 0.38, 0.18, 0.1],
+      crossSectionSides: 12,
+      superellipseExponent: 2.0,
+      wings: [
+        { atStation: 6, span: 5.5, sweep: 1.1, thickness: 0.16, side: 'both', tipOffsetY: -0.12, chordScale: 1.0 },
+        { atStation: 2, span: 1.6, sweep: -0.35, thickness: 0.12, side: 'top', chordScale: 0.8 }
+      ],
+      color: '#d4c878',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: false,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top'], hasDockingRing: false, detailDensity: 1.9
+      }
+    }
+  },
+  {
+    id: 'viper_mk3',
+    name: 'Viper Mk3',
+    role: 'fighter',
+    price: 40000,
+    droneBays: 1,
+    stats: { hull: 80, shields: 90, armor: 20, cargoCapacity: 15, speed: 195, turnRate: 2.5, accel: 48 },
+    hardpoints: [
+      { id: 'fwd1', position: [-1.1, 0, 9], type: 'laser' },
+      { id: 'fwd2', position: [1.1, 0, 9], type: 'missile' }
+    ],
+    accessorySlots: 1,
+    hull: {
+      length: 21,
+      stationWidths: [0.12, 0.35, 0.65, 0.95, 1.15, 1.1, 1.05, 1.2, 1.15, 0.75, 0.4, 0.15],
+      stationHeights: [0.1, 0.25, 0.42, 0.55, 0.6, 0.58, 0.55, 0.6, 0.58, 0.4, 0.22, 0.1],
+      crossSectionSides: 12,
+      superellipseExponent: 2.15,
+      wings: [
+        { atStation: 6, span: 6.2, sweep: 0.9, thickness: 0.18, side: 'both', chordScale: 1.05 },
+        { atStation: 9, span: 1.4, sweep: 0.4, thickness: 0.1, side: 'both', chordScale: 0.7 },
+        { atStation: 2, span: 1.9, sweep: -0.3, thickness: 0.14, side: 'top', chordScale: 0.85 }
+      ],
+      color: '#a0a8b4',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'side'], hasDockingRing: false, detailDensity: 2.0
+      }
+    }
+  },
+  {
+    id: 'raptor',
+    name: 'Raptor',
+    role: 'fighter',
+    price: 48000,
+    droneBays: 1,
+    stats: { hull: 95, shields: 95, armor: 28, cargoCapacity: 18, speed: 175, turnRate: 2.3, accel: 42 },
+    hardpoints: [
+      { id: 'fwd1', position: [-1.3, 0.1, 9.5], type: 'laser' },
+      { id: 'fwd2', position: [1.3, 0.1, 9.5], type: 'laser' },
+      { id: 'fwd3', position: [0, -0.2, 8], type: 'missile' }
+    ],
+    accessorySlots: 2,
+    hull: {
+      length: 23,
+      stationWidths: [0.15, 0.4, 0.75, 1.1, 1.3, 1.25, 1.2, 1.35, 1.25, 0.85, 0.45, 0.18],
+      stationHeights: [0.1, 0.28, 0.48, 0.62, 0.7, 0.68, 0.65, 0.7, 0.65, 0.45, 0.24, 0.12],
+      crossSectionSides: 12,
+      superellipseExponent: 2.2,
+      wings: [
+        { atStation: 5, span: 7.0, sweep: 0.7, thickness: 0.22, side: 'both', tipOffsetY: -0.15, chordScale: 1.08 },
+        { atStation: 2, span: 2.0, sweep: -0.25, thickness: 0.16, side: 'top', chordScale: 0.85 }
+      ],
+      color: '#708090',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'side'], hasDockingRing: false, detailDensity: 2.15
+      }
+    }
+  },
+  {
+    id: 'freighter_mk1',
+    name: 'Freighter Mk1',
+    role: 'trader',
+    price: 28000,
+    droneBays: 1,
+    stats: { hull: 140, shields: 40, armor: 45, cargoCapacity: 160, speed: 75, turnRate: 0.95, accel: 16 },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.4, 11], type: 'laser' }],
+    accessorySlots: 2,
+    hull: {
+      length: 32,
+      stationWidths: [0.5, 0.9, 1.4, 1.8, 2.0, 2.05, 2.0, 1.85, 1.5, 1.0, 0.55, 0.3],
+      stationHeights: [0.4, 0.7, 1.0, 1.2, 1.3, 1.32, 1.28, 1.15, 0.95, 0.65, 0.35, 0.2],
+      crossSectionSides: 10,
+      superellipseExponent: 3.0,
+      wings: [
+        { atStation: 4, span: 3.5, sweep: 0.2, thickness: 0.3, side: 'both', chordScale: 0.9 }
+      ],
+      color: '#8a7860',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
+        hasCargoPods: true, hasSensorMast: false, cockpitMount: 'top',
+        radarDishes: ['top'], hasDockingRing: true, detailDensity: 1.8
+      }
+    }
+  },
+  {
+    id: 'bulk_hauler',
+    name: 'Bulk Hauler',
+    role: 'trader',
+    price: 36000,
+    droneBays: 1,
+    stats: { hull: 170, shields: 35, armor: 55, cargoCapacity: 220, speed: 65, turnRate: 0.8, accel: 12 },
+    hardpoints: [
+      { id: 'fwd1', position: [0, 0.5, 13], type: 'laser' },
+      { id: 'fwd2', position: [0, -0.2, 10], type: 'missile' }
+    ],
+    accessorySlots: 2,
+    hull: {
+      length: 38,
+      stationWidths: [0.6, 1.1, 1.6, 2.1, 2.35, 2.4, 2.35, 2.15, 1.75, 1.2, 0.7, 0.35],
+      stationHeights: [0.45, 0.8, 1.15, 1.4, 1.5, 1.52, 1.48, 1.35, 1.1, 0.75, 0.4, 0.22],
+      crossSectionSides: 10,
+      superellipseExponent: 3.2,
+      wings: [
+        { atStation: 5, span: 4.0, sweep: 0.15, thickness: 0.35, side: 'both', chordScale: 0.95 }
+      ],
+      color: '#7a6a52',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
+        hasCargoPods: true, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top'], hasDockingRing: true, detailDensity: 1.7
+      }
+    }
+  },
+  {
+    id: 'merchant_prince',
+    name: 'Merchant Prince',
+    role: 'trader',
+    price: 48000,
+    droneBays: 2,
+    stats: { hull: 160, shields: 55, armor: 50, cargoCapacity: 200, speed: 85, turnRate: 1.05, accel: 18 },
+    hardpoints: [
+      { id: 'fwd1', position: [-1.2, 0.3, 12], type: 'laser' },
+      { id: 'fwd2', position: [1.2, 0.3, 12], type: 'laser' }
+    ],
+    accessorySlots: 3,
+    hull: {
+      length: 36,
+      stationWidths: [0.45, 0.95, 1.45, 1.9, 2.15, 2.2, 2.1, 1.9, 1.55, 1.05, 0.6, 0.3],
+      stationHeights: [0.35, 0.7, 1.05, 1.3, 1.4, 1.42, 1.35, 1.2, 0.95, 0.65, 0.35, 0.18],
+      crossSectionSides: 12,
+      superellipseExponent: 2.9,
+      wings: [
+        { atStation: 5, span: 4.5, sweep: 0.3, thickness: 0.28, side: 'both', chordScale: 1.0 },
+        { atStation: 2, span: 1.8, sweep: -0.2, thickness: 0.2, side: 'top', chordScale: 0.8 }
+      ],
+      color: '#9a8a6a',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: true, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'side'], hasDockingRing: true, detailDensity: 2.0
+      }
+    }
+  },
+  {
+    id: 'argosy',
+    name: 'Argosy',
+    role: 'trader',
+    price: 62000,
+    droneBays: 2,
+    stats: { hull: 190, shields: 60, armor: 65, cargoCapacity: 280, speed: 70, turnRate: 0.85, accel: 14 },
+    hardpoints: [
+      { id: 'fwd1', position: [0, 0.45, 14], type: 'laser' },
+      { id: 'fwd2', position: [0, -0.25, 11], type: 'missile' }
+    ],
+    accessorySlots: 3,
+    hull: {
+      length: 42,
+      stationWidths: [0.55, 1.15, 1.7, 2.25, 2.55, 2.6, 2.5, 2.25, 1.85, 1.25, 0.75, 0.38],
+      stationHeights: [0.4, 0.85, 1.2, 1.5, 1.6, 1.62, 1.55, 1.4, 1.15, 0.8, 0.45, 0.24],
+      crossSectionSides: 10,
+      superellipseExponent: 3.1,
+      wings: [
+        { atStation: 4, span: 5.0, sweep: 0.2, thickness: 0.38, side: 'both', chordScale: 1.0 },
+        { atStation: 7, span: 2.5, sweep: 0.35, thickness: 0.22, side: 'both', chordScale: 0.85 }
+      ],
+      color: '#6a5a48',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: true, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'bottom'], hasDockingRing: true, detailDensity: 1.85
+      }
+    }
   }
 ]
 
@@ -321,15 +690,13 @@ export const STARTER_SHIP_CLASS_ID = 'bravia_mk2'
 const STARTER_MINING_CAPACITY = 45
 
 for (const c of HAND_CRAFTED_SHIP_CLASSES) {
+  c.droneBays ??= 0
   c.stats.miningCapacity = c.id === STARTER_SHIP_CLASS_ID ? STARTER_MINING_CAPACITY : computeMiningCapacity(c.price, c.role)
 }
 
-// The 7 hand-crafted classes above cover the starter ship and a few iconic
-// archetypes; the remaining 93 (to reach the full 100-class roster) are
-// procedurally generated from a fixed seed so the shipyard catalog is varied
-// but stable across runs, matching the rest of the game's procgen approach.
+// Hand-crafted archetypes + drone-bay hulls; remainder generated to fill the roster.
 const SHIP_ROSTER_SEED = 918273645
-const GENERATED_SHIP_CLASSES = generateShipClassRoster(mulberry32(SHIP_ROSTER_SEED), 93)
+const GENERATED_SHIP_CLASSES = generateShipClassRoster(mulberry32(SHIP_ROSTER_SEED), 82)
 
 export const SHIP_CLASSES = [...HAND_CRAFTED_SHIP_CLASSES, ...GENERATED_SHIP_CLASSES]
 

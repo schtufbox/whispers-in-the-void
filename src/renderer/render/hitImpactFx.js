@@ -14,7 +14,60 @@ const MISSILE_LIFE = 0.55
  * @param {'laser'|'missile'} [kind='laser']
  * @param {string|number} [tint] optional weapon color
  */
+/** Shared static geometries — first combat hit should not allocate mid-frame. */
+let _warmed = false
+let _sharedReady = false
+const _shared = {
+  fleckBox: null,
+  fleckTet: null,
+  smokeSphere: null,
+  blastSphere: null,
+  blastRing: null,
+  emberSphere: null
+}
+
+function ensureSharedHitGeo() {
+  if (_sharedReady) return
+  _shared.fleckBox = new THREE.BoxGeometry(0.2, 0.08, 0.14)
+  _shared.fleckTet = new THREE.TetrahedronGeometry(0.14, 0)
+  _shared.smokeSphere = new THREE.SphereGeometry(1, 8, 6)
+  _shared.blastSphere = new THREE.SphereGeometry(1, 12, 10)
+  _shared.blastRing = new THREE.SphereGeometry(1, 16, 10)
+  _shared.emberSphere = new THREE.SphereGeometry(0.18, 6, 4)
+  _sharedReady = true
+}
+
+function isSharedGeometry(geo) {
+  return (
+    geo === _shared.fleckBox ||
+    geo === _shared.fleckTet ||
+    geo === _shared.smokeSphere ||
+    geo === _shared.blastSphere ||
+    geo === _shared.blastRing ||
+    geo === _shared.emberSphere
+  )
+}
+
+/** Call once at session start (after renderer exists) to avoid first-hit hitch. */
+export function preloadHitImpactFx(renderer, scene, camera) {
+  if (_warmed) return
+  ensureSharedHitGeo()
+  const dummy = spawnHitImpact([1e6, 1e6, 1e6], 'laser', 0x9ee8ff)
+  const dummyM = spawnHitImpact([1e6, 1e6, 1e6], 'missile', 0xff8a3d)
+  scene.add(dummy.group, dummyM.group)
+  try {
+    if (renderer?.compile && scene && camera) renderer.compile(scene, camera)
+  } catch {
+    /* compile optional */
+  }
+  scene.remove(dummy.group, dummyM.group)
+  disposeHitImpact(dummy)
+  disposeHitImpact(dummyM)
+  _warmed = true
+}
+
 export function spawnHitImpact(position, kind = 'laser', tint = null) {
+  ensureSharedHitGeo()
   const origin = position.isVector3
     ? position.clone()
     : new THREE.Vector3().fromArray(position)
@@ -68,9 +121,7 @@ export function spawnHitImpact(position, kind = 'laser', tint = null) {
   const fleckN = isMissile ? 6 : 4
   for (let i = 0; i < fleckN; i++) {
     const size = 0.12 + Math.random() * 0.22
-    const geo = Math.random() < 0.5
-      ? new THREE.BoxGeometry(size, size * 0.4, size * 0.7)
-      : new THREE.TetrahedronGeometry(size * 0.7, 0)
+    const geo = Math.random() < 0.5 ? _shared.fleckBox : _shared.fleckTet
     const mat = new THREE.MeshBasicMaterial({
       color: sparkColor.clone().multiplyScalar(0.85 + Math.random() * 0.3),
       transparent: true,
@@ -79,6 +130,7 @@ export function spawnHitImpact(position, kind = 'laser', tint = null) {
       depthWrite: false
     })
     const mesh = new THREE.Mesh(geo, mat)
+    mesh.scale.setScalar(size / 0.2)
     const dir = new THREE.Vector3(
       Math.random() - 0.5,
       Math.random() - 0.5,
@@ -106,7 +158,7 @@ export function spawnHitImpact(position, kind = 'laser', tint = null) {
     smoke = []
     for (let i = 0; i < SMOKE_PUFFS; i++) {
       const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(1, 8, 6),
+        _shared.smokeSphere,
         new THREE.MeshBasicMaterial({
           color: new THREE.Color().setHSL(0.08, 0.05, 0.55 + Math.random() * 0.2),
           transparent: true,
@@ -132,7 +184,7 @@ export function spawnHitImpact(position, kind = 'laser', tint = null) {
   } else {
     // Compact missile detonation: hot flash + shock ring + a few ember bits.
     const flash = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 12, 10),
+      _shared.blastSphere,
       new THREE.MeshBasicMaterial({
         color: 0xffaa44,
         transparent: true,
@@ -145,7 +197,7 @@ export function spawnHitImpact(position, kind = 'laser', tint = null) {
     group.add(flash)
 
     const ring = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 16, 10),
+      _shared.blastRing,
       new THREE.MeshBasicMaterial({
         color: 0xff6a2a,
         transparent: true,
@@ -161,7 +213,7 @@ export function spawnHitImpact(position, kind = 'laser', tint = null) {
     const embers = []
     for (let i = 0; i < 8; i++) {
       const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.15 + Math.random() * 0.2, 6, 4),
+        _shared.emberSphere,
         new THREE.MeshBasicMaterial({
           color: Math.random() < 0.5 ? 0xffcc66 : 0xff5522,
           transparent: true,
@@ -170,6 +222,7 @@ export function spawnHitImpact(position, kind = 'laser', tint = null) {
           depthWrite: false
         })
       )
+      mesh.scale.setScalar(0.8 + Math.random() * 0.6)
       const dir = new THREE.Vector3(
         Math.random() - 0.5,
         Math.random() - 0.5,
@@ -257,7 +310,8 @@ export function updateHitImpact(fx, dt) {
 
 export function disposeHitImpact(fx) {
   fx.group.traverse((obj) => {
-    if (obj.geometry) obj.geometry.dispose()
+    // Spark buffers are per-fx; shared spheres/boxes must not be disposed.
+    if (obj.geometry && !isSharedGeometry(obj.geometry)) obj.geometry.dispose()
     if (obj.material) {
       if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose())
       else obj.material.dispose()

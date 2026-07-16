@@ -17,24 +17,34 @@ import { quatFacingSun } from './hyperspace.js'
 // Flip to true only while testing Whispers; normal play starts near the core.
 const START_IN_WHISPERS = false
 
-// The player starts nearer the galactic core than the edge — picked from
-// among the 10% of systems closest to it, rather than an arbitrary system.
-// Binaries are excluded so a new game always opens on a single sun (menu
-// flyby still forces a binary; that's separate).
+// Home system is always deep galactic core (max security 6, station police, etc.).
+// Picked from the innermost systems by distance from origin; binaries excluded
+// so a new game opens on a single sun (menu flyby still forces a binary).
 function pickStartingSystem(galaxy, rng) {
   if (START_IN_WHISPERS) {
     const whispers = galaxy.systems.find((s) => s.name === WHISPERS_SYSTEM_NAME)
-    if (whispers) return whispers
+    if (whispers) {
+      // Dev path: still force top security when testing Whispers.
+      whispers.securityRating = 6
+      return whispers
+    }
   }
   const sorted = [...galaxy.systems].sort((a, b) => coreFraction(a) - coreFraction(b))
-  const nearCoreCount = Math.max(1, Math.floor(sorted.length * 0.1))
-  const nearCore = sorted.slice(0, nearCoreCount)
-  const nonExotic = nearCore.filter((s) => !isExoticStarType(starTypeForSystem(s)))
-  if (nonExotic.length) return pick(rng, nonExotic)
-  // Extremely unlikely (~1/8 of systems are binary); fall back galaxy-wide
-  // rather than accept a binary/trinary start.
-  const anySimple = sorted.filter((s) => !isExoticStarType(starTypeForSystem(s)))
-  return pick(rng, anySimple.length ? anySimple : nearCore)
+  // Innermost ~2% of systems (min 3) = true core centre, not mid-core band.
+  const coreCount = Math.max(3, Math.floor(sorted.length * 0.02))
+  const coreCentre = sorted.slice(0, coreCount)
+  const nonExotic = coreCentre.filter((s) => !isExoticStarType(starTypeForSystem(s)))
+  let home
+  if (nonExotic.length) {
+    home = pick(rng, nonExotic)
+  } else {
+    // Extremely unlikely; fall back to nearest simple star system galaxy-wide.
+    const anySimple = sorted.filter((s) => !isExoticStarType(starTypeForSystem(s)))
+    home = pick(rng, anySimple.length ? anySimple : coreCentre)
+  }
+  // Starting system is always maximum security (core authority presence).
+  home.securityRating = 6
+  return home
 }
 
 export function createGameState({ characterName, shipInstanceName, shipClassId, seed }) {
@@ -76,6 +86,12 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
       dockedBodyId: null,
       dockedExteriorPosition: null,
       dockedApproachDir: null,
+      // NPC ids that have exchanged fire with the player (drones only engage these).
+      combatEngagedNpcIds: {},
+      // Authority reputation 0–10 (see game/security.js). Start clean.
+      lawStanding: 10,
+      // Optional base64 data-URL of player portrait (Character screen upload).
+      portraitDataUrl: null,
       ship: {
         classId: shipClassId,
         instanceName: shipInstanceName,
@@ -95,6 +111,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
         spareWeapons: {},
         // Rare industry blueprints (ships/weapons) — craft at station Industry.
         blueprints: {},
+        // Combat drones (Asp Light) — sized by shipClass.droneBays (0–2).
+        drones: [],
         position: [...SYSTEM_ARRIVAL_POSITION],
         velocity: [0, 0, 0],
         // Same sun-facing orientation as post-hyperspace arrival.

@@ -1,5 +1,6 @@
 export const GOODS = [
   { id: 'grain', name: 'Grain', basePrice: 12, tagMultipliers: { agricultural: -0.5, industrial: 0.3, poor: -0.2 } },
+  // Legacy bulk "ore" — no longer on the Trade goods table (mining uses raw_ore…).
   { id: 'ore', name: 'Ore', basePrice: 40, tagMultipliers: { mining: -0.4, industrial: 0.2, tech: 0.1 } },
   { id: 'machinery', name: 'Machinery', basePrice: 150, tagMultipliers: { industrial: -0.3, tech: -0.1, frontier: 0.4 } },
   { id: 'electronics', name: 'Electronics', basePrice: 220, tagMultipliers: { tech: -0.4, frontier: 0.5, wealthy: -0.1 } },
@@ -31,9 +32,19 @@ export const SURVEY_DATA_GOOD_ID = 'survey_data'
 // never share a cargo pool: mined ore lives in ship.miningHold, not cargo.
 export const MINED_ORE_GOOD_IDS = ['raw_ore', 'rich_ore', 'exotic_ore', 'quantum_ore']
 
-// Not station-stocked (no Buy). Still appear in trade for Sell when held.
+// Not station-stocked (no Buy). Survey data is sell-only after transfer to storage.
 export function isBuyableTradeGood(id) {
-  return id !== SHIP_PARTS_GOOD_ID && id !== SURVEY_DATA_GOOD_ID && !MINED_ORE_GOOD_IDS.includes(id)
+  return (
+    id !== SHIP_PARTS_GOOD_ID &&
+    id !== SURVEY_DATA_GOOD_ID &&
+    id !== 'ore' &&
+    !MINED_ORE_GOOD_IDS.includes(id)
+  )
+}
+
+/** Goods shown on the Trade → Goods table (not mined ore / parts). */
+export function isTradeListGood(id) {
+  return id !== SHIP_PARTS_GOOD_ID && id !== 'ore' && !MINED_ORE_GOOD_IDS.includes(id)
 }
 
 export function getGood(id) {

@@ -1,4 +1,5 @@
-import { getSystem, canJumpTo, findHyperspaceRoute } from '../procgen/galaxy.js'
+import { getSystem, canJumpTo, findHyperspaceRoute, ensureSystemSecurity } from '../procgen/galaxy.js'
+import { getSystemSecurity } from '../game/security.js'
 import { missionMarkedSystemIds } from '../game/missions.js'
 import { playerAssetSystemIds } from '../game/economy.js'
 import { shipHasAutopilot } from '../data/accessories.js'
@@ -148,6 +149,7 @@ export function createNavMap(container, gameState) {
         <div class="map-tooltip"></div>
         <div class="info-panel">
           <h3 class="sel-name">—</h3>
+          <div class="stat sel-security"></div>
           <div class="stat sel-bodies"></div>
           <div class="stat sel-distance"></div>
           <div class="stat route-hint"></div>
@@ -418,6 +420,7 @@ export function createNavMap(container, gameState) {
 
       if (!selectedSystemId) {
         contentEl.querySelector('.sel-name').textContent = '—'
+        contentEl.querySelector('.sel-security').textContent = ''
         contentEl.querySelector('.sel-bodies').textContent = ''
         contentEl.querySelector('.sel-distance').textContent = ''
         hintEl.textContent = ''
@@ -460,7 +463,12 @@ export function createNavMap(container, gameState) {
       const path = pathToSelected()
       const jumps = path ? path.length - 1 : 0
 
+      ensureSystemSecurity(system)
+      const sec = getSystemSecurity(system)
       contentEl.querySelector('.sel-name').textContent = system.name
+      contentEl.querySelector('.sel-security').textContent = `Security: ${sec} / 6`
+      contentEl.querySelector('.sel-security').style.color =
+        sec >= 4 ? '#7fe0a0' : sec >= 2 ? '#ffe08a' : sec >= 1 ? '#ffb07a' : '#ff8a7a'
       contentEl.querySelector('.sel-bodies').textContent =
         `${counts.planet ?? 0} planets, ${counts.station ?? 0} stations, ${counts.settlement ?? 0} settlements`
       contentEl.querySelector('.sel-distance').textContent = isCurrent
@@ -556,11 +564,12 @@ export function createNavMap(container, gameState) {
         draw()
       }
       if (nearest) {
-        const tags = []
+        ensureSystemSecurity(nearest)
+        const sec = getSystemSecurity(nearest)
+        const tags = [`Sec ${sec}`]
         if (missionSystems.has(nearest.id)) tags.push('mission')
         if (assetSystems.has(nearest.id)) tags.push('assets')
-        const tag = tags.length ? ` · ${tags.join(', ')}` : ''
-        tooltipEl.textContent = `${nearest.name}${tag}`
+        tooltipEl.textContent = `${nearest.name} · ${tags.join(' · ')}`
         tooltipEl.style.left = `${mx}px`
         tooltipEl.style.top = `${my}px`
         tooltipEl.style.display = 'block'

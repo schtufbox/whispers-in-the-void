@@ -41,6 +41,29 @@ export function exteriorRadiusFor(body) {
   return collisionRadiusFor(body)
 }
 
+/**
+ * Solid shell NPCs must stay outside of (spawn + AI). Uses visual exterior
+ * for stations/settlements so they are not buried in free-model geometry.
+ * Asteroid fields are skipped (sparse rocks, not a solid ball).
+ */
+export function npcExclusionRadiusFor(body) {
+  if (!body) return null
+  if (body.kind === 'asteroidField') return null
+  if (body.kind === 'station' || body.kind === 'settlement') return exteriorRadiusFor(body)
+  if (body.kind === 'planet' || body.kind === 'moon') {
+    const r = body.radius
+    return r != null && Number.isFinite(r) ? r : null
+  }
+  if (body.kind === 'star') {
+    const r = body.radius
+    return r != null && Number.isFinite(r) ? r : 16000
+  }
+  return exteriorRadiusFor(body)
+}
+
+/** Default exclusion radius around system origin (local sun / primary). */
+export const STAR_NPC_EXCLUSION_RADIUS = 16000
+
 /** Effective sphere radius for a rock mesh (lumpy icosa + non-uniform scale). */
 export function rockCollisionRadius(rock) {
   if (rock.collisionRadius != null) return rock.collisionRadius

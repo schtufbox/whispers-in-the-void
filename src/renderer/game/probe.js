@@ -278,6 +278,7 @@ export function launchProbe(gameState, shipClass, rng, { forceFind = false } = {
     return { found: true, stored: false, blueprint }
   }
 
+  // Survey data is ordinary cargo — drag to station storage on Storage tab to sell.
   cargo[SURVEY_DATA_GOOD_ID] = (cargo[SURVEY_DATA_GOOD_ID] ?? 0) + 1
   return { found: true, stored: true, blueprint }
 }

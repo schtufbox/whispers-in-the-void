@@ -8,7 +8,11 @@ let wreckCounter = 0
 // Only ordinary trade goods drop from a wreck — mined ore, ship parts, and
 // probe-only survey data are excluded.
 const LOOTABLE_GOODS = GOODS.filter(
-  (g) => !MINED_ORE_GOOD_IDS.includes(g.id) && g.id !== SHIP_PARTS_GOOD_ID && g.id !== SURVEY_DATA_GOOD_ID
+  (g) =>
+    !MINED_ORE_GOOD_IDS.includes(g.id) &&
+    g.id !== SHIP_PARTS_GOOD_ID &&
+    g.id !== SURVEY_DATA_GOOD_ID &&
+    g.id !== 'ore'
 )
 const SHIP_PART_DROP_CHANCE = 0.15
 // Rare salvageable hardpoint weapon (non-base), equippable at a shipyard.

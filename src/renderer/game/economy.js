@@ -16,6 +16,7 @@ import {
   accessorySlotCount,
   effectiveMiningCapacity
 } from '../data/accessories.js'
+import { repairDrones, ensureDrones, teleportDronesToBay } from './drones.js'
 
 const TRADE_PRICE_NUDGE_FACTOR = 0.002
 /** At full rim (coreFraction 1), rare ores are this fraction cheaper. */
@@ -250,12 +251,20 @@ export function repairCost(gameState, body = null) {
 export function repairShip(gameState, body = null) {
   const shipClass = getShipClass(gameState.player.ship.classId)
   const cost = repairCost(gameState, body)
-  if (cost === 0) throw new Error('Ship is already fully repaired')
-  if (gameState.player.credits < cost) throw new Error('Not enough credits to repair')
+  // Drones may still need repair even if the hull is full.
+  const dronesNeed = (gameState.player.ship.drones ?? []).some(
+    (d) => d.destroyed || d.hull < (d.maxHull ?? d.hull) || d.armor < (d.maxArmor ?? d.armor)
+  )
+  if (cost === 0 && !dronesNeed) throw new Error('Ship is already fully repaired')
+  if (cost > 0 && gameState.player.credits < cost) throw new Error('Not enough credits to repair')
 
-  gameState.player.credits -= cost
-  gameState.player.ship.hull = shipClass.stats.hull
-  gameState.player.ship.armor = shipClass.stats.armor
+  if (cost > 0) {
+    gameState.player.credits -= cost
+    gameState.player.ship.hull = shipClass.stats.hull
+    gameState.player.ship.armor = shipClass.stats.armor
+  }
+  // Station repair also restores combat drones (ship parts do not).
+  repairDrones(gameState.player.ship)
 }
 
 // Per-station storage — cargo/ore/ship-parts/weapons left behind, and ships
@@ -300,7 +309,7 @@ export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
   if (gameState.player.credits < newClass.price) throw new Error('Not enough credits')
 
   gameState.player.credits -= newClass.price
-  storageFor(gameState, bodyId).ships.push({
+  const hull = {
     classId: newClassId,
     instanceName,
     hull: newClass.stats.hull,
@@ -312,8 +321,11 @@ export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
     equippedWeapons: defaultLoadoutFor(newClass),
     equippedAccessories: defaultAccessoriesFor(newClass),
     spareWeapons: {},
-    blueprints: {}
-  })
+    blueprints: {},
+    drones: []
+  }
+  ensureDrones(hull, newClass)
+  storageFor(gameState, bodyId).ships.push(hull)
 }
 
 // Renaming only happens after a ship is already owned — a fresh purchase
@@ -346,7 +358,8 @@ export function activateStoredShip(gameState, bodyId, index) {
   storage.ships.splice(index, 1)
   const currentClass = getShipClass(current.classId)
   const parkedAcc = normalizeAccessories(current.equippedAccessories, currentClass)
-  // Park the ship we were flying — keep loadout/cargo/BPs so nothing is lost.
+  teleportDronesToBay(current)
+  // Park the ship we were flying — keep loadout/cargo/BPs/drones so nothing is lost.
   storage.ships.push({
     classId: current.classId,
     instanceName: current.instanceName,
@@ -359,7 +372,8 @@ export function activateStoredShip(gameState, bodyId, index) {
     equippedWeapons: current.equippedWeapons ?? {},
     equippedAccessories: parkedAcc.equipped,
     spareWeapons: current.spareWeapons ?? {},
-    blueprints: current.blueprints ?? {}
+    blueprints: current.blueprints ?? {},
+    drones: current.drones ?? []
   })
   returnAccessoriesToStorage(storage, parkedAcc.excess)
 
@@ -369,7 +383,7 @@ export function activateStoredShip(gameState, bodyId, index) {
     storedClass
   )
   returnAccessoriesToStorage(storage, storedAcc.excess)
-  gameState.player.ship = {
+  const nextShip = {
     classId: stored.classId,
     instanceName: stored.instanceName,
     hull: stored.hull,
@@ -382,12 +396,16 @@ export function activateStoredShip(gameState, bodyId, index) {
     equippedAccessories: storedAcc.equipped,
     spareWeapons: stored.spareWeapons ?? {},
     blueprints: stored.blueprints ?? {},
+    drones: stored.drones ?? [],
     // Stay where we are in the bay; only the hull/stats change.
     position: [...current.position],
     velocity: [0, 0, 0],
     quaternion: [...current.quaternion],
     throttle: current.throttle ?? 0
   }
+  ensureDrones(nextShip, storedClass)
+  teleportDronesToBay(nextShip)
+  gameState.player.ship = nextShip
 }
 
 // Selling a stored ship (rather than the active one, which is never for

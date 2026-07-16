@@ -4,6 +4,9 @@ import { defaultLoadoutFor } from '../data/weapons.js'
 import { defaultAccessoriesFor, normalizeAccessories } from '../data/accessories.js'
 import { ensureBlueprintMaps, updateCraftingJobs } from './crafting.js'
 import { applyOfflineTime, reanchorGameClock } from './gameClock.js'
+import { ensureDrones } from './drones.js'
+import { ensureLawStanding } from './security.js'
+import { ensureSystemSecurity, getSystem } from '../procgen/galaxy.js'
 
 export function serializeGameState(gameState) {
   // Snapshot clock at save so load can apply offline wall time.
@@ -67,6 +70,13 @@ export function deserializeGameState(data) {
   ).equipped
   gameState.player.ship.spareWeapons ??= {}
   gameState.player.ship.blueprints ??= {}
+  gameState.player.ship.drones ??= []
+  // Ensure bay-compatible drone slots after load (class may have gained bays).
+  try {
+    ensureDrones(gameState.player.ship)
+  } catch {
+    /* class missing / old saves */
+  }
   gameState.stationStorage ??= {}
   for (const storage of Object.values(gameState.stationStorage)) {
     if (!storage) continue
@@ -102,6 +112,18 @@ export function deserializeGameState(data) {
   gameState.player.dockedBodyId ??= null
   gameState.player.dockedExteriorPosition ??= null
   gameState.player.dockedApproachDir ??= null
+  gameState.player.combatEngagedNpcIds ??= {}
+  gameState.player.portraitDataUrl ??= null
+  ensureLawStanding(gameState)
+  // Lazy-fill securityRating for systems from older galaxy saves.
+  for (const system of gameState.galaxy?.systems ?? []) {
+    ensureSystemSecurity(system)
+  }
+  // Home system is always maximum security (core capital authority).
+  if (gameState.player.startingSystemId) {
+    const home = getSystem(gameState.galaxy, gameState.player.startingSystemId)
+    if (home) home.securityRating = 6
+  }
   // Keep last pose arrays valid if an older/corrupt save omitted them.
   const ship = gameState.player.ship
   if (!Array.isArray(ship.position) || ship.position.length !== 3) {

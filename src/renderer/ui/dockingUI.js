@@ -1,4 +1,11 @@
-import { GOODS, MINED_ORE_GOOD_IDS, SHIP_PARTS_GOOD_ID, SURVEY_DATA_GOOD_ID, getGood } from '../data/goods.js'
+import {
+  GOODS,
+  MINED_ORE_GOOD_IDS,
+  SHIP_PARTS_GOOD_ID,
+  SURVEY_DATA_GOOD_ID,
+  getGood,
+  isTradeListGood
+} from '../data/goods.js'
 import {
   getPrice, getMarketAvailable, buyGood, sellGood, sellMinedOre, buyMinedOre, buyShipParts, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip,
@@ -838,11 +845,11 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     const stationOre = stationBay.miningHold ?? {}
     if (sub === 'goods') {
       bodyHtml = `
-        <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy and sell use <strong>station storage</strong> — transfer cargo to/from your ship on the Storage tab. Selling restocks the bay.</p>
+        <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy and sell use <strong>station storage</strong> — transfer cargo (including Survey Data) to the bay on Storage, then sell here.</p>
         <div class="credits">Station cargo bay · Credits: ${credits}cr · Ship hold: ${cargoUsed}/${shipClass.stats.cargoCapacity}</div>
         <table>
           <thead><tr><th>Good</th><th>Price</th><th>Available</th><th>Stored</th><th></th></tr></thead>
-          <tbody>${GOODS.filter((g) => !MINED_ORE_GOOD_IDS.includes(g.id) && g.id !== SHIP_PARTS_GOOD_ID).map((g) => {
+          <tbody>${GOODS.filter((g) => isTradeListGood(g.id)).map((g) => {
             const price = getPrice(gameState, currentBody.id, g.id)
             const held = stationCargo[g.id] ?? 0
             const available = getMarketAvailable(gameState, currentBody.id, g.id)
@@ -1034,6 +1041,10 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     if (shipClass?.role === 'explorer') {
       const pct = Math.round(EXPLORER_PROBE_LOOT_BONUS * 100)
       lines.push(`+${pct}% chance of good loot when probing`)
+    }
+    const bays = Math.max(0, Math.floor(Number(shipClass?.droneBays) || 0))
+    if (bays > 0) {
+      lines.push(`${bays} combat drone bay${bays === 1 ? '' : 's'} (Asp Light Combat)`)
     }
     return lines
   }

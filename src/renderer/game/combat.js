@@ -1,11 +1,64 @@
 import * as THREE from 'three'
 import { getShipClass } from '../data/shipClasses.js'
-import { getSystem } from '../procgen/galaxy.js'
+import { getSystem, ensureSystemSecurity } from '../procgen/galaxy.js'
+import {
+  clearPositionOfBodies,
+  positionOverlapsBodies,
+  NPC_FLIGHT_CLEARANCE,
+  NPC_SPAWN_SHIP_RADIUS
+} from './spawner.js'
 import { mineRock, isRockAlive, mineYieldForWeapon } from './mining.js'
 import { spawnWreck } from './wrecks.js'
 import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
 import { rockCollisionRadius } from './collision.js'
 import { getWeapon, BASE_WEAPON_ID } from '../data/weapons.js'
+import { damageDrone } from './drones.js'
+import {
+  applyLawPenaltyForAttack,
+  applyLawBonusForPirateKill,
+  policeHostileToPlayer,
+  civiliansHostileToPlayer,
+  lawPenaltyAppliesInSystem
+} from './security.js'
+
+/**
+ * Track NPCs the player has shot or that have shot the player.
+ * Drones only engage these — never tab-lock alone.
+ */
+export function markPlayerCombatEngagement(gameState, proj, target, isPlayerTarget) {
+  if (!gameState?.player) return
+  gameState.player.combatEngagedNpcIds ??= {}
+  if (proj.ownerId === 'player' && !isPlayerTarget && target?.id) {
+    const already = !!gameState.player.combatEngagedNpcIds[target.id]
+    // Law penalty only in Sec 3–6, and only for non-hostiles who never shot first.
+    // Pirates/aliens are fair game; police attacks still cost standing in high-sec.
+    if (!already && target.faction !== 'pirate' && target.faction !== 'alien') {
+      const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+      if (system) ensureSystemSecurity(system)
+      if (lawPenaltyAppliesInSystem(system)) {
+        applyLawPenaltyForAttack(gameState, false)
+      }
+    }
+    gameState.player.combatEngagedNpcIds[target.id] = true
+  }
+  if (isPlayerTarget && proj.ownerId && proj.ownerId !== 'player') {
+    gameState.player.combatEngagedNpcIds[proj.ownerId] = true
+  }
+}
+
+export function isNpcEngagedWithPlayer(gameState, npcId) {
+  return !!(gameState?.player?.combatEngagedNpcIds?.[npcId])
+}
+
+/** Drop dead / gone NPCs from the engagement set. */
+export function pruneCombatEngagement(gameState) {
+  const map = gameState?.player?.combatEngagedNpcIds
+  if (!map) return
+  for (const id of Object.keys(map)) {
+    const npc = gameState.npcs?.find((n) => n.id === id && !n.destroyed)
+    if (!npc) delete map[id]
+  }
+}
 
 const HIT_RADIUS = 1.5
 // Mining lasers need a generous pad — pure geometric rock shells are easy to miss
@@ -262,6 +315,8 @@ export function updateProjectiles(gameState, dt, onHit) {
       if (closestDistanceToSegment(targetPos, prevPos, newPos) < hitDistance) {
         const isPlayer = target === gameState.player.ship
         applyDamage(target, proj.damage, gameState.simTime, { player: isPlayer })
+        // Firefight bookkeeping for player drones (engage only after shots exchanged).
+        markPlayerCombatEngagement(gameState, proj, target, isPlayer)
         // Firing on a non-hostile ship (a trader) while home permanently
         // breaks the starting system's peace — see main.js's ambient
         // spawner, which otherwise only ever spawns neutral traffic there.
@@ -275,6 +330,9 @@ export function updateProjectiles(gameState, dt, onHit) {
           gameState.wrecks.push(
             spawnWreck(newPos.toArray(), gameState.simTime, Math.random, target.shipClassId ?? target.classId)
           )
+          if (target.faction === 'pirate') {
+            applyLawBonusForPirateKill(gameState)
+          }
         }
         onHit?.({
           position: newPos.toArray(),
@@ -282,6 +340,8 @@ export function updateProjectiles(gameState, dt, onHit) {
           weaponId: proj.weaponId,
           destroyed: !!target.destroyed,
           hitPlayer: isPlayer,
+          // Shooter id (npc id or 'player') — used for death-screen killer credit.
+          ownerId: proj.ownerId ?? null,
           // Incoming shot direction (world) for directional damage vignette.
           inboundDir: prevPos.clone().sub(newPos).toArray(),
           // NPC id when a ship is killed (for ship-death FX, avoid double-play).
@@ -289,6 +349,35 @@ export function updateProjectiles(gameState, dt, onHit) {
         })
         hit = true
         break
+      }
+    }
+
+    // Enemy shots can destroy deployed *player* combat drones only (NPCs have none).
+    if (!hit && proj.ownerId !== 'player') {
+      const drones = gameState.player?.ship?.drones ?? []
+      for (const drone of drones) {
+        if (!drone.deployed || drone.destroyed || drone.hull <= 0) continue
+        const dPos = new THREE.Vector3().fromArray(drone.position)
+        if (closestDistanceToSegment(dPos, prevPos, newPos) < HIT_RADIUS + 4) {
+          const destroyed = damageDrone(drone, proj.damage, gameState.simTime)
+          // Hitting a player drone counts as engaging the player.
+          if (proj.ownerId && proj.ownerId !== 'player') {
+            gameState.player.combatEngagedNpcIds ??= {}
+            gameState.player.combatEngagedNpcIds[proj.ownerId] = true
+          }
+          onHit?.({
+            position: newPos.toArray(),
+            weaponType: proj.weaponType,
+            weaponId: proj.weaponId,
+            destroyed,
+            hitPlayer: false,
+            hitDrone: true,
+            droneId: drone.id,
+            inboundDir: prevPos.clone().sub(newPos).toArray()
+          })
+          hit = true
+          break
+        }
       }
     }
 
@@ -350,29 +439,91 @@ export function truceActive(gameState) {
   return gameState.npcs.some((n) => !n.destroyed && n.faction === 'alien')
 }
 
+/**
+ * Per-frame combat context — built once before the NPC AI loop so we do not
+ * re-walk the galaxy / re-roll law checks for every ship (was a combat hitch).
+ */
+export function prepareCombatFrame(gameState) {
+  const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (system) ensureSystemSecurity(system)
+  const truce = truceActive(gameState)
+  // Pre-index live hostiles by faction for O(1) opponent lists.
+  const pirates = []
+  const aliens = []
+  const police = []
+  for (const n of gameState.npcs) {
+    if (n.destroyed) continue
+    if (n.faction === 'pirate') pirates.push(n)
+    else if (n.faction === 'alien') aliens.push(n)
+    else if (n.faction === 'police') police.push(n)
+  }
+  return {
+    system,
+    bodies: system?.bodies ?? [],
+    playerPos: gameState.player.ship.position,
+    truce,
+    policeSos: policeHostileToPlayer(gameState, system),
+    civSos: civiliansHostileToPlayer(gameState, system),
+    pirates,
+    aliens,
+    police,
+    engagedMap: gameState.player.combatEngagedNpcIds ?? {}
+  }
+}
+
 // The nearest hostile candidate for this NPC to engage, as { id, position }
 // (id is 'player' or another NPC's id) — or null if this faction never
 // fights (traders). Kept separate from updateNpcAI so both the AI loop and
 // tests/future callers can reason about "who is X currently at war with"
 // without re-deriving it.
-function opponentsFor(npc, gameState) {
+function opponentsFor(npc, gameState, frame = null) {
+  const ctx = frame ?? prepareCombatFrame(gameState)
+  const playerPos = ctx.playerPos
+  const engaged = !!ctx.engagedMap[npc.id]
+
   if (npc.faction === 'alien') {
-    const opponents = [{ id: 'player', position: gameState.player.ship.position }]
-    for (const other of gameState.npcs) {
-      if (other.faction === 'pirate' && !other.destroyed) opponents.push({ id: other.id, position: other.position })
+    const opponents = [{ id: 'player', position: playerPos }]
+    for (const other of ctx.pirates) {
+      if (other.id !== npc.id) opponents.push({ id: other.id, position: other.position })
+    }
+    for (const other of ctx.police) {
+      opponents.push({ id: other.id, position: other.position })
     }
     return opponents
   }
   if (npc.faction === 'pirate') {
-    if (truceActive(gameState)) {
-      return gameState.npcs.filter((n) => n.faction === 'alien' && !n.destroyed).map((n) => ({ id: n.id, position: n.position }))
+    if (ctx.truce) {
+      return ctx.aliens.map((n) => ({ id: n.id, position: n.position }))
     }
-    return [{ id: 'player', position: gameState.player.ship.position }]
+    const opponents = [{ id: 'player', position: playerPos }]
+    for (const other of ctx.police) {
+      opponents.push({ id: other.id, position: other.position })
+    }
+    return opponents
+  }
+  if (npc.faction === 'police') {
+    const opponents = []
+    for (const other of ctx.pirates) {
+      opponents.push({ id: other.id, position: other.position })
+    }
+    for (const other of ctx.aliens) {
+      opponents.push({ id: other.id, position: other.position })
+    }
+    if (ctx.policeSos || engaged) {
+      opponents.push({ id: 'player', position: playerPos })
+    }
+    return opponents
+  }
+  // Traders / civilians: only fight when engaged or system-wide outlaw SOS.
+  if (npc.faction === 'trader' || !npc.faction) {
+    if (engaged || ctx.civSos) {
+      return [{ id: 'player', position: playerPos }]
+    }
   }
   return []
 }
 
-export function updateNpcAI(npc, gameState, dt, onFire, onPlayerHit) {
+export function updateNpcAI(npc, gameState, dt, onFire, onPlayerHit, combatFrame = null) {
   if (npc.destroyed) return
   const npcShipClass = getShipClass(npc.shipClassId)
   regenShields(npc, npcShipClass, gameState.simTime, dt)
@@ -386,7 +537,7 @@ export function updateNpcAI(npc, gameState, dt, onFire, onPlayerHit) {
 
   let opponent = null
   let distance = Infinity
-  for (const candidate of opponentsFor(npc, gameState)) {
+  for (const candidate of opponentsFor(npc, gameState, combatFrame)) {
     const d = npcPos.distanceTo(new THREE.Vector3().fromArray(candidate.position))
     if (d < distance) {
       distance = d
@@ -460,11 +611,44 @@ export function updateNpcAI(npc, gameState, dt, onFire, onPlayerHit) {
     forward = faceToward(quat, npcPos, fleeTarget, stats.turnRate, dt)
     velocity.addScaledVector(forward, stats.accel * dt)
   } else {
+    // Station police: loiter in a ring outside the station exterior; others wander.
     if (!npc.patrolTarget || npcPos.distanceTo(new THREE.Vector3().fromArray(npc.patrolTarget)) < 20) {
-      npc.patrolTarget = npcPos
-        .clone()
-        .add(new THREE.Vector3((Math.random() - 0.5) * 200, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 200))
-        .toArray()
+      if (npc.patrolAnchor && Array.isArray(npc.patrolAnchor)) {
+        const minR = Math.max(80, npc.patrolMinRadius ?? npc.patrolRadius ?? 280)
+        const maxR = Math.max(minR + 40, npc.patrolMaxRadius ?? minR + 200)
+        const a = Math.random() * Math.PI * 2
+        const elev = (Math.random() - 0.5) * 0.5
+        const dist = minR + Math.random() * (maxR - minR)
+        let target = [
+          npc.patrolAnchor[0] + Math.cos(a) * dist * Math.cos(elev),
+          npc.patrolAnchor[1] + Math.sin(elev) * dist * 0.45,
+          npc.patrolAnchor[2] + Math.sin(a) * dist * Math.cos(elev)
+        ]
+        // Never pick a patrol waypoint inside solid geometry.
+        if (combatFrame?.bodies) {
+          target = clearPositionOfBodies(
+            target,
+            combatFrame.bodies,
+            NPC_SPAWN_SHIP_RADIUS,
+            NPC_FLIGHT_CLEARANCE
+          )
+        }
+        npc.patrolTarget = target
+      } else {
+        let target = npcPos
+          .clone()
+          .add(new THREE.Vector3((Math.random() - 0.5) * 200, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 200))
+          .toArray()
+        if (combatFrame?.bodies) {
+          target = clearPositionOfBodies(
+            target,
+            combatFrame.bodies,
+            NPC_SPAWN_SHIP_RADIUS,
+            NPC_FLIGHT_CLEARANCE
+          )
+        }
+        npc.patrolTarget = target
+      }
     }
     forward = faceToward(quat, npcPos, new THREE.Vector3().fromArray(npc.patrolTarget), stats.turnRate * 0.5, dt)
     velocity.addScaledVector(forward, stats.accel * 0.3 * dt)
@@ -472,22 +656,56 @@ export function updateNpcAI(npc, gameState, dt, onFire, onPlayerHit) {
 
   velocity.multiplyScalar(Math.pow(0.35, dt))
   if (velocity.length() > stats.speed) velocity.setLength(stats.speed)
-  const position = npcPos.clone().addScaledVector(velocity, dt)
+  let position = npcPos.clone().addScaledVector(velocity, dt).toArray()
 
-  npc.position = position.toArray()
+  // Keep NPCs outside solid shells — fast overlap check first (skip clear cost).
+  if (
+    combatFrame?.bodies &&
+    positionOverlapsBodies(position, combatFrame.bodies, NPC_SPAWN_SHIP_RADIUS, NPC_FLIGHT_CLEARANCE)
+  ) {
+    const before = position
+    position = clearPositionOfBodies(
+      position,
+      combatFrame.bodies,
+      NPC_SPAWN_SHIP_RADIUS,
+      NPC_FLIGHT_CLEARANCE
+    )
+    const pushX = position[0] - before[0]
+    const pushY = position[1] - before[1]
+    const pushZ = position[2] - before[2]
+    if (pushX * pushX + pushY * pushY + pushZ * pushZ > 1e-6) {
+      const v = velocity
+      const inward = v.x * -pushX + v.y * -pushY + v.z * -pushZ
+      if (inward > 0) {
+        const plen = Math.hypot(pushX, pushY, pushZ) || 1
+        v.x += (pushX / plen) * inward
+        v.y += (pushY / plen) * inward
+        v.z += (pushZ / plen) * inward
+      }
+    }
+  }
+
+  npc.position = position
   npc.velocity = velocity.toArray()
   npc.quaternion = quat.toArray()
 }
 
-export function updateCombatFlag(gameState) {
-  const playerPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
-  const truce = truceActive(gameState)
-  // Aliens are always hostile to the player; pirates are too, except while
-  // truced against a shared alien threat (see opponentsFor above).
+export function updateCombatFlag(gameState, combatFrame = null) {
+  const ctx = combatFrame ?? prepareCombatFrame(gameState)
+  const playerPos = new THREE.Vector3().fromArray(ctx.playerPos)
+  // Aliens always hostile; pirates unless truced; police when wanted/engaged;
+  // civilians when outlaw SOS or engaged.
   const hostileNearby = gameState.npcs.some((n) => {
     if (n.destroyed) return false
-    if (n.faction !== 'alien' && !(n.faction === 'pirate' && !truce)) return false
-    return new THREE.Vector3().fromArray(n.position).distanceTo(playerPos) < ATTACK_RANGE
+    const dist = new THREE.Vector3().fromArray(n.position).distanceTo(playerPos)
+    if (dist >= ATTACK_RANGE) return false
+    if (n.faction === 'alien') return true
+    if (n.faction === 'pirate' && !ctx.truce) return true
+    if (n.faction === 'police' && (ctx.policeSos || ctx.engagedMap[n.id])) return true
+    if ((n.faction === 'trader' || !n.faction) && (ctx.civSos || ctx.engagedMap[n.id])) {
+      return true
+    }
+    return false
   })
   if (hostileNearby) {
     gameState.inCombat = true
@@ -495,4 +713,17 @@ export function updateCombatFlag(gameState) {
   } else if (gameState.inCombat && gameState.simTime - (gameState.lastCombatContactAt ?? 0) > COMBAT_COOLDOWN_S) {
     gameState.inCombat = false
   }
+}
+
+/** True when the player has exchanged fire with a live pirate nearby (police response). */
+export function playerFightingPirates(gameState) {
+  if (!gameState?.npcs?.length) return false
+  const engagedMap = gameState.player.combatEngagedNpcIds
+  if (!engagedMap) return false
+  const playerPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
+  return gameState.npcs.some((n) => {
+    if (n.destroyed || n.faction !== 'pirate') return false
+    if (!engagedMap[n.id]) return false
+    return new THREE.Vector3().fromArray(n.position).distanceTo(playerPos) < ATTACK_RANGE * 1.4
+  })
 }

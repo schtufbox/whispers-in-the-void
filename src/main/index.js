@@ -3,6 +3,16 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { registerSaveHandlers } from './ipc.js'
+import { getDisplayMode } from './settings.js'
+import {
+  applyDisplayMode,
+  attachWindowBoundsPersistence,
+  borderlessCreateOptions,
+  getMainWindow,
+  notifyDisplayModeForMain,
+  setMainWindow,
+  toggleDisplayMode
+} from './display.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
@@ -204,7 +214,7 @@ function setupApplicationMenu() {
   })
 
   // Arcade game: no View / Help / Edit chrome in the window.
-  // Fullscreen stays on Alt+Enter via createWindow's before-input-event;
+  // Display mode (borderless / windowed) is toggled via Alt+Enter or pause menu;
   // quit is still available in-game and by closing the window.
   if (process.platform === 'darwin') {
     // Custom About (not role:about) so we can show build/icon.png — macOS's
@@ -237,10 +247,21 @@ function setupApplicationMenu() {
 
 function createWindow() {
   const icon = appIconPath()
+  const opts = borderlessCreateOptions()
+
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: opts.width,
+    height: opts.height,
+    x: opts.x,
+    y: opts.y,
+    center: opts.center,
+    // Frameless for borderless fullscreen so there is no title bar over the game.
+    frame: opts.frame,
+    fullscreen: false,
+    autoHideMenuBar: true,
     title: APP_NAME,
+    show: false,
+    backgroundColor: '#05070d',
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -249,33 +270,41 @@ function createWindow() {
     }
   })
 
+  setMainWindow(win)
+  // Remember manual windowed resize/position as the new default.
+  attachWindowBoundsPersistence(win)
+
   // Prevent the renderer document title from overwriting APP_NAME with "Electron".
   win.on('page-title-updated', (event) => {
     event.preventDefault()
     win.setTitle(APP_NAME)
   })
 
-  // Alt+Enter fullscreen even when the game has pointer lock / no menu focus.
+  // Alt+Enter toggles borderless ↔ windowed and persists the choice.
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     if (!input.alt || input.control || input.meta || input.shift) return
     if (input.key !== 'Enter' && input.key !== 'Return') return
-    win.setFullScreen(!win.isFullScreen())
+    toggleDisplayMode()
     event.preventDefault()
   })
 
   // Tell the renderer so Alt free-look can snap back — fullscreen often
   // swallows the Alt keyup and leaves the chase cam stuck in orbit mode.
-  const notifyFullscreen = () => {
-    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-      win.webContents.send('fullscreen-changed', win.isFullScreen())
-    }
-  }
+  const notifyFullscreen = () => notifyDisplayModeForMain()
   win.on('enter-full-screen', notifyFullscreen)
   win.on('leave-full-screen', notifyFullscreen)
+  win.on('enter-html-full-screen', notifyFullscreen)
+  win.on('leave-html-full-screen', notifyFullscreen)
 
   win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     console.log(`[renderer] ${message} (${sourceId}:${line})`)
+  })
+
+  win.once('ready-to-show', () => {
+    applyDisplayMode(win, getDisplayMode())
+    win.show()
+    notifyDisplayModeForMain()
   })
 
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
@@ -283,6 +312,10 @@ function createWindow() {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  win.on('closed', () => {
+    if (getMainWindow() === win) setMainWindow(null)
+  })
 }
 
 app.whenReady().then(() => {

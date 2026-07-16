@@ -818,14 +818,30 @@ export function generateGalaxy(seed, opts = {}) {
         bodies.push(moon)
       }
     }
+    const galaxyPosition = spiralPosition(rng, i % ARM_COUNT)
+    // Security rating 0–6: center 30% core, outer 10% rim always 0 (see game/security.js).
+    const dist = Math.hypot(galaxyPosition[0], galaxyPosition[2])
+    const f = Math.min(1, dist / GALAXY_MAX_RADIUS)
+    let securityRating = 0
+    if (f >= 0.9) securityRating = 0
+    else if (f < 0.3) {
+      securityRating = rng() < 0.8 ? 3 + Math.floor(rng() * 4) : 1 + Math.floor(rng() * 2)
+    } else if (rng() < 0.75) {
+      securityRating = 1 + Math.floor(rng() * 2)
+    } else if (rng() < 0.4) {
+      securityRating = 0
+    } else {
+      securityRating = 3 + Math.floor(rng() * 4)
+    }
     systems.push({
       id: `sys-${i}`,
       name: systemName,
-      galaxyPosition: spiralPosition(rng, i % ARM_COUNT),
+      galaxyPosition,
       sizeScale,
       bodies,
       // Shared with makeStation/makeSettlement so facility names stay unique.
-      _usedNames: usedNames
+      _usedNames: usedNames,
+      securityRating
     })
   }
 
@@ -994,6 +1010,42 @@ export function advancePlottedRoute(gameState) {
 export function coreFraction(system) {
   const dist = Math.hypot(system.galaxyPosition[0], system.galaxyPosition[2])
   return Math.min(1, dist / GALAXY_MAX_RADIUS)
+}
+
+/**
+ * Ensure every system has securityRating 0–6 (lazy for old saves).
+ * Uses a deterministic hash of system.id so it stays stable across sessions.
+ */
+export function ensureSystemSecurity(system) {
+  if (!system) return 0
+  if (system.securityRating != null && Number.isFinite(system.securityRating)) {
+    return Math.max(0, Math.min(6, Math.floor(system.securityRating)))
+  }
+  // Deterministic "rng" from system id
+  let h = 2166136261
+  const s = String(system.id ?? '')
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  let x = h >>> 0
+  const rng = () => {
+    x = (Math.imul(x, 1664525) + 1013904223) >>> 0
+    return x / 4294967296
+  }
+  const f = coreFraction(system)
+  let rating
+  // Center 30% core, last 10% outer rim (matches game/security.js rollSecurityRating).
+  if (f >= 0.9) rating = 0
+  else if (f < 0.3) {
+    rating = rng() < 0.8 ? 3 + Math.floor(rng() * 4) : 1 + Math.floor(rng() * 2)
+  } else {
+    if (rng() < 0.75) rating = 1 + Math.floor(rng() * 2)
+    else if (rng() < 0.4) rating = 0
+    else rating = 3 + Math.floor(rng() * 4)
+  }
+  system.securityRating = rating
+  return rating
 }
 
 export function systemsWithinJumps(galaxy, originSystemId, maxJumps) {

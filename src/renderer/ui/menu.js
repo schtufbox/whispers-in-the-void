@@ -1,4 +1,5 @@
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
+import { SETTINGS_VIEW_CSS, settingsViewHTML, bindSettingsView } from './settingsView.js'
 
 const STYLE = `
 /* Light dark halo for legibility over the sun — keep it modest so type stays bright. */
@@ -257,9 +258,10 @@ const STYLE = `
 }
 #main-menu button.menu-link .glitch-text::before { clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%); filter: hue-rotate(-50deg); animation: menuGlitchTop 7s steps(1) infinite; }
 #main-menu button.menu-link .glitch-text::after { clip-path: polygon(0 55%, 100% 55%, 100% 100%, 0 100%); filter: hue-rotate(170deg); animation: menuGlitchBottom 7s steps(1) infinite; }
-/* Staggered per item (nth-of-type) so all three don't glitch in sync. */
+/* Staggered per item (nth-of-type) so menu links don't glitch in sync. */
 #main-menu button.menu-link:nth-of-type(2) .glitch-text::before, #main-menu button.menu-link:nth-of-type(2) .glitch-text::after { animation-delay: 1.4s; }
 #main-menu button.menu-link:nth-of-type(3) .glitch-text::before, #main-menu button.menu-link:nth-of-type(3) .glitch-text::after { animation-delay: 2.8s; }
+#main-menu button.menu-link:nth-of-type(4) .glitch-text::before, #main-menu button.menu-link:nth-of-type(4) .glitch-text::after { animation-delay: 4.2s; }
 @keyframes menuGlitchTop {
   0%, 91%, 100% { opacity: 0; transform: translate(0, 0); }
   92% { opacity: 0.85; transform: translate(-4px, -1px); }
@@ -287,10 +289,35 @@ const STYLE = `
 #main-menu.reveal .menu-links > button:nth-of-type(1) { animation-delay: 0s; }
 #main-menu.reveal .menu-links > button:nth-of-type(2) { animation-delay: 0.08s; }
 #main-menu.reveal .menu-links > button:nth-of-type(3) { animation-delay: 0.16s; }
+#main-menu.reveal .menu-links > button:nth-of-type(4) { animation-delay: 0.24s; }
 #main-menu.reveal .panel > button:nth-of-type(1), #main-menu.reveal .panel > label:nth-of-type(1) { animation-delay: 0s; }
 #main-menu.reveal .panel > button:nth-of-type(2), #main-menu.reveal .panel > label:nth-of-type(2) { animation-delay: 0.08s; }
 #main-menu.reveal .panel > button:nth-of-type(3), #main-menu.reveal .panel > label:nth-of-type(3) { animation-delay: 0.16s; }
 #main-menu.reveal .panel > button:nth-of-type(4) { animation-delay: 0.24s; }
+#main-menu.reveal .panel > button:nth-of-type(5) { animation-delay: 0.32s; }
+/* Settings panel (same shell as Create Pilot). */
+#main-menu .settings-view {
+  width: min(360px, 92vw);
+  padding: 28px 32px;
+  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.88));
+  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
+  box-shadow: 0 0 30px rgba(79,195,217,0.25), inset 0 0 26px rgba(79,195,217,0.05);
+}
+#main-menu .settings-view h2 {
+  margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px;
+  text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 10px rgba(79,195,217,0.7);
+}
+#main-menu .settings-view button {
+  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  padding: 11px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
+  opacity: 1; transform: none;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#main-menu .settings-view button:hover:not(:disabled) {
+  background: rgba(111,216,242,0.22); box-shadow: 0 0 14px rgba(79,195,217,0.35);
+  transform: none;
+}
+${SETTINGS_VIEW_CSS}
 @keyframes riseIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 `
 
@@ -318,6 +345,7 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
       <div class="menu-links">
         <button class="new-game menu-link"><span class="glitch-text" data-text="New Game">New Game</span></button>
         <button class="load-game menu-link"><span class="glitch-text" data-text="Load Game">Load Game</span></button>
+        <button class="settings menu-link"><span class="glitch-text" data-text="Settings">Settings</span></button>
         <button class="quit menu-link"><span class="glitch-text" data-text="Quit">Quit</span></button>
       </div>
     </div>
@@ -328,11 +356,15 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
       <button class="confirm-new-game">Launch</button>
       <button class="back">Back</button>
     </div>
+    <div class="panel settings-view" style="display:none">
+      ${settingsViewHTML()}
+    </div>
   `
   container.appendChild(root)
 
   const mainView = root.querySelector('.main-view')
   const newGameView = root.querySelector('.new-game-view')
+  const settingsView = root.querySelector('.settings-view')
   const loadBtn = root.querySelector('.load-game')
 
   function replayEntrance() {
@@ -341,16 +373,28 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     root.classList.add('reveal')
   }
 
+  function showMain() {
+    mainView.style.display = 'flex'
+    newGameView.style.display = 'none'
+    settingsView.style.display = 'none'
+    replayEntrance()
+  }
+
+  function showSettings() {
+    mainView.style.display = 'none'
+    newGameView.style.display = 'none'
+    settingsView.style.display = 'flex'
+    settingsApi.refresh()
+    replayEntrance()
+  }
+
   root.querySelector('.new-game').addEventListener('click', () => {
     mainView.style.display = 'none'
+    settingsView.style.display = 'none'
     newGameView.style.display = 'flex'
     replayEntrance()
   })
-  root.querySelector('.back').addEventListener('click', () => {
-    newGameView.style.display = 'none'
-    mainView.style.display = 'flex'
-    replayEntrance()
-  })
+  root.querySelector('.back').addEventListener('click', () => showMain())
   root.querySelector('.confirm-new-game').addEventListener('click', () => {
     const characterName = root.querySelector('.char-name').value.trim() || 'Pilot'
     const shipInstanceName = root.querySelector('.ship-name').value.trim() || starterShip.name
@@ -361,7 +405,10 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     hide()
     onLoadGame()
   })
+  root.querySelector('.settings').addEventListener('click', () => showSettings())
   root.querySelector('.quit').addEventListener('click', () => window.electronAPI.quitApp())
+
+  const settingsApi = bindSettingsView(settingsView, { onBack: showMain })
 
   function hide() {
     root.style.display = 'none'
@@ -372,6 +419,7 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
       loadBtn.disabled = !hasSaveGame
       mainView.style.display = 'flex'
       newGameView.style.display = 'none'
+      settingsView.style.display = 'none'
       root.style.display = 'flex'
       replayEntrance()
     },

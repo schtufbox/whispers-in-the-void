@@ -1,14 +1,45 @@
 const STYLE = `
 #hud { font-family: monospace; color: #cfe3ff; user-select: none; }
 
-/* Soft ground shadow under every HUD chrome piece (readable over bright stars). */
+/*
+ * Unified HUD chrome surface.
+ * Default cut: top-right. Right-side panels (radar) flip to top-left + right accent.
+ * Velocity: both top corners cut.
+ */
 #hud .status-panel,
 #hud .velocity-panel,
 #hud .system-label,
-#hud #radar {
+#hud .target-panel,
+#hud #radar .radar-frame {
+  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.82));
+  border: 1px solid rgba(111,216,242,0.45);
+  border-left: 3px solid #6fd8f2;
+  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 22px rgba(79,195,217,0.06);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
   filter:
     drop-shadow(0 2px 3px rgba(0,0,0,0.7))
     drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+}
+
+/* Velocity: cut both top corners; thick cyan accent on both sides */
+#hud .velocity-panel {
+  border-left: 3px solid #6fd8f2;
+  border-right: 3px solid #6fd8f2;
+  clip-path: polygon(
+    14px 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    0 100%,
+    0 14px
+  );
+}
+
+/* Radar (right column): top-left cut + accent stripe on the right */
+#hud #radar .radar-frame {
+  border-left: 1px solid rgba(111,216,242,0.45);
+  border-right: 3px solid #6fd8f2;
+  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% 100%, 0 100%);
 }
 
 /* Cockpit chrome: four corner braces plus a faint full-screen scanline wash,
@@ -34,11 +65,6 @@ const STYLE = `
   position: fixed; top: 16px; left: 16px;
   width: 240px;
   padding: 12px 18px 10px 20px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.8));
-  border: 1px solid rgba(111,216,242,0.45);
-  border-left: 3px solid #6fd8f2;
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%);
-  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 22px rgba(79,195,217,0.06);
 }
 #hud .panel-title {
   font-size: 10px; letter-spacing: 3px; opacity: 0.65; color: #7fe6ff;
@@ -89,10 +115,6 @@ const STYLE = `
   position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
   pointer-events: none; z-index: 6;
   text-align: center; padding: 6px 18px 7px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.88), rgba(7,12,22,0.75));
-  border: 1px solid rgba(111,216,242,0.4);
-  box-shadow: 0 0 14px rgba(79,195,217,0.28), inset 0 0 16px rgba(79,195,217,0.05);
-  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 8px 100%, 0 50%);
 }
 #hud .system-label .sys-tag {
   display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
@@ -104,6 +126,22 @@ const STYLE = `
   display: block; font-size: 14px; letter-spacing: 1.5px; color: #eaffff;
   text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 8px rgba(127,230,255,0.55);
   white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
+}
+#hud .system-label .sys-name .sec-badge {
+  display: inline-block; margin-left: 10px; padding: 1px 8px 2px;
+  font-size: 11px; letter-spacing: 1px; vertical-align: middle;
+  border: 1px solid rgba(111,216,242,0.45); border-radius: 2px;
+  color: #7fe6ff; background: rgba(79,195,217,0.1);
+  text-shadow: 0 0 6px rgba(79,195,217,0.5);
+}
+#hud .system-label .sys-name .sec-badge.sec-high {
+  color: #7fe0a0; border-color: rgba(127,224,160,0.5); background: rgba(127,224,160,0.1);
+}
+#hud .system-label .sys-name .sec-badge.sec-mid {
+  color: #ffe08a; border-color: rgba(255,210,70,0.45); background: rgba(255,210,70,0.08);
+}
+#hud .system-label .sys-name .sec-badge.sec-low {
+  color: #ff9a7a; border-color: rgba(224,90,90,0.4); background: rgba(224,90,90,0.1);
 }
 #hud .system-label .nearest-body {
   display: none; margin-top: 4px; font-size: 11px; letter-spacing: 1px;
@@ -118,15 +156,51 @@ const STYLE = `
 }
 #hud .system-label .nearest-body .nb-name { color: #eaffff; }
 
+/* Tab-target readout — sits between system name (center) and radar (right). */
+#hud .target-panel {
+  position: fixed; top: 16px; right: 210px; z-index: 6;
+  width: 200px; padding: 10px 12px 10px 14px;
+  pointer-events: none; display: none;
+}
+#hud .target-panel.visible { display: block; }
+#hud .target-panel.hostile {
+  border-color: rgba(224,90,90,0.55); border-left-color: #e05a5a;
+  box-shadow: 0 0 14px rgba(224,90,90,0.25), inset 0 0 16px rgba(224,90,90,0.05);
+}
+#hud .target-panel .tp-tag {
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: #7fe6ff; opacity: 0.75; margin-bottom: 2px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+}
+#hud .target-panel.hostile .tp-tag { color: #ff9a7a; }
+#hud .target-panel .tp-name {
+  font-size: 13px; letter-spacing: 0.8px; color: #eaffff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(127,230,255,0.4);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;
+}
+#hud .target-panel .tp-meta {
+  font-size: 10px; letter-spacing: 0.5px; color: #8fb3d9; opacity: 0.9;
+  margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#hud .target-panel .tp-row { margin-bottom: 5px; }
+#hud .target-panel .tp-row:last-child { margin-bottom: 0; }
+#hud .target-panel .tp-row-label {
+  display: flex; justify-content: space-between; font-size: 9px;
+  letter-spacing: 1px; opacity: 0.75; margin-bottom: 1px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.75);
+}
+#hud .target-panel .tp-row-label .value { opacity: 0.95; }
+#hud .target-panel .bar { height: 7px; }
+#hud .target-panel .bar.ore .fill {
+  background: linear-gradient(90deg, #6a5a2a, #d9b56a); box-shadow: 0 0 5px rgba(217,181,106,0.45);
+}
+
 /* Velocity gets its own bottom-center readout, separate from the shield/
    armor/hull status panel now up in the top-left corner. */
 #hud .velocity-panel {
   position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
   width: 260px;
   padding: 8px 16px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.8));
-  border: 1px solid rgba(111,216,242,0.45);
-  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 22px rgba(79,195,217,0.06);
 }
 
 @keyframes hud-shine { 0% { background-position: 220% 0; } 100% { background-position: -20% 0; } }
@@ -135,8 +209,7 @@ const STYLE = `
   50% { box-shadow: 0 0 16px 2px rgba(255,90,90,0.95); }
 }
 
-/* Squarer radar chrome: same family as status panel, chamfer on bottom-left
-   only (status panel cuts bottom-right). */
+/* Radar — same chrome family as other HUD panels (top-right cut). */
 #radar {
   position: fixed; right: 16px; top: 16px;
   font-family: monospace; color: #cfe3ff; user-select: none; text-align: center;
@@ -146,12 +219,6 @@ const STYLE = `
   width: 176px; height: 176px;
   padding: 6px;
   box-sizing: border-box;
-  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.85));
-  border: 1px solid rgba(111,216,242,0.5);
-  border-left: 3px solid #6fd8f2;
-  /* Bottom-left cut (mirror of status-panel's bottom-right notch). */
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 16px 100%, 0 calc(100% - 16px));
-  box-shadow: 0 0 16px rgba(79,195,217,0.35), inset 0 0 22px rgba(79,195,217,0.08);
 }
 #radar canvas {
   display: block;
@@ -169,7 +236,8 @@ const STYLE = `
 /* Shared soft ground shadow — kept in glitch rest frames so animation doesn't wipe it. */
 /* Supercruise: stronger chromatic HUD glitch (still sparser than title ~6.5s). */
 #hud.cruise-glitch .status-panel,
-#hud.cruise-glitch #radar {
+#hud.cruise-glitch .target-panel,
+#hud.cruise-glitch #radar .radar-frame {
   animation: hudCruisePanelGlitch 12s steps(1) infinite;
 }
 #hud.cruise-glitch .cockpit-frame .corner {
@@ -184,7 +252,8 @@ const STYLE = `
 }
 #hud.cruise-glitch .status-panel { animation-delay: 0s; }
 #hud.cruise-glitch .system-label { animation-delay: 0.05s; }
-#hud.cruise-glitch #radar { animation-delay: 0.1s; }
+#hud.cruise-glitch .target-panel { animation-delay: 0.04s; }
+#hud.cruise-glitch #radar .radar-frame { animation-delay: 0.1s; }
 #hud.cruise-glitch .velocity-panel { animation-delay: 0.07s; }
 #hud.cruise-glitch .cockpit-frame .corner.tl { animation-delay: 0s; }
 #hud.cruise-glitch .cockpit-frame .corner.tr { animation-delay: 0.03s; }
@@ -420,6 +489,12 @@ export function createHud(container) {
       <span class="sys-name">—</span>
       <span class="nearest-body"><span class="nb-tag">Nearest Body</span><span class="nb-name"></span></span>
     </div>
+    <div class="target-panel" aria-live="polite">
+      <div class="tp-tag">Target</div>
+      <div class="tp-name">—</div>
+      <div class="tp-meta"></div>
+      <div class="tp-bars"></div>
+    </div>
     <div class="status-panel">
       <div class="row shield">
         <div class="row-label"><span>Shield</span><span class="value"></span></div>
@@ -432,6 +507,13 @@ export function createHud(container) {
       <div class="row hull">
         <div class="row-label"><span>Hull</span><span class="value"></span></div>
         <div class="bar"><div class="fill"></div></div>
+      </div>
+      <div class="row drones-bay" style="display:none;margin-top:4px">
+        <div class="row-label"><span>Drones</span><span class="value drones-bay-count"></span></div>
+      </div>
+      <div class="drones-block" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid rgba(111,216,242,0.25)">
+        <div class="panel-title" style="margin-bottom:6px">Drones (deployed)</div>
+        <div class="drone-rows"></div>
       </div>
     </div>
     <div class="velocity-panel">
@@ -471,11 +553,33 @@ export function createHud(container) {
   const systemNameEl = hud.querySelector('.system-label .sys-name')
   const nearestBodyEl = hud.querySelector('.system-label .nearest-body')
   const nearestBodyNameEl = hud.querySelector('.system-label .nearest-body .nb-name')
-  let lastSystemName = null
+  const targetPanel = hud.querySelector('.target-panel')
+  const targetNameEl = hud.querySelector('.target-panel .tp-name')
+  const targetMetaEl = hud.querySelector('.target-panel .tp-meta')
+  const targetBarsEl = hud.querySelector('.target-panel .tp-bars')
+  let lastSystemLabelKey = null
   let lastNearestBodyName = undefined
 
   function pct(value, max) {
     return Math.max(0, Math.min(100, (value / max) * 100))
+  }
+
+  function barRow(label, value, max, kind) {
+    const p = max > 0 ? pct(value, max) : 0
+    return `<div class="tp-row">
+      <div class="tp-row-label"><span>${label}</span><span class="value">${p.toFixed(0)}%</span></div>
+      <div class="bar ${kind}"><div class="fill" style="width:${p}%"></div></div>
+    </div>`
+  }
+
+  function formatSystemLabel(systemName, securityRating) {
+    const name = systemName || '—'
+    if (securityRating == null || !Number.isFinite(securityRating)) return name
+    const sec = Math.max(0, Math.min(6, Math.floor(securityRating)))
+    let cls = 'sec-low'
+    if (sec >= 4) cls = 'sec-high'
+    else if (sec >= 2) cls = 'sec-mid'
+    return `${name} <span class="sec-badge ${cls}" title="System security ${sec}/6">Sec ${sec}</span>`
   }
 
   return {
@@ -483,7 +587,8 @@ export function createHud(container) {
     // is the overall (unsigned) velocity magnitude shown in the text readout.
     // nearestBodyName: string when within HUD proximity of a planet/moon/star/
     // station/settlement; null/undefined hides the line.
-    update(shipState, shipClass, speed, forwardSpeed, systemName = null, nearestBodyName = null) {
+    // securityRating: 0–6 system security shown beside the name.
+    update(shipState, shipClass, speed, forwardSpeed, systemName = null, nearestBodyName = null, securityRating = null) {
       const shieldPct = pct(shipState.shields, shipClass.stats.shields)
       const armorPct = pct(shipState.armor, shipClass.stats.armor)
       const hullPct = pct(shipState.hull, shipClass.stats.hull)
@@ -495,6 +600,22 @@ export function createHud(container) {
       armorValue.textContent = `${armorPct.toFixed(0)}%`
       hullValue.textContent = `${hullPct.toFixed(0)}%`
 
+      // Drones in bay (stowed / ready) — under hull whenever the hull has bays.
+      const dronesBayRow = hud.querySelector('.drones-bay')
+      const dronesBayCount = hud.querySelector('.drones-bay-count')
+      const bayCount = Math.max(0, Math.floor(Number(shipClass?.droneBays) || 0))
+      if (dronesBayRow && dronesBayCount) {
+        if (bayCount > 0) {
+          dronesBayRow.style.display = 'block'
+          const inBay = (shipState.drones ?? []).filter(
+            (d) => !d.destroyed && d.hull > 0 && (!d.deployed || d.mode === 'bay')
+          ).length
+          dronesBayCount.textContent = String(inBay)
+        } else {
+          dronesBayRow.style.display = 'none'
+        }
+      }
+
       const frac = Math.max(-1, Math.min(1, forwardSpeed / shipClass.stats.speed))
       velocityFill.classList.toggle('reversing', frac < 0)
       velocityFill.style.left = `${50 + Math.min(0, frac) * 50}%`
@@ -502,9 +623,10 @@ export function createHud(container) {
 
       speedEl.textContent = `${speed.toFixed(0)} m/s`
 
-      if (systemName != null && systemName !== lastSystemName) {
-        lastSystemName = systemName
-        systemNameEl.textContent = systemName || '—'
+      const sysKey = `${systemName ?? ''}|${securityRating ?? ''}`
+      if (systemName != null && sysKey !== lastSystemLabelKey) {
+        lastSystemLabelKey = sysKey
+        systemNameEl.innerHTML = formatSystemLabel(systemName, securityRating)
       }
 
       const nb = nearestBodyName || null
@@ -518,6 +640,70 @@ export function createHud(container) {
           nearestBodyEl.classList.remove('visible')
         }
       }
+
+      // Deployed drones: live S/A/H under ship bars
+      const dronesBlock = hud.querySelector('.drones-block')
+      const droneRows = hud.querySelector('.drone-rows')
+      const deployed = (shipState.drones ?? []).filter(
+        (d) => d.deployed && !d.destroyed && d.hull > 0 && d.mode !== 'bay'
+      )
+      if (dronesBlock && droneRows) {
+        if (deployed.length) {
+          dronesBlock.style.display = 'block'
+          droneRows.innerHTML = deployed
+            .map((d, i) => {
+              const h = pct(d.hull, d.maxHull || d.hull || 1)
+              const s = pct(d.shields, d.maxShields || d.shields || 1)
+              const a = pct(d.armor, d.maxArmor || d.armor || 1)
+              return `<div class="row" style="margin-bottom:6px">
+                <div class="row-label"><span>Asp ${i + 1}</span><span class="value">S${s.toFixed(0)} A${a.toFixed(0)} H${h.toFixed(0)}</span></div>
+                <div class="bar hull" style="height:5px"><div class="fill" style="width:${h}%"></div></div>
+              </div>`
+            })
+            .join('')
+        } else {
+          dronesBlock.style.display = 'none'
+          droneRows.innerHTML = ''
+        }
+      }
+    },
+    /**
+     * Tab-lock target panel (between system name and radar).
+     * @param {null|{
+     *   name:string, hostile?:boolean, meta?:string,
+     *   shields?:number, maxShields?:number,
+     *   armor?:number, maxArmor?:number,
+     *   hull?:number, maxHull?:number,
+     *   oreLeft?:number, oreMax?:number,
+     *   kind?:string
+     * }} info
+     */
+    updateTarget(info) {
+      if (!targetPanel) return
+      if (!info) {
+        targetPanel.classList.remove('visible', 'hostile')
+        return
+      }
+      targetPanel.classList.add('visible')
+      targetPanel.classList.toggle('hostile', !!info.hostile)
+      targetNameEl.textContent = info.name || '—'
+      targetMetaEl.textContent = info.meta || ''
+      targetMetaEl.style.display = info.meta ? 'block' : 'none'
+
+      const parts = []
+      if (info.maxShields != null && info.maxShields > 0) {
+        parts.push(barRow('Shield', info.shields ?? 0, info.maxShields, 'shield'))
+      }
+      if (info.maxArmor != null && info.maxArmor > 0) {
+        parts.push(barRow('Armour', info.armor ?? 0, info.maxArmor, 'armor'))
+      }
+      if (info.maxHull != null && info.maxHull > 0) {
+        parts.push(barRow('Hull', info.hull ?? 0, info.maxHull, 'hull'))
+      }
+      if (info.oreMax != null && info.oreMax > 0) {
+        parts.push(barRow('Ore', info.oreLeft ?? 0, info.oreMax, 'ore'))
+      }
+      targetBarsEl.innerHTML = parts.join('')
     },
     // contacts: [{ x, z, kind }], already transformed into ship-local space
     // (x = right, z = forward) and pre-filtered to radar range by the caller.

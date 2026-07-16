@@ -20,8 +20,9 @@ function pushMissionLog(mission, gameState, kind, text) {
  */
 function spawnHostileNearProbedBody(body, playerPosition, rng) {
   const center = body?.position ?? playerPosition
-  // Clear surface / field shell, then a short combat-standoff so they aren't
+  // Clear exterior / surface shell, then a short combat-standoff so they aren't
   // flush against the crust (and match ambient spawn "just past engagement").
+  // Prefer body.radius for planets/moons/belts; stations would use exterior via clearPositionOfBodies.
   const shell = (body?.radius ?? 0) + 200
   let dx = playerPosition[0] - center[0]
   let dy = playerPosition[1] - center[1]
@@ -216,15 +217,13 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
       mission.reward = Math.round(mission.reward * LEAD_REWARD_MULT)
       mission.target = { kind: 'body', systemId: next.system.id, bodyId: next.body.id }
       mission.title = `Investigate the signal near ${next.body.name} in ${next.system.name}`
-      if (gameState.player.waypointBodyId === bodyId) {
-        gameState.player.waypointBodyId = next.body.id
-      }
       pushMissionLog(
         mission,
         gameState,
         'lead',
         `Signal relocated → ${next.body.name} · ${next.system.name} (+5% reward)`
       )
+      advanceMissionWaypoint(gameState, mission)
       return {
         kind: 'lead',
         mission,
@@ -262,15 +261,14 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
       npcId: npc.id,
       shipClassId: npc.shipClassId
     }
-    // Point the waypoint at the live contact so the player can find it.
-    gameState.player.waypointBodyId = null
-    gameState.player.waypointPosition = [...position]
     pushMissionLog(mission, gameState, 'hostile', 'Hostile contact stirred by the probe — eliminate to proceed')
+    advanceMissionWaypoint(gameState, mission)
     return { kind: 'hostile', mission, npcId: npc.id, position: [...position] }
   }
 
   mission.objectiveComplete = true
   pushMissionLog(mission, gameState, 'intel', 'Investigation data recovered — return to the mission giver')
+  advanceMissionWaypoint(gameState, mission)
   return { kind: 'intel', mission }
 }
 
@@ -278,23 +276,61 @@ export function updateMissionProgress(gameState) {
   const probed = (gameState.probedBodyIds ?? []).map(String)
   const visited = (gameState.visitedBodyIds ?? []).map(String)
   for (const mission of gameState.missions.active) {
-    if (mission.objectiveComplete) continue
-    if (mission.target?.kind === 'npcShip') {
-      const npc = gameState.npcs.find((n) => n.id === mission.target.npcId)
-      if (npc?.destroyed) mission.objectiveComplete = true
-    } else if (mission.type === 'probe') {
-      const bodyId = mission.target?.bodyId
-      if (bodyId != null && probed.includes(String(bodyId))) {
-        mission.objectiveComplete = true
+    const wasComplete = !!mission.objectiveComplete
+    const prevBody = mission.target?.bodyId
+    const prevNpc = mission.target?.npcId
+    if (!mission.objectiveComplete) {
+      if (mission.target?.kind === 'npcShip') {
+        const npc = gameState.npcs.find((n) => n.id === mission.target.npcId)
+        if (npc?.destroyed) mission.objectiveComplete = true
+      } else if (mission.type === 'probe') {
+        const bodyId = mission.target?.bodyId
+        if (bodyId != null && probed.includes(String(bodyId))) {
+          mission.objectiveComplete = true
+        }
+      } else if (mission.type === 'exploration') {
+        const bodyId = mission.target?.bodyId
+        // Visited OR probed both count as surveying the site.
+        if (bodyId != null && (visited.includes(String(bodyId)) || probed.includes(String(bodyId)))) {
+          mission.objectiveComplete = true
+        }
       }
-    } else if (mission.type === 'exploration') {
-      const bodyId = mission.target?.bodyId
-      // Visited OR probed both count as surveying the site.
-      if (bodyId != null && (visited.includes(String(bodyId)) || probed.includes(String(bodyId)))) {
-        mission.objectiveComplete = true
-      }
+      // investigation body phase: only resolveInvestigationProbe sets complete
     }
-    // investigation body phase: only resolveInvestigationProbe sets complete
+    // When objective completes (or target moves), refresh waypoint → next stage / turn-in.
+    if (
+      (!wasComplete && mission.objectiveComplete) ||
+      prevBody !== mission.target?.bodyId ||
+      prevNpc !== mission.target?.npcId
+    ) {
+      advanceMissionWaypoint(gameState, mission)
+    }
+  }
+}
+
+/**
+ * Clear the old mission waypoint and point at the next objective or turn-in.
+ * Only retargets if the player was tracking this mission (or has no waypoint).
+ */
+export function advanceMissionWaypoint(gameState, mission) {
+  if (!mission || !gameState?.player) return
+  const wpBody = gameState.player.waypointBodyId
+  const wpPos = gameState.player.waypointPosition
+  const hadNoWaypoint = wpBody == null && (wpPos == null || !wpPos.length)
+  // Related if waypoint was on prior objective body / giver / free-space hunt.
+  const related =
+    hadNoWaypoint ||
+    wpBody === mission.target?.bodyId ||
+    wpBody === mission.giverStationId ||
+    mission.target?.kind === 'npcShip' ||
+    (Array.isArray(wpPos) && mission.target?.kind === 'npcShip')
+  if (!related) return
+  try {
+    setWaypointForMission(gameState, mission.id)
+  } catch {
+    // No trackable location — clear stale marker.
+    gameState.player.waypointBodyId = null
+    gameState.player.waypointPosition = null
   }
 }
 

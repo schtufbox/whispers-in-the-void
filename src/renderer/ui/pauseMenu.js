@@ -1,23 +1,31 @@
+import { SETTINGS_VIEW_CSS, settingsViewHTML, bindSettingsView } from './settingsView.js'
+
 const CONTROLS = [
-  ['Space', 'Toggle flight mode (mouse aim)'],
-  ['Mouse', 'Aim / pitch & yaw (in flight mode)'],
-  ['LMB', 'Fire lasers'],
-  ['RMB', 'Fire missiles'],
+  ['Space', 'Enter / exit mouse-aim flight mode'],
+  ['Mouse', 'Aim (pitch & yaw) while in flight mode'],
+  ['Alt + Mouse', 'Free-look — orbit chase camera around ship'],
   ['W / S', 'Throttle forward / reverse'],
   ['A / D', 'Strafe left / right'],
   ['X / Z', 'Strafe up / down'],
-  ['Q / E', 'Roll'],
-  ['Tab', 'Acquire / cycle target'],
-  ['Shift+Tab', 'Clear target'],
+  ['Q / E', 'Roll left / right'],
+  ['LMB', 'Fire lasers'],
+  ['RMB', 'Fire missiles'],
+  ['Tab', 'Acquire / cycle target under crosshair'],
+  ['Shift+Tab', 'Clear target lock'],
   ['Ctrl+Tab', 'Set waypoint on body under crosshair'],
-  ['C', 'Supercruise (requires waypoint)'],
-  ['M', 'Navigation map / hyperspace'],
-  ['F', 'Dock / loot wreck'],
-  ['P', 'Launch probe'],
+  ['C', 'Toggle supercruise (requires a waypoint)'],
+  ['M', 'Galaxy map / hyperspace jump'],
+  ['F', 'Dock at station/settlement or loot wreck'],
+  ['P', 'Launch survey probe (orbit / near target)'],
+  ['G', 'Launch drones (requires drone bays)'],
+  ['H', 'Recall drones to bay'],
   ['I', 'Inventory'],
   ['J', 'Missions'],
-  ['Esc', 'Pause'],
-  ['Alt+Enter', 'Toggle fullscreen']
+  ['F1', 'Character sheet'],
+  ['Esc', 'Pause / resume'],
+  ['F5', 'Quick save'],
+  ['Alt+Enter', 'Toggle borderless fullscreen / windowed'],
+  ['Free mouse', 'Click system overview (left) to set waypoints']
 ]
 
 const STYLE = `
@@ -31,6 +39,7 @@ const STYLE = `
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
 }
 #pause-menu .panel.controls-view { width: min(440px, 92vw); max-height: min(80vh, 640px); }
+#pause-menu .panel.settings-view { width: min(340px, 92vw); }
 #pause-menu h2 { margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 10px rgba(79,195,217,0.7); }
 #pause-menu button {
   background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
@@ -40,6 +49,7 @@ const STYLE = `
 #pause-menu button:hover { background: rgba(111,216,242,0.22); box-shadow: 0 0 14px rgba(79,195,217,0.35); }
 #pause-menu button.quit { background: rgba(224,90,90,0.12); border-color: rgba(224,90,90,0.5); color: #ffb3b3; }
 #pause-menu button.quit:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 14px rgba(224,90,90,0.35); }
+${SETTINGS_VIEW_CSS}
 #pause-menu .controls-list {
   display: flex; flex-direction: column; gap: 6px;
   overflow-y: auto; max-height: min(52vh, 420px);
@@ -70,6 +80,7 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
       <button class="resume">Resume</button>
       <button class="save">Save Game</button>
       <button class="controls">Show Controls</button>
+      <button class="settings">Settings</button>
       <button class="restart">Restart</button>
       <button class="quit">Quit to Desktop</button>
     </div>
@@ -82,26 +93,41 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
       </div>
       <button class="controls-back">Back</button>
     </div>
+    <div class="panel settings-view" style="display:none;">
+      ${settingsViewHTML()}
+    </div>
   `
   container.appendChild(root)
 
   const mainView = root.querySelector('.main-view')
   const controlsView = root.querySelector('.controls-view')
+  const settingsView = root.querySelector('.settings-view')
 
   function showMain() {
     mainView.style.display = 'flex'
     controlsView.style.display = 'none'
+    settingsView.style.display = 'none'
   }
 
   function showControls() {
     mainView.style.display = 'none'
     controlsView.style.display = 'flex'
+    settingsView.style.display = 'none'
+  }
+
+  function showSettings() {
+    mainView.style.display = 'none'
+    controlsView.style.display = 'none'
+    settingsView.style.display = 'flex'
+    settingsApi.refresh()
   }
 
   function hide() {
     root.style.display = 'none'
     showMain()
   }
+
+  const settingsApi = bindSettingsView(settingsView, { onBack: showMain })
 
   root.querySelector('.resume').addEventListener('click', () => {
     hide()
@@ -110,6 +136,7 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
   root.querySelector('.save').addEventListener('click', () => onSave())
   root.querySelector('.controls').addEventListener('click', () => showControls())
   root.querySelector('.controls-back').addEventListener('click', () => showMain())
+  root.querySelector('.settings').addEventListener('click', () => showSettings())
   root.querySelector('.restart').addEventListener('click', () => onRestart())
   root.querySelector('.quit').addEventListener('click', () => onQuit())
 

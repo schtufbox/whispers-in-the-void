@@ -164,6 +164,30 @@ function buildMissileModel(weapon) {
   return group
 }
 
+// Shared laser geometry/materials — new bolts clone mesh, no per-shot alloc.
+const _laserTemplates = new Map()
+const _missileTemplates = new Map()
+let _flashGeo = null
+
+/**
+ * Weapons draw through station/settlement mesh (ships still block flight).
+ * depthTest off = bolts/missiles stay visible in hangar gaps and past bay walls.
+ */
+function markWeaponPassThrough(root) {
+  root.traverse((obj) => {
+    obj.renderOrder = 20
+    obj.frustumCulled = false
+    if (!obj.material) return
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+    for (const m of mats) {
+      m.depthTest = false
+      m.depthWrite = false
+      m.needsUpdate = true
+    }
+  })
+  return root
+}
+
 function buildLaserBolt(weapon) {
   const length = 3.8 + weapon.damage * 0.12
   const radius = 0.32 + weapon.damage * 0.014
@@ -174,21 +198,80 @@ function buildLaserBolt(weapon) {
     transparent: true,
     opacity: 0.95,
     blending: THREE.AdditiveBlending,
+    depthTest: false,
     depthWrite: false
   })
-  return new THREE.Mesh(geometry, material)
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.renderOrder = 20
+  mesh.frustumCulled = false
+  return mesh
+}
+
+function laserTemplate(weapon) {
+  const key = `${weapon.id}|${weapon.color}|${weapon.damage}`
+  let tpl = _laserTemplates.get(key)
+  if (!tpl) {
+    tpl = buildLaserBolt(weapon)
+    _laserTemplates.set(key, tpl)
+  }
+  return tpl
+}
+
+function missileTemplate(weapon) {
+  const key = weapon.id
+  let tpl = _missileTemplates.get(key)
+  if (!tpl) {
+    tpl = markWeaponPassThrough(buildMissileModel(weapon))
+    _missileTemplates.set(key, tpl)
+  }
+  return tpl
 }
 
 export function buildProjectileMesh(weaponId, mountType = 'laser') {
   const weapon = getWeapon(weaponId ?? BASE_WEAPON_ID[mountType])
-  if (weapon.category === 'missile') return buildMissileModel(weapon)
-  return buildLaserBolt(weapon)
+  // Clone cached templates so combat open-fire does not rebuild geometry/materials.
+  if (weapon.category === 'missile') {
+    return markWeaponPassThrough(missileTemplate(weapon).clone(true))
+  }
+  return markWeaponPassThrough(laserTemplate(weapon).clone(true))
+}
+
+/** Warm laser/missile templates so the first shot of a fight is not a hitch. */
+export function preloadProjectileMeshes(weaponIds = []) {
+  for (const id of weaponIds) {
+    try {
+      const w = getWeapon(id)
+      if (w.category === 'missile') missileTemplate(w)
+      else laserTemplate(w)
+    } catch {
+      /* ignore unknown */
+    }
+  }
+  // Common catalog weapons
+  for (const id of [
+    'pulse_laser',
+    'burst_laser',
+    'beam_laser',
+    'plasma_cannon',
+    'rapid_laser',
+    'rocket_pod',
+    'seeker_missile',
+    'torpedo'
+  ]) {
+    try {
+      const w = getWeapon(id)
+      if (w.category === 'missile') missileTemplate(w)
+      else laserTemplate(w)
+    } catch {
+      /* */
+    }
+  }
 }
 
 export function buildImpactFlash(color = 0xffcc66) {
-  const geometry = new THREE.SphereGeometry(1, 8, 8)
+  if (!_flashGeo) _flashGeo = new THREE.SphereGeometry(1, 8, 8)
   const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
-  const mesh = new THREE.Mesh(geometry, material)
+  const mesh = new THREE.Mesh(_flashGeo, material)
   mesh.scale.setScalar(0.5)
   return mesh
 }

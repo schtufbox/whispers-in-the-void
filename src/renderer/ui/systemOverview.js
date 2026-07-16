@@ -6,15 +6,21 @@ import { escapeHtml } from './escapeHtml.js'
 export const SYSTEM_STAR_WAYPOINT_ID = 'system-star'
 
 const STYLE = `
-/* Stacked under #radar (right:16 top:16, 176px frame). */
+/* Stacked under #radar (right:16 top:16, 176px frame).
+   Right-column chrome: top-left cut + cyan accent on the right. */
 #system-overview {
   position: fixed; top: 204px; right: 16px; width: 176px; max-height: calc(100vh - 224px);
   z-index: 8; font-family: monospace; color: #cfe3ff; pointer-events: none;
   display: none;
-  background: linear-gradient(135deg, rgba(12,20,36,0.9), rgba(7,12,22,0.82));
-  border: 1px solid rgba(111,216,242,0.4); border-right: 3px solid #6fd8f2;
-  box-shadow: 0 0 18px rgba(79,195,217,0.22), inset 0 0 20px rgba(79,195,217,0.05);
-  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.82));
+  border: 1px solid rgba(111,216,242,0.45);
+  border-left: 1px solid rgba(111,216,242,0.45);
+  border-right: 3px solid #6fd8f2;
+  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 22px rgba(79,195,217,0.06);
+  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% 100%, 0 100%);
+  filter:
+    drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+    drop-shadow(0 4px 10px rgba(0,0,0,0.4));
 }
 #system-overview.visible { display: flex; flex-direction: column; }
 /* Clickable only when not in flight-mode (Space to free the mouse). */

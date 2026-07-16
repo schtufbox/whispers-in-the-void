@@ -751,41 +751,88 @@ function addHullDetails(group, hull, mats) {
   }
 }
 
-export function buildShipMesh(shipClass) {
+// Hull + EdgesGeometry are expensive (especially EdgesGeometry). Cache per class.
+const _hullCache = new Map()
+function getCachedHullGeometries(shipClass) {
+  const id = shipClass.id
+  let entry = _hullCache.get(id)
+  if (entry) return entry
+  const geometry = buildHullGeometry(shipClass.hull)
+  // EdgesGeometry is the big hitch when many NPC meshes build mid-combat.
+  const seams = new THREE.EdgesGeometry(geometry, 24)
+  const rim = new THREE.EdgesGeometry(geometry, 38)
+  entry = { geometry, seams, rim }
+  _hullCache.set(id, entry)
+  return entry
+}
+
+/**
+ * @param {object} shipClass
+ * @param {{ lite?: boolean }} [opts] lite=true for NPCs: skip edge overlays (big CPU save).
+ */
+export function buildShipMesh(shipClass, opts = {}) {
   const group = new THREE.Group()
   group.name = shipClass.id
+  const lite = !!opts.lite
 
-  const baseColor = new THREE.Color(shipClass.hull.color)
-  const mats = makeDetailMaterials(baseColor)
+  const isPolice =
+    shipClass.faction === 'police' || !!shipClass.hull?.style?.policeLivery
 
-  const geometry = buildHullGeometry(shipClass.hull)
-  // Painted PBR hull tinted by class color — maps read as real metal panels.
-  const material = new THREE.MeshStandardMaterial({
-    color: baseColor,
-    side: THREE.DoubleSide,
-    metalness: 0.72,
-    roughness: 0.42,
-    envMapIntensity: 1.05,
-    ...shipHullMaps(0.58)
-  })
+  // Police: bright white hull (skip heavy PBR maps — they mute pure white).
+  const baseColor = isPolice
+    ? new THREE.Color(0xf4f7fb)
+    : new THREE.Color(shipClass.hull.color)
+  const mats = makeDetailMaterials(isPolice ? new THREE.Color(0x1a1c20) : baseColor)
+
+  const { geometry, seams, rim: rimGeo } = getCachedHullGeometries(shipClass)
+  const material = isPolice
+    ? new THREE.MeshStandardMaterial({
+        color: baseColor,
+        side: THREE.DoubleSide,
+        metalness: 0.28,
+        roughness: 0.48,
+        envMapIntensity: 0.85
+      })
+    : new THREE.MeshStandardMaterial({
+        color: baseColor,
+        side: THREE.DoubleSide,
+        metalness: 0.72,
+        roughness: 0.42,
+        envMapIntensity: 1.05,
+        ...shipHullMaps(0.58)
+      })
   const hullMesh = new THREE.Mesh(geometry, material)
   group.add(hullMesh)
 
-  // Soft panel seams from edges (doesn't fight normal maps).
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry, 24),
-    new THREE.LineBasicMaterial({ color: 0x0a0c10, transparent: true, opacity: 0.35 })
-  )
-  group.add(edges)
+  // Edge overlays are cosmetic; skip for NPCs to avoid combat-spawn hitches.
+  if (!lite) {
+    group.add(
+      new THREE.LineSegments(
+        seams,
+        new THREE.LineBasicMaterial({
+          color: isPolice ? 0x1a2030 : 0x0a0c10,
+          transparent: true,
+          opacity: isPolice ? 0.55 : 0.35
+        })
+      )
+    )
+    group.add(
+      new THREE.LineSegments(
+        rimGeo,
+        new THREE.LineBasicMaterial({
+          color: isPolice ? 0xc8d4e8 : 0x6a8aaa,
+          transparent: true,
+          opacity: isPolice ? 0.35 : 0.16
+        })
+      )
+    )
+  }
 
-  // Soft hull rim highlight against black space.
-  const rim = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry, 38),
-    new THREE.LineBasicMaterial({ color: 0x6a8aaa, transparent: true, opacity: 0.16 })
-  )
-  group.add(rim)
-
-  addHullDetails(group, shipClass.hull, mats)
+  // Full bolted-on detail for the player ship only — NPC detail is a major
+  // cost when many contacts mesh on the same combat frame.
+  if (!lite) {
+    addHullDetails(group, shipClass.hull, mats)
+  }
 
   for (const hp of shipClass.hardpoints ?? []) {
     const marker = new THREE.Mesh(hardpointMarkerGeometry, mats.hardpoint)
@@ -794,5 +841,179 @@ export function buildShipMesh(shipClass) {
     group.add(marker)
   }
 
+  // Police: bold black/white livery + red/blue emergency flashers.
+  if (isPolice) {
+    addPoliceDetails(group, shipClass.hull, geometry)
+  }
+
   return group
+}
+
+// Shared materials for all police ships — avoids per-instance alloc + hitch.
+// No PointLights: adding dynamic lights recompiles every MeshStandardMaterial
+// in the scene (large hitch when the first patrol mesh is created / combat starts near stations).
+let _policeMats = null
+function policeMaterials() {
+  if (_policeMats) return _policeMats
+  _policeMats = {
+    black: new THREE.MeshStandardMaterial({
+      color: 0x0a0c10,
+      metalness: 0.55,
+      roughness: 0.55
+    }),
+    white: new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 0.2,
+      roughness: 0.4
+    }),
+    red: new THREE.MeshBasicMaterial({
+      color: 0xff2040,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    }),
+    blue: new THREE.MeshBasicMaterial({
+      color: 0x2090ff,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    }),
+    redGlow: new THREE.MeshBasicMaterial({
+      color: 0xff2040,
+      transparent: true,
+      opacity: 0.35,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    }),
+    blueGlow: new THREE.MeshBasicMaterial({
+      color: 0x2090ff,
+      transparent: true,
+      opacity: 0.35,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  }
+  return _policeMats
+}
+
+/**
+ * High-contrast black/white authority livery + red/blue light bars.
+ * Emissive-only flashers (no PointLights) so combat near stations stays smooth.
+ */
+function addPoliceDetails(group, hull, hullGeometry) {
+  hullGeometry.computeBoundingBox()
+  const box = hullGeometry.boundingBox
+  const size = new THREE.Vector3()
+  const center = new THREE.Vector3()
+  box.getSize(size)
+  box.getCenter(center)
+  const len = Math.max(size.z, hull?.length ?? 20)
+  const width = Math.max(size.x, 4)
+  const height = Math.max(size.y, 2)
+  const topY = box.max.y
+  const mats = policeMaterials()
+
+  // Wide dorsal black racing stripe (nose → tail).
+  const dorsal = new THREE.Mesh(
+    new THREE.BoxGeometry(Math.max(0.55, width * 0.14), Math.max(0.18, height * 0.08), len * 0.72),
+    mats.black
+  )
+  dorsal.position.set(center.x, topY + height * 0.04, center.z * 0.15)
+  group.add(dorsal)
+
+  // Nose cone black cap.
+  const nose = new THREE.Mesh(
+    new THREE.BoxGeometry(width * 0.55, height * 0.55, len * 0.12),
+    mats.black
+  )
+  nose.position.set(center.x, center.y * 0.3, box.max.z - len * 0.04)
+  group.add(nose)
+
+  // Rear black band.
+  const tail = new THREE.Mesh(
+    new THREE.BoxGeometry(width * 0.7, height * 0.5, len * 0.1),
+    mats.black
+  )
+  tail.position.set(center.x, center.y * 0.2, box.min.z + len * 0.05)
+  group.add(tail)
+
+  // Side black panels + wing tips.
+  for (const side of [-1, 1]) {
+    const sidePanel = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.max(0.2, width * 0.06), height * 0.45, len * 0.4),
+      mats.black
+    )
+    sidePanel.position.set(side * width * 0.42, center.y * 0.15, center.z)
+    group.add(sidePanel)
+
+    const tip = new THREE.Mesh(
+      new THREE.BoxGeometry(width * 0.22, height * 0.12, len * 0.14),
+      mats.black
+    )
+    tip.position.set(side * width * 0.55, center.y * 0.1, center.z - len * 0.05)
+    group.add(tip)
+  }
+
+  // Checker-style mid-hull blocks.
+  for (let i = 0; i < 3; i++) {
+    const block = new THREE.Mesh(
+      new THREE.BoxGeometry(width * 0.18, height * 0.14, len * 0.08),
+      i % 2 === 0 ? mats.black : mats.white
+    )
+    block.position.set(
+      ((i % 2) * 2 - 1) * width * 0.2,
+      topY + height * 0.02,
+      center.z - len * 0.12 + i * len * 0.1
+    )
+    group.add(block)
+  }
+
+  // Light bar housing.
+  const barY = topY + height * 0.12
+  const barZ = center.z + len * 0.08
+  const housing = new THREE.Mesh(
+    new THREE.BoxGeometry(width * 0.42, height * 0.1, len * 0.1),
+    mats.black
+  )
+  housing.position.set(center.x, barY, barZ)
+  group.add(housing)
+
+  // Large light lenses (read at range) — MeshBasic only, no scene lights.
+  const lensR = Math.max(0.35, width * 0.09)
+  const red = new THREE.Mesh(new THREE.SphereGeometry(lensR, 10, 8), mats.red)
+  red.position.set(center.x - width * 0.12, barY + height * 0.06, barZ)
+  red.name = 'police-light-red'
+  const blue = new THREE.Mesh(new THREE.SphereGeometry(lensR, 10, 8), mats.blue)
+  blue.position.set(center.x + width * 0.12, barY + height * 0.06, barZ)
+  blue.name = 'police-light-blue'
+  const redGlow = new THREE.Mesh(new THREE.SphereGeometry(lensR * 1.55, 8, 6), mats.redGlow)
+  redGlow.position.copy(red.position)
+  const blueGlow = new THREE.Mesh(new THREE.SphereGeometry(lensR * 1.55, 8, 6), mats.blueGlow)
+  blueGlow.position.copy(blue.position)
+
+  group.add(red, blue, redGlow, blueGlow)
+  group.userData.policeLights = { red, blue, redGlow, blueGlow, lastPhase: -1 }
+}
+
+/** Alternate red/blue emergency flashers (scale only — shared materials flash in sync). */
+export function updatePoliceLights(mesh, elapsed) {
+  const lights = mesh?.userData?.policeLights
+  if (!lights) return
+  // Discrete phase 0/1 so we skip work when state unchanged.
+  const phase = ((elapsed * 6.5) / Math.PI) | 0
+  if (phase === lights.lastPhase) return
+  lights.lastPhase = phase
+  const redOn = phase % 2 === 0
+  const rs = redOn ? 1.25 : 0.7
+  const bs = redOn ? 0.7 : 1.25
+  lights.red.scale.setScalar(rs)
+  lights.blue.scale.setScalar(bs)
+  lights.redGlow.scale.setScalar(rs * 1.15)
+  lights.blueGlow.scale.setScalar(bs * 1.15)
+  lights.red.visible = true
+  lights.blue.visible = true
+  lights.redGlow.visible = redOn
+  lights.blueGlow.visible = !redOn
 }

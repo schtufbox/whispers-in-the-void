@@ -1,9 +1,44 @@
 let ctx = null
+/** Master mute for Web Audio graph (SFX/synths). HTML music uses .muted. */
+let soundEnabled = true
+let masterGain = null
 
 function getContext() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)()
   if (ctx.state === 'suspended') ctx.resume()
   return ctx
+}
+
+/** Shared output so mute can zero the whole Web Audio graph at once. */
+function getMasterDestination() {
+  const audio = getContext()
+  if (!masterGain) {
+    masterGain = audio.createGain()
+    masterGain.gain.value = soundEnabled ? 1 : 0
+    masterGain.connect(audio.destination)
+  }
+  return masterGain
+}
+
+function applyMusicMute() {
+  const muted = !soundEnabled
+  if (titleMusic) titleMusic.muted = muted
+  if (deathMusic) deathMusic.muted = muted
+  if (ambientMusic) ambientMusic.muted = muted
+}
+
+export function isSoundEnabled() {
+  return soundEnabled
+}
+
+/** Master sound on/off — SFX, loops, music, and speech. */
+export function setSoundEnabled(enabled) {
+  soundEnabled = enabled !== false
+  if (masterGain) masterGain.gain.value = soundEnabled ? 1 : 0
+  applyMusicMute()
+  if (!soundEnabled && window.speechSynthesis) {
+    try { window.speechSynthesis.cancel() } catch { /* */ }
+  }
 }
 
 // Browsers/Electron require a user gesture before audio can start — this
@@ -84,7 +119,7 @@ function playSample(name, { volume = 0.5, rate = 1, loop = false, fadeIn = 0, de
   } else {
     gain.gain.setValueAtTime(volume, audio.currentTime)
   }
-  source.connect(gain).connect(audio.destination)
+  source.connect(gain).connect(getMasterDestination())
   source.start(now)
   // Store target volume — AudioParam.value is unreliable after ramps, and
   // stopSampleNodes needs a real peak to fade from (not the 0.0001 floor).
@@ -129,7 +164,7 @@ function tone({ type = 'sine', freq, freqEnd, duration, attack = 0.005, peak = 0
   gain.gain.setValueAtTime(0, start)
   gain.gain.linearRampToValueAtTime(peak, start + attack)
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration)
-  osc.connect(gain).connect(audio.destination)
+  osc.connect(gain).connect(getMasterDestination())
   osc.start(start)
   osc.stop(start + duration + 0.05)
 }
@@ -171,7 +206,7 @@ function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0, delay =
     tail = shaper
   }
   source.connect(filter)
-  tail.connect(gain).connect(audio.destination)
+  tail.connect(gain).connect(getMasterDestination())
   source.start(start)
 }
 
@@ -499,7 +534,7 @@ function startHyperspaceStatic() {
   // Slow amplitude "breath" on the whole bed — drawn out, not a pulse engine.
   lfo(0.06, 0.16, breath.gain, 1)
 
-  grit.connect(masterHp).connect(masterLp).connect(breath).connect(master).connect(audio.destination)
+  grit.connect(masterHp).connect(masterLp).connect(breath).connect(master).connect(getMasterDestination())
   hyperStatic = { gain: master, sources }
 }
 
@@ -676,7 +711,7 @@ export function setProbeScanActive(active) {
     probeScanLFO.connect(lfoGain).connect(probeScanOsc.frequency)
     probeScanLFO.start()
 
-    probeScanOsc.connect(probeScanGain).connect(audio.destination)
+    probeScanOsc.connect(probeScanGain).connect(getMasterDestination())
     probeScanOsc.start()
 
     // Soft repeating radar-style pings.
@@ -798,13 +833,13 @@ function playAnnounceReverbBloom(durationS = 0.9) {
     delay.connect(tap)
     tap.connect(wet)
   }
-  wet.connect(audio.destination)
+  wet.connect(getMasterDestination())
   src.start(now)
   src.stop(now + 0.08)
 }
 
 export function announce(text) {
-  if (!window.speechSynthesis) return
+  if (!soundEnabled || !window.speechSynthesis) return
   window.speechSynthesis.cancel() // don't queue up stale callouts behind a new one
   if (!femaleVoice) refreshFemaleVoice()
 
@@ -873,7 +908,7 @@ export function setThrustState(mode) {
   thrustOsc.frequency.value = mode === 'brake' ? 48 : 70
   thrustGain.gain.setValueAtTime(0, audio.currentTime)
   thrustGain.gain.linearRampToValueAtTime(0.05, audio.currentTime + 0.2)
-  thrustOsc.connect(filter).connect(thrustGain).connect(audio.destination)
+  thrustOsc.connect(filter).connect(thrustGain).connect(getMasterDestination())
   thrustOsc.start()
 }
 
@@ -1063,7 +1098,7 @@ function startCruiseRumble() {
   lfo(0.33, 0.035, airGain.gain, 0.045)
   lfo(0.07, 900, airHp.frequency, 2200)
 
-  grit.connect(masterLp).connect(master).connect(audio.destination)
+  grit.connect(masterLp).connect(master).connect(getMasterDestination())
   cruiseRumble = { gain: master, sources }
 }
 
@@ -1119,7 +1154,7 @@ export function setMiningBeamActive(active) {
     miningBeamLFO.connect(lfoGain).connect(miningBeamOsc.frequency)
     miningBeamLFO.start()
 
-    miningBeamOsc.connect(miningBeamGain).connect(audio.destination)
+    miningBeamOsc.connect(miningBeamGain).connect(getMasterDestination())
     miningBeamOsc.start()
   } else if (!active && miningBeamOsc) {
     miningBeamGain.gain.linearRampToValueAtTime(0, audio.currentTime + 0.1)
@@ -1167,6 +1202,7 @@ function playFile(name, { loop = false, volume = 0.5 } = {}) {
   const el = new Audio(`audio/${name}`)
   el.loop = loop
   el.volume = volume
+  el.muted = !soundEnabled
   el.play().catch(() => {}) // blocked without a user gesture; the existing
   // click/keydown listeners above already resume the Web Audio context on
   // first interaction, and the menu/game is always reached via a click.
