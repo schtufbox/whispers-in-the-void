@@ -1,9 +1,11 @@
 import { getSystem, canJumpTo, findHyperspaceRoute } from '../procgen/galaxy.js'
 import { missionMarkedSystemIds, missionMarkedBodyIds } from '../game/missions.js'
+import { playerAssetSystemIds } from '../game/economy.js'
 import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
-#nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+/* Above docking chrome (z 50) so Map/Missions work while docked. */
+#nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 55; }
 #nav-map .panel {
   width: 1020px; max-height: 90vh; overflow-y: auto; padding: 18px 22px;
   background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
@@ -171,6 +173,10 @@ export function createNavMap(container, gameState) {
             <h3>Plotted Route</h3>
             <div class="route-list-wrap"></div>
           </div>
+          <div class="map-legend" style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(111,216,242,0.2);font-size:11px;line-height:1.55;opacity:0.75;">
+            <div><span style="color:#ff8a3d;">○</span> Orange — mission objective / turn-in</div>
+            <div><span style="color:#50dc78;">○</span> Green — stored assets in another system</div>
+          </div>
         </div>
       </div>
     `
@@ -181,6 +187,8 @@ export function createNavMap(container, gameState) {
     // Shared by draw() (rings/dots) and the hover tooltip — must live outside
     // draw so mousemove can see it (was ReferenceError: missionSystems).
     const missionSystems = missionMarkedSystemIds(gameState)
+    // Remote systems with stored ships/cargo/etc. (not the current system).
+    const assetSystems = playerAssetSystemIds(gameState)
 
     function toCanvas(pos) {
       return [size / 2 + (pos[0] / maxRadius) * (size / 2 - 16), size / 2 + (pos[2] / maxRadius) * (size / 2 - 16)]
@@ -314,6 +322,21 @@ export function createNavMap(container, gameState) {
         }
       }
 
+      // Asset rings first (outer), then mission rings (inner) so both read when
+      // a system has stored gear and an active objective.
+      for (const system of systems) {
+        if (!assetSystems.has(system.id)) continue
+        const [px, py] = toCanvas(system.galaxyPosition)
+        ctx.beginPath()
+        ctx.arc(px, py, 12, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(80,220,120,0.95)'
+        ctx.lineWidth = 2.25
+        ctx.shadowColor = '#50dc78'
+        ctx.shadowBlur = 12
+        ctx.stroke()
+      }
+      ctx.shadowBlur = 0
+
       // Mission objective / turn-in systems get an orange ring under the dot.
       for (const system of systems) {
         if (!missionSystems.has(system.id)) continue
@@ -336,6 +359,7 @@ export function createNavMap(container, gameState) {
         const isHovered = system.id === hoveredSystemId
         const inRange = isCurrent || canJumpTo(currentSystem, system.id)
         const hasMission = missionSystems.has(system.id)
+        const hasAssets = assetSystems.has(system.id)
         const onRoute = routeSet.has(system.id) && !isCurrent
         ctx.beginPath()
         ctx.arc(px, py, isCurrent ? 5 : isSelected || isHovered || onRoute ? 4.5 : 2.5, 0, Math.PI * 2)
@@ -349,10 +373,12 @@ export function createNavMap(container, gameState) {
                 ? '#eaffff'
                 : hasMission
                   ? '#ff9a4a'
-                  : inRange
-                    ? '#7fe0a0'
-                    : '#3a5a8a'
-        if (isCurrent || isSelected || isHovered || inRange || hasMission || onRoute) {
+                  : hasAssets
+                    ? '#6fe89a'
+                    : inRange
+                      ? '#7fe0a0'
+                      : '#3a5a8a'
+        if (isCurrent || isSelected || isHovered || inRange || hasMission || hasAssets || onRoute) {
           ctx.shadowColor = ctx.fillStyle
           ctx.shadowBlur = isCurrent || isSelected || isHovered || onRoute ? 10 : 5
         } else {
@@ -510,7 +536,10 @@ export function createNavMap(container, gameState) {
         draw()
       }
       if (nearest) {
-        const tag = missionSystems.has(nearest.id) ? ' · mission' : ''
+        const tags = []
+        if (missionSystems.has(nearest.id)) tags.push('mission')
+        if (assetSystems.has(nearest.id)) tags.push('assets')
+        const tag = tags.length ? ` · ${tags.join(', ')}` : ''
         tooltipEl.textContent = `${nearest.name}${tag}`
         tooltipEl.style.left = `${mx}px`
         tooltipEl.style.top = `${my}px`

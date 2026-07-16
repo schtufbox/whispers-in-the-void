@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
 
 // Stations: player shell is 500m so you can fly in close for docking.
 // Visual bulk is larger (STATION_SCALE); orbital packing uses a bigger
@@ -7,6 +8,21 @@ import * as THREE from 'three'
 const STATION_COLLISION_RADIUS = 500
 const SETTLEMENT_COLLISION_RADIUS = 72
 
+// Exterior hang / undock shells — must clear *visual* bulk, not just the tight
+// flight collision sphere. Free-model stations normalize to maxDim ~26–30,
+// then main.js applies STATION_SCALE (190) × per-body variance 0.85–1.15:
+//   half-extent ≈ 30 * 190 * 1.15 / 2 ≈ 3278
+// Settlements use SETTLEMENT_SCALE (~9.28) the same way:
+//   half-extent ≈ 30 * 9.28 * 1.15 / 2 ≈ 160
+// Pads cover beacons, solar arms, and ship half-length.
+export const STATION_EXTERIOR_RADIUS = 3400
+export const SETTLEMENT_EXTERIOR_RADIUS = 200
+
+/**
+ * Shell used for targeting, spawn clearance, orbital capture, etc.
+ * Asteroid *fields* still report body.radius (scatter extent) here — flight
+ * physics does not use that shell; see resolveBodyCollisions (per-rock only).
+ */
 export function collisionRadiusFor(body) {
   if (body.kind === 'planet' || body.kind === 'moon' || body.kind === 'asteroidField') return body.radius
   if (body.kind === 'station') return STATION_COLLISION_RADIUS
@@ -14,39 +30,90 @@ export function collisionRadiusFor(body) {
   return null
 }
 
+/**
+ * Shell used for dock exterior hang / undock exit so the ship is not placed
+ * inside station or settlement mesh. Flight collision stays tighter via
+ * collisionRadiusFor so players can still fly in close to dock.
+ */
+export function exteriorRadiusFor(body) {
+  if (body.kind === 'station') return STATION_EXTERIOR_RADIUS
+  if (body.kind === 'settlement') return SETTLEMENT_EXTERIOR_RADIUS
+  return collisionRadiusFor(body)
+}
+
+/** Effective sphere radius for a rock mesh (icosahedron + Y squash/stretch). */
+export function rockCollisionRadius(rock) {
+  // scaleY stretches the icosahedron; take the larger axis so the shell covers mesh.
+  return rock.radius * Math.max(1, rock.scaleY ?? 1)
+}
+
+function pushOutOfSphere(shipPos, shipState, center, solidRadius, shipRadius) {
+  const offset = shipPos.clone().sub(center)
+  let dist = offset.length()
+  const minDist = solidRadius + shipRadius
+  if (dist >= minDist) return false
+
+  // Buried at exact center — pick a default outward axis.
+  const normal = dist < 1e-8 ? new THREE.Vector3(1, 0, 0) : offset.multiplyScalar(1 / dist)
+  shipPos.copy(center).addScaledVector(normal, minDist)
+  shipState.position = shipPos.toArray()
+
+  const velocity = new THREE.Vector3().fromArray(shipState.velocity)
+  const inward = velocity.dot(normal)
+  if (inward < 0) {
+    velocity.addScaledVector(normal, -inward)
+    shipState.velocity = velocity.toArray()
+  }
+  return true
+}
+
+/**
+ * Collide the ship with individual rocks in an asteroid field (not the field
+ * bounding shell). Optional isRockAlive(fieldId, index) skips depleted rocks.
+ */
+function resolveAsteroidFieldCollisions(shipState, shipPos, body, shipRadius, isRockAlive) {
+  const fieldPos = body.position
+  const rocks = getAsteroidRocks(body)
+  for (let i = 0; i < rocks.length; i++) {
+    if (isRockAlive && !isRockAlive(body.id, i)) continue
+    const rock = rocks[i]
+    const center = new THREE.Vector3(
+      fieldPos[0] + rock.position[0],
+      fieldPos[1] + rock.position[1],
+      fieldPos[2] + rock.position[2]
+    )
+    pushOutOfSphere(shipPos, shipState, center, rockCollisionRadius(rock), shipRadius)
+  }
+}
+
 // Sphere-sphere collision against system bodies: pushes the ship back to the
 // surface and cancels the velocity component pointing into the body, so
 // flying into something slides you along its surface rather than damaging
 // you or letting you pass through.
-export function resolveBodyCollisions(shipState, bodies, shipRadius) {
+// Asteroid fields: per-rock only (no field-wide invisible shell).
+// options.isRockAlive(fieldId, index) — optional; when set, destroyed rocks are ignored.
+export function resolveBodyCollisions(shipState, bodies, shipRadius, options = {}) {
   const shipPos = new THREE.Vector3().fromArray(shipState.position)
+  const isRockAlive = options.isRockAlive
 
   for (const body of bodies) {
+    if (body.kind === 'asteroidField') {
+      resolveAsteroidFieldCollisions(shipState, shipPos, body, shipRadius, isRockAlive)
+      continue
+    }
+
     const bodyRadius = collisionRadiusFor(body)
     if (bodyRadius == null) continue
 
     const bodyPos = new THREE.Vector3(...body.position)
-    const offset = shipPos.clone().sub(bodyPos)
-    const dist = offset.length()
-    const minDist = bodyRadius + shipRadius
-    if (dist >= minDist || dist === 0) continue
-
-    const normal = offset.normalize()
-    shipPos.copy(bodyPos).addScaledVector(normal, minDist)
-    shipState.position = shipPos.toArray()
-
-    const velocity = new THREE.Vector3().fromArray(shipState.velocity)
-    const inward = velocity.dot(normal)
-    if (inward < 0) {
-      velocity.addScaledVector(normal, -inward)
-      shipState.velocity = velocity.toArray()
-    }
+    pushOutOfSphere(shipPos, shipState, bodyPos, bodyRadius, shipRadius)
   }
 }
 
 // Supercruise: instead of bouncing off a body, tunnel straight through along
 // travel direction and exit the far side. Destination body (and host shells
 // that contain it — surface settlements) are left alone so arrival works.
+// Asteroid fields are skipped (no field shell); rocks are not tunneled.
 // Returns event info for VFX/SFX, or null.
 // ignoreBodyIds: optional Set of body ids to never tunnel through.
 export function trySupercruiseTunnel(
@@ -65,6 +132,10 @@ export function trySupercruiseTunnel(
   for (const body of bodies) {
     if (destinationBodyId && body.id === destinationBodyId) continue
     if (ignoreBodyIds?.has(body.id)) continue
+    // Belts have no solid field shell — fly through; individual rocks are tiny
+    // at cruise speed and are not worth tunnel VFX.
+    if (body.kind === 'asteroidField') continue
+
     const bodyRadius = collisionRadiusFor(body)
     if (bodyRadius == null) continue
 

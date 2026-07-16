@@ -1,7 +1,7 @@
 {
   "name": "whispers-in-the-void",
   "productName": "Whispers In The Void",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Procedurally generated 3D space trading/combat/exploration game",
   "main": "./out/main/index.js",
   "author": "Laughing In Purgatory",
@@ -27,7 +27,7 @@
   "build": {
     "appId": "com.whispersinthevoid.game",
     "productName": "Whispers In The Void",
-    "copyright": "© Laughing In Purgatory 2026",
+    "copyright": "\u00a9 Laughing In Purgatory 2026",
     "icon": "build/icon.png",
     "directories": {
       "output": "release",
@@ -37,7 +37,15 @@
       "out/**/*"
     ],
     "mac": {
-      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
       "icon": "build/icon.png",
       "identity": null,
       "hardenedRuntime": false,
@@ -45,8 +53,18 @@
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "nsis", "arch": ["arm64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "publisherName": "Laughing In Purgatory"
@@ -59,14 +77,22 @@
       "artifactName": "${productName}-${version}-${arch}-setup.${ext}"
     },
     "linux": {
-      "target": [{ "target": "AppImage", "arch": ["x64", "arm64"] }],
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
       "icon": "build/icon.png",
       "category": "Game",
       "synopsis": "Whispers In The Void",
-      "description": "Whispers In The Void — a procedurally generated 3D space trading, combat, and exploration game. © Laughing In Purgatory 2026",
+      "description": "Whispers In The Void \u2014 a procedurally generated 3D space trading, combat, and exploration game. \u00a9 Laughing In Purgatory 2026",
       "desktop": {
         "Name": "Whispers In The Void",
-        "Comment": "© Laughing In Purgatory 2026",
+        "Comment": "\u00a9 Laughing In Purgatory 2026",
         "Categories": "Game;AdventureGame;"
       }
     },

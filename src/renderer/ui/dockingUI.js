@@ -23,7 +23,9 @@ import {
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
 import { WEAPONS, BASE_WEAPON_ID, getWeapon, weaponsForCategory } from '../data/weapons.js'
 import { acceptMission, turnInMission } from '../game/missions.js'
+import { refillMissionsIfExhausted } from '../data/missionTemplates.js'
 import { escapeHtml } from './escapeHtml.js'
+import { gameNotice, gamePrompt } from './gameDialog.js'
 
 const STYLE = `
 /* Docked chrome: actions stay clickable; full menu only when .services-open.
@@ -93,43 +95,6 @@ const STYLE = `
 #docking-ui .side-panel .ship-row .ship-actions button {
   margin-right: 0; padding: 3px 8px; font-size: 11px;
 }
-/* Electron: no window.prompt / unreliable alert — in-UI dialogs. */
-#docking-ui .dock-prompt-overlay {
-  position: absolute; inset: 0; z-index: 20;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(4,6,12,0.55);
-}
-#docking-ui .dock-prompt {
-  width: min(400px, 90vw); padding: 18px 20px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.98), rgba(7,12,22,0.95));
-  border: 1px solid rgba(111,216,242,0.5); border-left: 3px solid #6fd8f2;
-  box-shadow: 0 0 28px rgba(79,195,217,0.3);
-}
-#docking-ui .dock-prompt .prompt-title {
-  font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #7fe6ff; margin-bottom: 12px;
-}
-#docking-ui .dock-prompt .prompt-body {
-  font-size: 13px; line-height: 1.45; color: #cfe3ff; opacity: 0.92;
-  margin-bottom: 14px; white-space: pre-wrap;
-}
-#docking-ui .dock-prompt input {
-  width: 100%; box-sizing: border-box; margin-bottom: 12px;
-  background: rgba(8,14,26,0.95); border: 1px solid rgba(111,216,242,0.4);
-  color: #cfe3ff; padding: 8px 10px; font-family: monospace; font-size: 13px;
-}
-#docking-ui .dock-prompt input:focus { outline: none; border-color: #7fe6ff; box-shadow: 0 0 8px rgba(79,195,217,0.35); }
-#docking-ui .dock-prompt .prompt-actions { display: flex; justify-content: flex-end; gap: 8px; }
-#docking-ui .dock-prompt button.prompt-ok {
-  background: rgba(111,216,242,0.15); border: 1px solid rgba(111,216,242,0.5); color: #cfe3ff;
-  padding: 6px 14px; cursor: pointer; font-family: monospace;
-}
-#docking-ui .dock-prompt button.prompt-cancel {
-  background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.45); color: #ffb3b3;
-  padding: 6px 14px; cursor: pointer; font-family: monospace;
-}
-#docking-ui .dock-prompt button.prompt-ok:hover { background: rgba(111,216,242,0.28); }
-#docking-ui .dock-prompt button.prompt-cancel:hover { background: rgba(224,90,90,0.22); }
 #docking-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
 #docking-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 18px 0 8px; }
 #docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 12px; }
@@ -295,61 +260,13 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
   const jobsSideEl = root.querySelector('.jobs-side')
   const tabButtons = [...root.querySelectorAll('.tab')]
 
-  // Electron disables window.prompt / often blocks alert — in-panel dialogs.
-  function openDialog({ title, body = '', defaultValue = null, okLabel = 'OK', cancelLabel = null, maxLength = 40 }) {
-    return new Promise((resolve) => {
-      root.querySelector('.dock-prompt-overlay')?.remove()
-      const overlay = document.createElement('div')
-      overlay.className = 'dock-prompt-overlay'
-      const hasInput = defaultValue !== null
-      overlay.innerHTML = `
-        <div class="dock-prompt" role="dialog" aria-label="${escapeHtml(title)}">
-          <div class="prompt-title">${escapeHtml(title)}</div>
-          ${body ? `<div class="prompt-body">${escapeHtml(body)}</div>` : ''}
-          ${hasInput ? `<input type="text" maxlength="${maxLength}" />` : ''}
-          <div class="prompt-actions">
-            ${cancelLabel != null ? `<button type="button" class="prompt-cancel">${escapeHtml(cancelLabel)}</button>` : ''}
-            <button type="button" class="prompt-ok">${escapeHtml(okLabel)}</button>
-          </div>
-        </div>
-      `
-      root.appendChild(overlay)
-      const input = overlay.querySelector('input')
-      if (input) {
-        input.value = defaultValue ?? ''
-        input.focus()
-        input.select()
-      } else {
-        overlay.querySelector('.prompt-ok')?.focus()
-      }
-      const finish = (value) => {
-        overlay.remove()
-        resolve(value)
-      }
-      overlay.querySelector('.prompt-ok').addEventListener('click', () => finish(hasInput ? input.value : true))
-      overlay.querySelector('.prompt-cancel')?.addEventListener('click', () => finish(null))
-      overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) finish(hasInput ? null : true)
-      })
-      const onKey = (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          finish(hasInput ? input.value : true)
-        } else if (e.key === 'Escape') {
-          e.preventDefault()
-          finish(hasInput ? null : true)
-        }
-      }
-      ;(input ?? overlay).addEventListener('keydown', onKey)
-    })
-  }
-
+  // Shared in-game dialogs (Electron blocks window.alert/confirm/prompt).
   function askText(title, defaultValue = '') {
-    return openDialog({ title, defaultValue, okLabel: 'Rename', cancelLabel: 'Cancel' })
+    return gamePrompt(title, defaultValue, { okLabel: 'Rename', cancelLabel: 'Cancel' })
   }
 
   function showNotice(title, body, okLabel = 'OK') {
-    return openDialog({ title, body, okLabel })
+    return gameNotice(title, body, okLabel)
   }
 
   // Always visible ship inventory on the right; station ships + industry jobs below.
@@ -930,9 +847,20 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     renderSidePanel()
   }
 
-  function renderMissions() {
-    const boardMissions = gameState.missions.available.filter((m) => m.giverStationId === currentBody.id)
-    const activeHere = gameState.missions.active.filter((m) => m.giverStationId === currentBody.id)
+  /**
+   * @param {{ tryRefill?: boolean }} [opts]
+   * tryRefill: only after turn-in / when opening the tab — never after Accept
+   * (accepting must not restock the board while contracts are still open).
+   */
+  function renderMissions(opts = {}) {
+    const tryRefill = opts.tryRefill !== false
+    if (tryRefill) {
+      // Only when available+active for this body are both empty.
+      refillMissionsIfExhausted(gameState, currentBody.id, rng)
+    }
+    const bodyId = String(currentBody.id)
+    const boardMissions = gameState.missions.available.filter((m) => String(m.giverStationId) === bodyId)
+    const activeHere = gameState.missions.active.filter((m) => String(m.giverStationId) === bodyId)
     contentEl.innerHTML = `
       <h3>Available</h3>
       <table>
@@ -955,8 +883,14 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     `
     contentEl.querySelectorAll('.accept-mission').forEach((btn) =>
       btn.addEventListener('click', () => {
-        acceptMission(gameState, btn.dataset.id, rng)
-        renderMissions()
+        try {
+          acceptMission(gameState, btn.dataset.id, rng)
+        } catch (err) {
+          showNotice('Accept failed', err.message)
+          return
+        }
+        // Never restock on accept — only re-render current board / turn-in list.
+        renderMissions({ tryRefill: false })
       })
     )
     contentEl.querySelectorAll('.turnin').forEach((btn) =>
@@ -965,8 +899,10 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           turnInMission(gameState, btn.dataset.id)
         } catch (err) {
           await showNotice('Turn-in failed', err.message)
+          return
         }
-        renderMissions()
+        // Refill only if this was the last open contract for this body.
+        renderMissions({ tryRefill: true })
       })
     )
     renderSidePanel()

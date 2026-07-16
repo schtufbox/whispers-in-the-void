@@ -124,17 +124,69 @@ export function generateProbeMission(rng, galaxy, giverSystemId, giverStationId)
 
 const GENERATORS = [generateBountyMission, generateExplorationMission, generateInvestigationMission, generateProbeMission]
 
+/** Post a fresh batch of board contracts for one station/settlement. */
+export function generateMissionsForBody(rng, galaxy, systemId, bodyId, count = null) {
+  const n = count ?? intRange(rng, 1, 3)
+  const missions = []
+  for (let i = 0; i < n; i++) {
+    const mission = pick(rng, GENERATORS)(rng, galaxy, systemId, bodyId)
+    if (mission) missions.push(mission)
+  }
+  // Rare: every draw returned null (no probeable targets). Try each generator once.
+  if (!missions.length) {
+    for (const gen of GENERATORS) {
+      const mission = gen(rng, galaxy, systemId, bodyId)
+      if (mission) {
+        missions.push(mission)
+        break
+      }
+    }
+  }
+  return missions
+}
+
 export function seedMissionsForGalaxy(rng, galaxy) {
   const missions = []
   for (const system of galaxy.systems) {
     for (const body of system.bodies) {
       if (!body.hasMissions) continue
-      const count = intRange(rng, 1, 3)
-      for (let i = 0; i < count; i++) {
-        const mission = pick(rng, GENERATORS)(rng, galaxy, system.id, body.id)
-        if (mission) missions.push(mission)
-      }
+      missions.push(...generateMissionsForBody(rng, galaxy, system.id, body.id))
     }
   }
   return missions
+}
+
+/** Available + active contracts posted by this station/settlement (string ids). */
+export function openMissionCountForBody(gameState, bodyId) {
+  const id = String(bodyId)
+  let n = 0
+  for (const m of gameState.missions?.available ?? []) {
+    if (String(m.giverStationId) === id) n++
+  }
+  for (const m of gameState.missions?.active ?? []) {
+    if (String(m.giverStationId) === id) n++
+  }
+  return n
+}
+
+/**
+ * Refill a station/settlement board only after *every* contract from that body
+ * is gone — none left available on the board, and none still active (must be
+ * turned in or dropped first). Accepting a contract must never refill.
+ * @returns {object[]} newly generated missions (empty if anything still open)
+ */
+export function refillMissionsIfExhausted(gameState, bodyId, rng) {
+  if (!bodyId || !gameState?.galaxy || typeof rng !== 'function') return []
+  const id = String(bodyId)
+  const system = gameState.galaxy.systems.find((s) => s.bodies.some((b) => String(b.id) === id))
+  const body = system?.bodies.find((b) => String(b.id) === id)
+  if (!body?.hasMissions) return []
+
+  // Still has board posts or unfinished contracts → leave the board alone.
+  if (openMissionCountForBody(gameState, bodyId) > 0) return []
+
+  const fresh = generateMissionsForBody(rng, gameState.galaxy, system.id, body.id)
+  if (!fresh.length) return []
+  gameState.missions.available.push(...fresh)
+  return fresh
 }

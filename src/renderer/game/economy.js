@@ -1,6 +1,6 @@
 import { GOODS, getGood, SHIP_PARTS_GOOD_ID, isBuyableTradeGood } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
-import { findBody } from '../procgen/galaxy.js'
+import { findBody, findSystemOfBody } from '../procgen/galaxy.js'
 import { getWeapon, BASE_WEAPON_ID, defaultLoadoutFor } from '../data/weapons.js'
 
 const TRADE_PRICE_NUDGE_FACTOR = 0.002
@@ -386,6 +386,50 @@ export function storeCarriedWeapons(gameState, bodyId) {
     storage.weapons[weaponId] = (storage.weapons[weaponId] ?? 0) + qty
   }
   ship.spareWeapons = {}
+}
+
+/** True if a station/settlement storage entry holds anything of value. */
+export function storageHasAssets(storage) {
+  if (!storage) return false
+  if ((storage.ships?.length ?? 0) > 0) return true
+  if ((storage.shipParts ?? 0) > 0) return true
+  const qtyMaps = [storage.cargo, storage.miningHold, storage.weapons, storage.blueprints]
+  for (const map of qtyMaps) {
+    if (!map) continue
+    for (const qty of Object.values(map)) {
+      if (qty > 0) return true
+    }
+  }
+  return false
+}
+
+/**
+ * System ids (other than the player's current system) where the player has
+ * parked ships, stored cargo/ore/parts/weapons/blueprints, or an in-progress
+ * craft job. Used by the galaxy map green asset rings.
+ */
+export function playerAssetSystemIds(gameState) {
+  const ids = new Set()
+  const currentId = gameState.player?.currentSystemId
+  const galaxy = gameState.galaxy
+  if (!galaxy) return ids
+
+  for (const [bodyId, storage] of Object.entries(gameState.stationStorage ?? {})) {
+    if (!storageHasAssets(storage)) continue
+    const system = findSystemOfBody(galaxy, bodyId)
+    if (!system || system.id === currentId) continue
+    ids.add(system.id)
+  }
+
+  // In-progress crafts (finished jobs are removed by updateCraftingJobs).
+  for (const job of gameState.craftingJobs ?? []) {
+    if (!job?.bodyId) continue
+    const system = findSystemOfBody(galaxy, job.bodyId)
+    if (!system || system.id === currentId) continue
+    ids.add(system.id)
+  }
+
+  return ids
 }
 
 export { GOODS }

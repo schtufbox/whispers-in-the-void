@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   acceptMission,
+  dropMission,
   missionNavTarget,
   missionMarkedSystemIds,
   setWaypointForMission,
@@ -182,4 +183,27 @@ test('investigation hostiles re-materialize after system re-entry', () => {
   gs.npcs = []
   ensureBountyNpcsForSystem(gs, systemId, Math.random)
   assert.ok(gs.npcs.some((n) => n.id === mission.target.npcId))
+})
+
+test('dropMission removes an active mission and its bounty NPC without paying out', () => {
+  const gs = freshState(31)
+  const mission = gs.missions.available.find((m) => m.type === 'bounty')
+  assert.ok(mission, 'need a bounty mission in seed')
+  const creditsBefore = gs.player.credits
+  const repBefore = gs.player.reputation
+  acceptMission(gs, mission.id, Math.random)
+  assert.ok(gs.missions.active.some((m) => m.id === mission.id))
+  assert.ok(gs.npcs.some((n) => n.missionId === mission.id))
+
+  dropMission(gs, mission.id)
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
+  assert.equal(gs.npcs.some((n) => n.missionId === mission.id), false)
+  assert.equal(gs.player.credits, creditsBefore, 'dropping should not award credits')
+  assert.equal(gs.player.reputation, repBefore, 'dropping should not award reputation')
+  assert.equal(mission.status, 'dropped')
+})
+
+test('dropMission rejects unknown or already-removed missions', () => {
+  const gs = freshState(33)
+  assert.throws(() => dropMission(gs, 'no-such-mission'), /not active/)
 })

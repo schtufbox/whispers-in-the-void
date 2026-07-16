@@ -309,6 +309,23 @@ export function turnInMission(gameState, missionId) {
   gameState.player.reputation += 1
 }
 
+/**
+ * Abandon an active mission: no reward, no rep, remove any mission-bound NPCs
+ * (bounty / investigation hostiles).
+ */
+export function dropMission(gameState, missionId) {
+  const mission = gameState.missions.active.find((m) => m.id === missionId)
+  if (!mission) throw new Error('Mission not active')
+
+  const npcId = mission.target?.npcId
+  gameState.npcs = (gameState.npcs ?? []).filter(
+    (n) => n.missionId !== mission.id && n.id !== npcId
+  )
+
+  gameState.missions.active = gameState.missions.active.filter((m) => m.id !== missionId)
+  mission.status = 'dropped'
+}
+
 // Where the player should go next for an active mission: the objective
 // system/body while incomplete, or the giver station once ready to turn in.
 // Bounty / investigation-hostile objectives have no body — only a system +

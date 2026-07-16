@@ -124,6 +124,63 @@ test('fireProjectile with a weaponTypeFilter the ship has no hardpoint for fires
   assert.equal(gameState.projectiles.length, 0)
 })
 
+test('player lasers spawn on centerline and fly pure ship-forward', () => {
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  const shooter = {
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    equippedWeapons: { fwd1: 'pulse_laser' }
+  }
+  const hp = { ...shipClass.hardpoints[0], position: [3, 2, 5] }
+  const cls = { ...shipClass, hardpoints: [hp] }
+  const gameState = { simTime: 0, projectiles: [] }
+  const aim = [0, 0, 200]
+  fireProjectile(gameState, shooter, cls, 'player', null, 'laser', null, aim)
+  assert.equal(gameState.projectiles.length, 1)
+  const p = gameState.projectiles[0]
+  assert.deepEqual(p.position, [0, 0, 8], 'player laser uses centerline muzzle spawn')
+  const speed = Math.hypot(...p.velocity)
+  const dir = p.velocity.map((v) => v / speed)
+  assert.ok(Math.abs(dir[0]) < 1e-5)
+  assert.ok(Math.abs(dir[1]) < 1e-5)
+  assert.ok(Math.abs(dir[2] - 1) < 1e-5)
+})
+
+test('prunePlayerLasersOffBoresight drops turn-spray but keeps on-axis bolts', async () => {
+  const { prunePlayerLasersOffBoresight } = await import('./combat.js')
+  const gameState = {
+    player: { ship: { quaternion: [0, 0, 0, 1] } },
+    projectiles: [
+      { id: 'a', ownerId: 'player', weaponType: 'laser', velocity: [0, 0, 600] },
+      { id: 'b', ownerId: 'player', weaponType: 'laser', velocity: [600, 0, 0] }, // 90° off
+      { id: 'c', ownerId: 'player', weaponType: 'missile', velocity: [100, 0, 0] },
+      { id: 'd', ownerId: 'npc-1', weaponType: 'laser', velocity: [0, 100, 0] }
+    ]
+  }
+  prunePlayerLasersOffBoresight(gameState)
+  assert.deepEqual(
+    gameState.projectiles.map((p) => p.id),
+    ['a', 'c', 'd'],
+    'only the off-boresight player laser is removed'
+  )
+})
+
+test('NPC lasers keep full hardpoint offsets when aiming at aimWorld', () => {
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  const shooter = {
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    equippedWeapons: { fwd1: 'pulse_laser' }
+  }
+  const hp = { ...shipClass.hardpoints[0], position: [3, 2, 5] }
+  const cls = { ...shipClass, hardpoints: [hp] }
+  const gameState = { simTime: 0, projectiles: [] }
+  const aim = [0, 0, 200]
+  fireProjectile(gameState, shooter, cls, 'npc-1', null, 'laser', null, aim)
+  assert.equal(gameState.projectiles.length, 1)
+  assert.deepEqual(gameState.projectiles[0].position, [3, 2, 5])
+})
+
 test('a player laser hitting an asteroid field mines ore instead of dealing damage', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const fieldId = 'field-test'

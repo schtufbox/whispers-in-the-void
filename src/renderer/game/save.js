@@ -79,6 +79,14 @@ export function deserializeGameState(data) {
     ship.quaternion = [0, 0, 0, 1]
   }
   ship.throttle ??= 0
+  // Weapon cooldowns are absolute simTime timestamps. simTime always restarts
+  // at 0 on load (not persisted), so a saved readyAt from a long session
+  // would block every hardpoint until the clock caught up — felt like
+  // "weapons dead after undocking a docked save". Always clear on load.
+  ship.hardpointCooldowns = {}
+  // lastHitAt is also simTime-relative (shield regen delay); drop it so regen
+  // isn't stuck waiting for a pre-save combat timestamp.
+  delete ship.lastHitAt
   gameState.flags.startingSystemPeaceBroken ??= false
 
   // Resolve any crafts that finished while the save was offline (wall-clock).

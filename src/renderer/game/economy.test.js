@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {
   getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip, storeCargo, retrieveCargo, useShipPart,
-  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon
+  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon,
+  playerAssetSystemIds, storageHasAssets
 } from './economy.js'
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
 import { BASE_WEAPON_ID } from '../data/weapons.js'
@@ -205,4 +206,48 @@ test('equipWeapon swaps a hardpoint\'s weapon with one in storage, returning the
 
   // Equipping something not in storage or salvage throws.
   assert.throws(() => equipWeapon(gameState, 'agri-world', hardpointId, 'plasma_cannon'), /not available/)
+})
+
+test('storageHasAssets is true only when something of value is parked', () => {
+  assert.equal(storageHasAssets(null), false)
+  assert.equal(storageHasAssets({ ships: [], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} }), false)
+  assert.equal(storageHasAssets({ ships: [{ classId: 'x' }], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} }), true)
+  assert.equal(storageHasAssets({ ships: [], cargo: { grain: 2 }, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} }), true)
+  assert.equal(storageHasAssets({ ships: [], cargo: {}, miningHold: {}, shipParts: 3, weapons: {}, blueprints: {} }), true)
+})
+
+test('playerAssetSystemIds marks remote systems with stored assets, not the current system', () => {
+  const gameState = {
+    player: { currentSystemId: 'sys-home', credits: 0, ship: { cargo: {} } },
+    galaxy: {
+      systems: [
+        { id: 'sys-home', bodies: [{ id: 'home-station' }] },
+        { id: 'sys-remote', bodies: [{ id: 'remote-station' }] }
+      ]
+    },
+    stationStorage: {
+      'home-station': { ships: [{ classId: 'a' }], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} },
+      'remote-station': { ships: [], cargo: { grain: 10 }, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} }
+    },
+    craftingJobs: []
+  }
+  const ids = playerAssetSystemIds(gameState)
+  assert.equal(ids.has('sys-home'), false, 'current system should not get an asset ring')
+  assert.equal(ids.has('sys-remote'), true, 'remote storage should mark the system')
+})
+
+test('playerAssetSystemIds includes remote systems with in-progress craft jobs', () => {
+  const gameState = {
+    player: { currentSystemId: 'sys-home', credits: 0, ship: { cargo: {} } },
+    galaxy: {
+      systems: [
+        { id: 'sys-home', bodies: [{ id: 'home-station' }] },
+        { id: 'sys-remote', bodies: [{ id: 'remote-station' }] }
+      ]
+    },
+    stationStorage: {},
+    craftingJobs: [{ bodyId: 'remote-station', completesAtWallMs: Date.now() + 60_000 }]
+  }
+  const ids = playerAssetSystemIds(gameState)
+  assert.equal(ids.has('sys-remote'), true)
 })

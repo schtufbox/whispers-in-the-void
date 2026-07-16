@@ -90,38 +90,82 @@ export function regenShields(entity, shipClass, simTime, dt, { player = false, i
 // hardpoint's *mount* kind (what category of weapon fits), not the weapon
 // itself. Falls back to that category's free base weapon if nothing (or an
 // NPC, which never shops) has equippedWeapons set for it.
-// Hardpoints sit off the centerline (especially +Y), but the crosshair is
-// the ship boresight. Flying parallel to forward from a raised mount lands
-// above the reticle — aim every shot at a convergence point far ahead on
-// the boresight instead (standard multi-hardpoint game fix).
-const AIM_CONVERGENCE = 350
+// Default NPC aim: converge on ship +Z ahead. Player passes aimWorld = the
+// shared chase/reticle aim point (ship +Z × AIM_LOOK_AHEAD from sceneSync).
+const DEFAULT_AIM_DISTANCE = 400
 const _aimPoint = new THREE.Vector3()
 const _projDir = new THREE.Vector3()
 const _projQuat = new THREE.Quaternion()
 const _localForward = new THREE.Vector3(0, 0, 1)
 
-export function fireProjectile(gameState, shooter, shooterShipClass, ownerId, onFire, weaponTypeFilter = null, targetRef = null) {
+/**
+ * @param {string|null} weaponTypeFilter 'laser' | 'missile' | null (all)
+ * @param {{ kind: string, id?: string }|null} targetRef NPC aim target
+ * @param {number[]|null} aimWorld world point to aim each muzzle at (player reticle)
+ */
+export function fireProjectile(
+  gameState,
+  shooter,
+  shooterShipClass,
+  ownerId,
+  onFire,
+  weaponTypeFilter = null,
+  targetRef = null,
+  aimWorld = null
+) {
   shooter.hardpointCooldowns ??= {}
   shooter.equippedWeapons ??= {}
 
   const quat = new THREE.Quaternion().fromArray(shooter.quaternion)
+  quat.normalize()
   const shooterPos = new THREE.Vector3().fromArray(shooter.position)
   const forward = _localForward.clone().applyQuaternion(quat)
-  _aimPoint.copy(shooterPos).addScaledVector(forward, AIM_CONVERGENCE)
+  if (forward.lengthSq() < 1e-8) forward.set(0, 0, 1)
+  else forward.normalize()
 
-  for (const hp of shooterShipClass.hardpoints) {
+  if (Array.isArray(aimWorld) && aimWorld.length === 3) {
+    _aimPoint.fromArray(aimWorld)
+  } else {
+    _aimPoint.copy(shooterPos).addScaledVector(forward, DEFAULT_AIM_DISTANCE)
+  }
+
+  const hardpoints = shooterShipClass?.hardpoints
+  if (!hardpoints?.length) return
+
+  for (const hp of hardpoints) {
     const mountType = hp.type === 'missile' ? 'missile' : 'laser'
     if (weaponTypeFilter && mountType !== weaponTypeFilter) continue
-    const weaponId = shooter.equippedWeapons[hp.id] ?? BASE_WEAPON_ID[mountType]
-    const weapon = getWeapon(weaponId)
+    let weaponId = shooter.equippedWeapons?.[hp.id] ?? BASE_WEAPON_ID[mountType]
+    let weapon
+    try {
+      weapon = getWeapon(weaponId)
+    } catch {
+      weaponId = BASE_WEAPON_ID[mountType]
+      weapon = getWeapon(weaponId)
+    }
     const readyAt = shooter.hardpointCooldowns[hp.id] ?? -Infinity
     if (gameState.simTime < readyAt) continue
     shooter.hardpointCooldowns[hp.id] = gameState.simTime + weapon.cooldownS
 
-    const worldPos = new THREE.Vector3(...hp.position).applyQuaternion(quat).add(shooterPos)
-    _projDir.copy(_aimPoint).sub(worldPos)
-    if (_projDir.lengthSq() < 1e-8) _projDir.copy(forward)
-    else _projDir.normalize()
+    const hpPos = hp.position ?? [0, 0, 0]
+    let localX = hpPos[0]
+    let localY = hpPos[1]
+    let localZ = hpPos[2]
+    // Player lasers: centerline + pure ship +Z (nose hardpoint Z, no X/Y wing offset).
+    // Spawn at the muzzle — downrange jumps made bolts tiny/invisible in chase cam.
+    if (ownerId === 'player' && mountType === 'laser') {
+      localX = 0
+      localY = 0
+      localZ = Math.max(localZ, 8)
+    }
+    const worldPos = new THREE.Vector3(localX, localY, localZ).applyQuaternion(quat).add(shooterPos)
+    if (ownerId === 'player' && mountType === 'laser') {
+      _projDir.copy(forward)
+    } else {
+      _projDir.copy(_aimPoint).sub(worldPos)
+      if (_projDir.lengthSq() < 1e-8) _projDir.copy(forward)
+      else _projDir.normalize()
+    }
     _projQuat.setFromUnitVectors(_localForward, _projDir)
 
     gameState.projectiles.push({
@@ -136,7 +180,11 @@ export function fireProjectile(gameState, shooter, shooterShipClass, ownerId, on
       damage: weapon.damage,
       ttl: weapon.ttl
     })
-    onFire?.(weaponId, mountType)
+    try {
+      onFire?.(weaponId, mountType)
+    } catch (err) {
+      console.error('onFire callback failed:', err)
+    }
   }
 }
 
@@ -150,6 +198,33 @@ function closestDistanceToSegment(point, segStart, segEnd) {
   if (len2 === 0) return point.distanceTo(segStart)
   const t = Math.max(0, Math.min(1, point.clone().sub(segStart).dot(seg) / len2))
   return point.distanceTo(segStart.clone().addScaledVector(seg, t))
+}
+
+// Player lasers that no longer track current ship +Z (fired during a turn) are
+// dropped so a stationary burst isn't painted over by the old spray for ~1s.
+const BORESIGHT_KEEP_DOT = 0.995 // ~5.7°
+const _pruneFwd = new THREE.Vector3()
+const _pruneQuat = new THREE.Quaternion()
+
+/**
+ * Remove player laser bolts whose travel dir is off the live boresight.
+ * Call after ship orientation updates (and before drawing).
+ */
+export function prunePlayerLasersOffBoresight(gameState) {
+  const ship = gameState?.player?.ship
+  if (!ship || !gameState.projectiles?.length) return
+  _pruneQuat.fromArray(ship.quaternion).normalize()
+  _pruneFwd.set(0, 0, 1).applyQuaternion(_pruneQuat)
+  if (_pruneFwd.lengthSq() < 1e-8) return
+  _pruneFwd.normalize()
+  gameState.projectiles = gameState.projectiles.filter((p) => {
+    if (p.ownerId !== 'player' || p.weaponType === 'missile') return true
+    const sp = Math.hypot(p.velocity[0], p.velocity[1], p.velocity[2])
+    if (sp < 1e-6) return false
+    const dot =
+      (p.velocity[0] * _pruneFwd.x + p.velocity[1] * _pruneFwd.y + p.velocity[2] * _pruneFwd.z) / sp
+    return dot >= BORESIGHT_KEEP_DOT
+  })
 }
 
 export function updateProjectiles(gameState, dt, onHit) {

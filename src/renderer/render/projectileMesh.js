@@ -8,13 +8,21 @@ import { getWeapon, BASE_WEAPON_ID } from '../data/weapons.js'
 export function buildProjectileMesh(weaponId, mountType = 'laser') {
   const weapon = getWeapon(weaponId ?? BASE_WEAPON_ID[mountType])
   const isMissile = weapon.category === 'missile'
-  const length = isMissile ? 1.6 + weapon.damage * 0.03 : 7 + weapon.damage * 0.35
-  const radius = isMissile ? 0.28 + weapon.damage * 0.008 : 0.14 + weapon.damage * 0.01
+  // Lasers: chunky additive bolts (readable in chase cam, not cannon shells).
+  const length = isMissile ? 1.6 + weapon.damage * 0.03 : 3.8 + weapon.damage * 0.12
+  const radius = isMissile ? 0.28 + weapon.damage * 0.008 : 0.32 + weapon.damage * 0.014
   const geometry = isMissile
     ? new THREE.ConeGeometry(radius, length, 8)
-    : new THREE.CylinderGeometry(radius, radius, length, 6)
-  geometry.rotateX(Math.PI / 2) // align the geometry's length axis with local +z (forward)
-  const material = new THREE.MeshBasicMaterial({ color: weapon.color })
+    : new THREE.CylinderGeometry(radius * 0.5, radius, length, 6)
+  geometry.rotateX(Math.PI / 2) // length → local +Z
+  if (isMissile) geometry.translate(0, 0, length / 2)
+  const material = new THREE.MeshBasicMaterial({
+    color: weapon.color,
+    transparent: !isMissile,
+    opacity: isMissile ? 1 : 0.95,
+    blending: isMissile ? THREE.NormalBlending : THREE.AdditiveBlending,
+    depthWrite: isMissile
+  })
   return new THREE.Mesh(geometry, material)
 }
 

@@ -1,9 +1,11 @@
 import { findBody, getSystem } from '../procgen/galaxy.js'
-import { missionNavTarget, setWaypointForMission } from '../game/missions.js'
+import { dropMission, missionNavTarget, setWaypointForMission } from '../game/missions.js'
 import { escapeHtml } from './escapeHtml.js'
+import { gameConfirm, gameNotice } from './gameDialog.js'
 
 const STYLE = `
-#missions-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 50; }
+/* Above docking chrome (z 50) so the tracker opens while docked. */
+#missions-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 55; }
 #missions-ui .panel {
   width: 700px; max-height: 80vh; overflow-y: auto; padding: 18px 22px;
   background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
@@ -69,6 +71,13 @@ const STYLE = `
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 #missions-ui button.track:hover { background: rgba(255,138,61,0.22); box-shadow: 0 0 12px rgba(255,138,61,0.35); }
+#missions-ui button.drop {
+  background: rgba(224,90,90,0.1); border: 1px solid rgba(224,90,90,0.45); color: #ffb3b3;
+  padding: 5px 12px; cursor: pointer; font-family: monospace; margin-top: 4px; margin-left: 8px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#missions-ui button.drop:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
+#missions-ui .mission-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
 #missions-ui .footer-note { margin-top: 14px; font-size: 11px; opacity: 0.55; line-height: 1.4; }
 `
 
@@ -127,7 +136,7 @@ export function createMissionsUI(container, gameState) {
     if (!active.length) {
       contentEl.innerHTML = `
         <div class="empty">No active missions.<br/>Accept contracts from station and settlement mission boards while docked.</div>
-        <div class="footer-note">Orange rings on the galaxy map mark systems with an active objective or turn-in. Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located.</div>
+        <div class="footer-note">Orange rings on the galaxy map mark systems with an active objective or turn-in. Green rings mark remote systems where you have stored assets (ships, cargo, ore, parts, weapons, blueprints, or crafts). Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located.</div>
       `
       return
     }
@@ -147,20 +156,41 @@ export function createMissionsUI(container, gameState) {
             <div class="meta">${escapeHtml(describeTarget(m, gameState))}</div>
             ${renderLog(m)}
             <div class="status ${ready ? 'ready' : 'progress'}">${ready ? 'Ready to turn in' : 'In progress'}</div>
-            <button class="track" data-id="${m.id}">${ready ? 'Waypoint: Turn-In' : 'Set Waypoint'}</button>
+            <div class="mission-actions">
+              <button class="track" data-id="${m.id}">${ready ? 'Waypoint: Turn-In' : 'Set Waypoint'}</button>
+              <button class="drop" data-id="${m.id}">Drop Mission</button>
+            </div>
           </div>
         `
       }).join('')}
-      <div class="footer-note">Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located. Investigations: probe the target (P). Logs track leads, hostiles, and intel. Each lead raises the payout 5%.</div>
+      <div class="footer-note">Drop Mission abandons the contract with no reward. Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located. Investigations: probe the target (P). Logs track leads, hostiles, and intel. Each lead raises the payout 5%.</div>
     `
 
     contentEl.querySelectorAll('.track').forEach((btn) =>
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         try {
           setWaypointForMission(gameState, btn.dataset.id)
           render()
         } catch (err) {
-          alert(err.message)
+          await gameNotice('Waypoint', err.message)
+        }
+      })
+    )
+    contentEl.querySelectorAll('.drop').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const mission = gameState.missions.active.find((m) => m.id === btn.dataset.id)
+        const title = mission?.title ?? 'this mission'
+        const ok = await gameConfirm(
+          'Drop Mission',
+          `Drop "${title}"?\nYou will receive no reward.`,
+          { okLabel: 'Drop', cancelLabel: 'Cancel', danger: true }
+        )
+        if (!ok) return
+        try {
+          dropMission(gameState, btn.dataset.id)
+          render()
+        } catch (err) {
+          await gameNotice('Drop failed', err.message)
         }
       })
     )

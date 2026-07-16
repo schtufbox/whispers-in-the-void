@@ -135,15 +135,34 @@ const STYLE = `
   50% { box-shadow: 0 0 16px 2px rgba(255,90,90,0.95); }
 }
 
-#radar { position: fixed; right: 16px; top: 16px; font-family: monospace; color: #cfe3ff; user-select: none; text-align: center; }
+/* Squarer radar chrome: same family as status panel, chamfer on bottom-left
+   only (status panel cuts bottom-right). */
+#radar {
+  position: fixed; right: 16px; top: 16px;
+  font-family: monospace; color: #cfe3ff; user-select: none; text-align: center;
+  pointer-events: none;
+}
+#radar .radar-frame {
+  width: 176px; height: 176px;
+  padding: 6px;
+  box-sizing: border-box;
+  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.85));
+  border: 1px solid rgba(111,216,242,0.5);
+  border-left: 3px solid #6fd8f2;
+  /* Bottom-left cut (mirror of status-panel's bottom-right notch). */
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+  box-shadow: 0 0 16px rgba(79,195,217,0.35), inset 0 0 22px rgba(79,195,217,0.08);
+}
 #radar canvas {
-  background: radial-gradient(circle, rgba(10,22,34,0.85) 0%, rgba(6,12,22,0.9) 100%);
-  border: 1px solid #6fd8f2;
-  border-radius: 50%;
-  box-shadow: 0 0 14px rgba(79,195,217,0.55), inset 0 0 18px rgba(79,195,217,0.2);
+  display: block;
+  width: 100%; height: 100%;
+  background: radial-gradient(circle at 50% 48%, rgba(10,22,34,0.92) 0%, rgba(6,12,22,0.96) 72%, rgba(5,10,18,0.98) 100%);
+  border: 1px solid rgba(111,216,242,0.28);
+  border-radius: 2px;
+  box-shadow: inset 0 0 18px rgba(79,195,217,0.18);
 }
 #radar .radar-label {
-  margin-top: 5px; font-size: 11px; letter-spacing: 2px; opacity: 0.85; color: #7fe6ff;
+  margin-top: 6px; font-size: 11px; letter-spacing: 2px; opacity: 0.85; color: #7fe6ff;
   text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(79,195,217,0.8);
 }
 #hud .velocity-panel .row-label,
@@ -429,7 +448,10 @@ export function createHud(container) {
   const radar = document.createElement('div')
   radar.id = 'radar'
   radar.innerHTML = `
-    <canvas width="160" height="160"></canvas>
+    <div class="radar-frame">
+      <canvas width="164" height="164"></canvas>
+    </div>
+    <div class="radar-label">RADAR</div>
   `
   // Nested inside hud (position:fixed makes placement independent of parent)
   // so removing hud.element also cleans up the radar — no separate tracking.

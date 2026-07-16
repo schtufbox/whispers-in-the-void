@@ -49,6 +49,22 @@ test('docked pose fields round-trip through save', () => {
   assert.deepEqual(restored.player.dockedApproachDir, [0, 0, 1])
 })
 
+test('load clears hardpoint cooldowns so weapons work after a docked save', () => {
+  const gameState = createGameState({
+    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5
+  })
+  // Simulate a long session that fired recently: readyAt is far ahead of
+  // the post-load simTime (always 0).
+  gameState.player.ship.hardpointCooldowns = { fwd1: 12_345.67 }
+  gameState.player.ship.lastHitAt = 12_340
+  gameState.simTime = 12_400
+
+  const restored = deserializeGameState(JSON.parse(JSON.stringify(serializeGameState(gameState))))
+  assert.equal(restored.simTime, 0)
+  assert.deepEqual(restored.player.ship.hardpointCooldowns, {})
+  assert.equal(restored.player.ship.lastHitAt, undefined)
+})
+
 test('an active, incomplete bounty mission respawns its target npc on load', () => {
   const gameState = createGameState({
     characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5

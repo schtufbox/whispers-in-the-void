@@ -17,6 +17,10 @@ import { buildProbeMesh, updateProbeMesh } from './render/probeMesh.js'
 import {
   syncMeshToEntity,
   syncChaseCamera,
+  snapChaseCamera,
+  resetChaseCameraState,
+  getShipAimPoint,
+  AIM_LOOK_AHEAD,
   adjustChaseZoom,
   resetChaseZoom,
   setChaseFreeLook,
@@ -30,8 +34,8 @@ import { createGameState } from './game/state.js'
 import { createInputState, createMouseAimState, updateFlight } from './game/flight.js'
 import { updateSupercruise, ignoreBodyAsCruiseObstacle } from './game/supercruise.js'
 import { spawnEncounterNear } from './game/spawner.js'
-import { fireProjectile, updateProjectiles, updateNpcAI, updateCombatFlag, regenShields, getShipCollisionRadius, truceActive } from './game/combat.js'
-import { resolveBodyCollisions, trySupercruiseTunnel, collisionRadiusFor } from './game/collision.js'
+import { fireProjectile, updateProjectiles, prunePlayerLasersOffBoresight, updateNpcAI, updateCombatFlag, regenShields, getShipCollisionRadius, truceActive } from './game/combat.js'
+import { resolveBodyCollisions, trySupercruiseTunnel, collisionRadiusFor, exteriorRadiusFor } from './game/collision.js'
 import { mineRock, isRockAlive, rockDisplayName } from './game/mining.js'
 import { pruneWrecks, lootWreck } from './game/wrecks.js'
 import { updateCraftingJobs, ensureBlueprintMaps } from './game/crafting.js'
@@ -58,6 +62,7 @@ import { createNavMap } from './ui/navMap.js'
 import { createInventoryUI } from './ui/inventoryUI.js'
 import { createMissionsUI } from './ui/missionsUI.js'
 import { createDeathScreen } from './ui/deathScreen.js'
+import { gameConfirm, gameNotice } from './ui/gameDialog.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from './data/shipClasses.js'
 import { getGood } from './data/goods.js'
 import { getWeapon } from './data/weapons.js'
@@ -211,7 +216,8 @@ function hideHudGlitch(el) {
 
 const AMBIENT_SPAWN_INTERVAL_S = 90
 const AMBIENT_NPC_CAP = 3
-const RADAR_RANGE = 1500
+// Ship/wreck/rock radar contacts (planets/waypoint may still paint farther).
+const RADAR_RANGE = 100000
 const IMPACT_FLASH_TTL = 0.25
 // Wind-up long enough for "Hyperdrive engaged" TTS + charge SFX, then tunnel.
 const JUMP_WINDUP_S = 2.35
@@ -261,6 +267,33 @@ scene.add(hyperspaceTunnel.group)
 const nebula = createNebula()
 scene.add(nebula)
 
+// Ortho HUD in NDC (-1..1). Circle must be scaled by aspect or it looks
+// squashed wide on landscape viewports (equal NDC ≠ equal pixels).
+const hudScene = new THREE.Scene()
+const hudCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 10)
+const _hudReticleMat = new THREE.MeshBasicMaterial({
+  color: 0x7fe0a0,
+  transparent: true,
+  opacity: 0.92,
+  depthTest: false,
+  depthWrite: false,
+  side: THREE.DoubleSide
+})
+// Unit ring; updateCrosshair sets scale for a round ~16px reticle.
+const hudReticleRing = new THREE.Mesh(new THREE.RingGeometry(0.72, 1, 48), _hudReticleMat)
+const hudReticleDot = new THREE.Mesh(new THREE.CircleGeometry(0.22, 16), _hudReticleMat.clone())
+hudReticleRing.position.z = -1
+hudReticleDot.position.z = -1
+hudScene.add(hudReticleRing, hudReticleDot)
+hudReticleRing.visible = false
+hudReticleDot.visible = false
+
+// Escape while pointer-locked often only unlocks the cursor (keydown may not
+// fire). Suppress auto-pause when we exit lock ourselves (menus / Space).
+let suppressPointerUnlockPause = false
+// Same Esc can unlock then deliver keydown — ignore the keydown unpause.
+let pauseOpenedAtMs = 0
+
 const keys = createInputState()
 const mouseAim = createMouseAimState()
 const EMPTY_KEYS = new Set()
@@ -272,14 +305,90 @@ let flightMode = false
 let flightModeWanted = false
 let laserFireHeld = false
 let missileFireHeld = false
-window.addEventListener('mousedown', (e) => {
-  if (e.button === 0) laserFireHeld = true
-  if (e.button === 2) missileFireHeld = true
-})
-window.addEventListener('mouseup', (e) => {
+
+/** True when the player may shoot (free-flying, no menus / dock / cruise). */
+function canPlayerFire() {
+  return !!(
+    gameState &&
+    playerShipClass &&
+    !docked &&
+    !dockEffect &&
+    !cruising &&
+    !paused &&
+    !navMapOpen &&
+    !inventoryOpen &&
+    !missionsOpen &&
+    !jumpEffect
+  )
+}
+
+const _playerAimPoint = new THREE.Vector3()
+
+/** Fire once if allowed. Cooldowns live on the ship; safe to call every frame while held. */
+function tryPlayerFire(weaponTypeFilter) {
+  if (!canPlayerFire()) return
+  try {
+    // Seat first so click-to-fire between frames matches the reticle this frame.
+    syncChaseCamera(camera, gameState.player.ship, { cruising })
+    // Same world point the HUD reticle projects (ship boresight).
+    getShipAimPoint(gameState.player.ship, _playerAimPoint, AIM_LOOK_AHEAD)
+    fireProjectile(
+      gameState,
+      gameState.player.ship,
+      playerShipClass,
+      'player',
+      onWeaponFired,
+      weaponTypeFilter,
+      null,
+      _playerAimPoint.toArray()
+    )
+    // Pointerdown path doesn't wait for the late animate() mesh pass.
+    syncProjectileMeshesNow()
+  } catch (err) {
+    console.error('fire failed:', err)
+  }
+}
+
+/** Create meshes for any projectiles spawned after the mid-frame mesh pass. */
+function syncProjectileMeshesNow() {
+  for (const proj of gameState.projectiles) {
+    let mesh = projectileMeshes.get(proj.id)
+    if (!mesh) {
+      mesh = buildProjectileMesh(proj.weaponId, proj.weaponType)
+      projectileMeshes.set(proj.id, mesh)
+      scene.add(mesh)
+    }
+    syncMeshToEntity(mesh, proj)
+  }
+  for (const [id, mesh] of projectileMeshes) {
+    if (!gameState.projectiles.some((p) => p.id === id)) {
+      scene.remove(mesh)
+      projectileMeshes.delete(id)
+    }
+  }
+}
+
+// Capture on document so pointer-lock / Electron still delivers buttons.
+// Fire immediately on press (click between frames used to never see held=true).
+function onFirePointerDown(e) {
+  if (e.button === 0) {
+    laserFireHeld = true
+    tryPlayerFire('laser')
+  } else if (e.button === 2) {
+    missileFireHeld = true
+    tryPlayerFire('missile')
+  }
+}
+function onFirePointerUp(e) {
   if (e.button === 0) laserFireHeld = false
-  if (e.button === 2) missileFireHeld = false
-})
+  else if (e.button === 2) missileFireHeld = false
+}
+document.addEventListener('pointerdown', onFirePointerDown, true)
+document.addEventListener('pointerup', onFirePointerUp, true)
+document.addEventListener('pointercancel', () => {
+  laserFireHeld = false
+  missileFireHeld = false
+}, true)
 // Right-click is used for missile fire, not the OS/browser context menu.
 window.addEventListener('contextmenu', (e) => e.preventDefault())
 
@@ -298,7 +407,41 @@ function exitFlightMode() {
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
   if (targetDirEl) targetDirEl.style.display = 'none'
-  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock()
+  if (document.pointerLockElement === renderer.domElement) {
+    suppressPointerUnlockPause = true
+    document.exitPointerLock()
+    requestAnimationFrame(() => {
+      suppressPointerUnlockPause = false
+    })
+  }
+}
+
+/** Pause / unpause. Keeps flight intent so Resume re-locks the pointer. */
+function setGamePaused(next) {
+  if (!gameState || !!next === paused) return
+  if (dockEffect || navMapOpen || inventoryOpen || missionsOpen) return
+  paused = !!next
+  audio.setThrustState(null)
+  if (paused) {
+    // Don't clear flightModeWanted — Resume should return to mouse-aim.
+    flightMode = false
+    setChaseFreeLook(false)
+    if (crosshairEl) crosshairEl.style.display = 'none'
+    if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
+    if (targetDirEl) targetDirEl.style.display = 'none'
+    if (document.pointerLockElement === renderer.domElement) {
+      suppressPointerUnlockPause = true
+      document.exitPointerLock()
+      requestAnimationFrame(() => {
+        suppressPointerUnlockPause = false
+      })
+    }
+    pauseOpenedAtMs = performance.now()
+    pauseMenu?.show()
+  } else {
+    pauseMenu?.hide()
+    if (!docked) reenterFlightMode()
+  }
 }
 
 // The mirror of exitFlightMode — called whenever a menu/popup that forced
@@ -339,12 +482,27 @@ function tryRestoreFlightMode() {
 
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === renderer.domElement) {
-    if (flightModeWanted) flightMode = true
-  } else {
-    flightMode = false
-    if (crosshairEl) crosshairEl.style.display = 'none'
-    if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
-    if (targetDirEl) targetDirEl.style.display = 'none'
+    if (flightModeWanted && !paused) flightMode = true
+    return
+  }
+  flightMode = false
+  if (crosshairEl) crosshairEl.style.display = 'none'
+  if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
+  if (targetDirEl) targetDirEl.style.display = 'none'
+  // Escape while locked often only releases the cursor (no keydown). Open pause
+  // so one Esc is enough; ignore unlocks we triggered ourselves.
+  if (
+    !suppressPointerUnlockPause &&
+    gameState &&
+    !paused &&
+    flightModeWanted &&
+    !docked &&
+    !dockEffect &&
+    !navMapOpen &&
+    !inventoryOpen &&
+    !missionsOpen
+  ) {
+    setGamePaused(true)
   }
 })
 
@@ -440,6 +598,8 @@ let factionToastUntil = 0
 let truceWasActive = false
 let waypointEl = null
 let crosshairEl = null
+// In-scene reticle at the combat aim point (same WebGL pass as lasers — no DOM/CSS skew).
+let combatReticle3d = null
 let targetIndicatorEl = null
 // Small arrow near the ship on-screen, pointing toward the Tab target.
 let targetDirEl = null
@@ -465,9 +625,10 @@ let starMesh = null
 const projectileMeshes = new Map()
 const impactFlashes = []
 
-function buildBodyMesh(body) {
+function buildBodyMesh(body, system = null) {
   if (body.kind === 'planet' || body.kind === 'moon') return buildPlanetMesh(body)
-  if (body.kind === 'asteroidField') return buildAsteroidFieldMesh(body)
+  // Pass system so belt rocks tint by ore tier (coreFraction → raw/rich/exotic/quantum).
+  if (body.kind === 'asteroidField') return buildAsteroidFieldMesh(body, system)
   const mesh = buildStationMeshForBody(body)
   // Settlements keep a modest pre-behemoth size; only orbital stations are huge.
   const baseScale = body.kind === 'settlement' ? SETTLEMENT_SCALE : STATION_SCALE
@@ -496,7 +657,7 @@ function loadBodiesForCurrentSystem() {
   // Whisper of local-sun hue on the starfield (and a dimmer scene backdrop).
   applySystemStarAmbient()
   for (const body of currentSystem.bodies) {
-    const mesh = buildBodyMesh(body)
+    const mesh = buildBodyMesh(body, currentSystem)
     mesh.position.fromArray(body.position)
     bodyMeshes.set(body.id, mesh)
     scene.add(mesh)
@@ -777,7 +938,7 @@ function doSave() {
       audio.playSaveChime()
       showGameSavedToast()
     },
-    (err) => alert(`Save failed: ${err.message}`)
+    (err) => gameNotice('Save failed', err.message)
   )
 }
 
@@ -895,6 +1056,10 @@ function clearSession() {
   truceWasActive = false
   waypointEl?.remove()
   crosshairEl?.remove()
+  if (combatReticle3d) {
+    scene.remove(combatReticle3d)
+    combatReticle3d = null
+  }
   targetIndicatorEl?.remove()
   targetDirEl?.remove()
   targetDirEl = null
@@ -908,6 +1073,7 @@ function clearSession() {
   camera.fov = BASE_FOV
   camera.updateProjectionMatrix()
   resetChaseZoom()
+  resetChaseCameraState()
   docked = false
   paused = false
   navMapOpen = false
@@ -985,17 +1151,18 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   })
   pauseMenu = createPauseMenu(appEl, {
     onResume: () => {
-      paused = false
-      audio.setThrustState(null)
-      // Docked: stay in bay UI, no mouse-aim flight.
-      if (!docked) reenterFlightMode()
+      setGamePaused(false)
     },
     onSave: () => doSave(),
-    onRestart: () => {
-      if (confirm('Return to main menu? Unsaved progress will be lost.')) {
-        pauseMenu.hide()
-        returnToMenu()
-      }
+    onRestart: async () => {
+      const ok = await gameConfirm(
+        'Return to Menu',
+        'Return to main menu?\nUnsaved progress will be lost.',
+        { okLabel: 'Return', cancelLabel: 'Cancel', danger: true }
+      )
+      if (!ok) return
+      pauseMenu.hide()
+      returnToMenu()
     },
     onQuit: () => window.electronAPI.quitApp()
   })
@@ -1261,11 +1428,18 @@ function isDockable(body) {
 // The collision shell around a body (its physical radius + the ship's own)
 // can exceed the flat DOCK_RANGE for large planets/ships, which would make
 // docking physically unreachable — widen the range per body so it's always
-// comfortably outside that shell. Stations/settlements get an extra 2000m.
+// comfortably outside that shell. Stations/settlements get an extra 2000m,
+// and the bubble must also reach outside visual bulk so undock exit stays
+// re-dockable without diving back into the mesh.
 function dockRangeFor(body) {
   const bodyRadius = collisionRadiusFor(body) ?? 0
-  const base = Math.max(DOCK_RANGE, bodyRadius + getShipCollisionRadius(playerShipClass) + DOCK_RANGE_COLLISION_MARGIN)
-  if (body.kind === 'station' || body.kind === 'settlement') return base + DOCK_RANGE_STATION_EXTRA
+  const shipR = getShipCollisionRadius(playerShipClass)
+  const base = Math.max(DOCK_RANGE, bodyRadius + shipR + DOCK_RANGE_COLLISION_MARGIN)
+  if (body.kind === 'station' || body.kind === 'settlement') {
+    const visual = exteriorRadiusFor(body) ?? bodyRadius
+    const outsideVisual = visual + shipR + DOCK_RANGE_COLLISION_MARGIN + 80
+    return Math.max(base + DOCK_RANGE_STATION_EXTRA, outsideVisual)
+  }
   return base
 }
 
@@ -1796,6 +1970,10 @@ function computeRadarContacts() {
 function handleJump(targetSystemId) {
   // Validate up front so we don't play the animation just to fail partway
   // through; hyperspaceJump re-checks these itself as the safety net.
+  if (docked || dockEffect) {
+    flashToast('Undock before engaging hyperdrive')
+    return
+  }
   if (gameState.inCombat) {
     flashToast('Cannot engage hyperdrive while in combat')
     return
@@ -1886,7 +2064,7 @@ function updateJumpEffect(dt) {
         }
         loadBodiesForCurrentSystem()
       } catch (err) {
-        alert(err.message)
+        gameNotice('Hyperspace failed', err.message)
         jumpEffect = null
         hyperspaceTunnel.stop()
         audio.playHyperspaceArrival()
@@ -2026,7 +2204,9 @@ function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 }
 
-// Hang point just outside the body's collision shell, on the approach line.
+// Hang point just outside the body's flight collision shell, on the approach
+// line. Dock approach uses this (tight shell so you can fly in close). Undock
+// recomputes a farther hang via undockExteriorPoint so the ship clears mesh.
 function dockExteriorPoint(body, shipPos) {
   const bodyPos = new THREE.Vector3(...body.position)
   const approachDir = bodyPos.clone().sub(shipPos)
@@ -2036,6 +2216,20 @@ function dockExteriorPoint(body, shipPos) {
   const standoff = bodyRadius + getShipCollisionRadius(playerShipClass) + DOCK_EXTERIOR_MARGIN
   const exteriorPoint = bodyPos.clone().addScaledVector(approachDir, -standoff)
   return { bodyPos, approachDir, exteriorPoint, standoff }
+}
+
+// Undock hang: outside station/settlement *visual* bulk along the stored
+// approach direction. Flight collision (500m stations) is intentionally smaller
+// than the mesh so you can dock close — but leaving must clear geometry.
+function undockExteriorPoint(body, approachDir) {
+  const bodyPos = new THREE.Vector3(...body.position)
+  const dir = approachDir.clone()
+  if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1)
+  else dir.normalize()
+  const bodyRadius = exteriorRadiusFor(body) ?? collisionRadiusFor(body) ?? 0
+  const standoff = bodyRadius + getShipCollisionRadius(playerShipClass) + DOCK_EXTERIOR_MARGIN
+  const exteriorPoint = bodyPos.clone().addScaledVector(dir, -standoff)
+  return { bodyPos, approachDir: dir, exteriorPoint, standoff }
 }
 
 // Docking/undocking is a scripted multi-phase animation:
@@ -2118,11 +2312,22 @@ function beginUndocking() {
     docked = false
     return
   }
-  const { exteriorPoint, approachDir, body } = dockedApproach
+  const { approachDir, body } = dockedApproach
+  // Recompute hang from current body pose + visual bulk shell. Dock approach
+  // hang used the tight flight collision and sits inside station mesh.
+  const { exteriorPoint } = undockExteriorPoint(body, approachDir)
+  dockedApproach.exteriorPoint = exteriorPoint
+  // Always normalize — loaded saves may have slightly off-unit approach dirs.
+  const awayDir = approachDir.clone()
+  if (awayDir.lengthSq() < 1e-8) awayDir.set(0, 0, 1)
+  else awayDir.normalize()
   const backAwayPoint = exteriorPoint.clone().addScaledVector(
-    approachDir,
+    awayDir,
     -(getShipCollisionRadius(playerShipClass) + UNDOCK_BACKOFF_MARGIN)
   )
+  // Face along the back-away vector (out of the station).
+  const awayQuat = quatFacing(exteriorPoint, backAwayPoint)
+  awayQuat.normalize()
   dockEffect = {
     undocking: true,
     elapsed: 0,
@@ -2130,13 +2335,18 @@ function beginUndocking() {
     swapped: false,
     thrusterPulsed: false,
     exteriorPoint,
-    awayQuat: quatFacing(exteriorPoint, backAwayPoint),
+    awayQuat,
     backAwayPoint
   }
   jumpFlashEl.style.background = DOCK_FLASH_COLOR
   jumpFlashEl.style.opacity = '0'
   jumpFlashEl.style.display = 'block'
   audio.playUndock()
+  // Wipe chase-cam / mouse state left over from the bay or a prior free-look
+  // (load-from-docked is especially prone to a skewed seat vs boresight).
+  resetChaseCameraState()
+  mouseAim.dx = 0
+  mouseAim.dy = 0
   // Requested here (immediately, as a direct continuation of the Undock
   // button click) rather than when the animation finishes a couple seconds
   // later — flightMode is harmless while dockEffect is active (updateFlight
@@ -2209,14 +2419,19 @@ function updateDockEffect(dt) {
         dockEffect.swapped = true
         swapToExterior()
         gameState.player.ship.position = dockEffect.exteriorPoint.toArray()
-        gameState.player.ship.quaternion = dockEffect.awayQuat.toArray()
+        gameState.player.ship.quaternion = dockEffect.awayQuat.clone().normalize().toArray()
         audio.playDockThrusterPulse()
+        // Leaving the bay: hard-reset chase seat so the interior camera pose
+        // (2e6 world) cannot leave a lateral skew vs ship boresight/crosshair.
+        mouseAim.dx = 0
+        mouseAim.dy = 0
+        if (playerMesh) syncMeshToEntity(playerMesh, gameState.player.ship)
+        snapChaseCamera(camera, gameState.player.ship)
       }
       const lt = easeInOutCubic(Math.min(1, (dockEffect.elapsed - half) / half))
       gameState.player.ship.position = dockEffect.exteriorPoint.clone().lerp(dockEffect.backAwayPoint, lt).toArray()
-      // Level out while backing away.
-      const level = dockEffect.awayQuat.clone()
-      gameState.player.ship.quaternion = level.toArray()
+      // Level out while backing away — keep a unit quat for boresight/camera.
+      gameState.player.ship.quaternion = dockEffect.awayQuat.clone().normalize().toArray()
       if (!dockEffect.thrusterPulsed && lt > 0.2) {
         dockEffect.thrusterPulsed = true
         audio.playDockThrusterPulse()
@@ -2225,8 +2440,13 @@ function updateDockEffect(dt) {
   }
 
   syncMeshToEntity(playerMesh, gameState.player.ship)
-  // Chase camera a touch closer during dock so the bay sequence fills the frame.
-  syncChaseCamera(camera, gameState.player.ship)
+  // During exterior undock we already snapped once; keep hard snaps so the
+  // seat can't lerp from the bay. Dock approach still uses normal chase.
+  if (dockEffect.undocking && dockEffect.swapped) {
+    snapChaseCamera(camera, gameState.player.ship, { resetState: false })
+  } else {
+    syncChaseCamera(camera, gameState.player.ship)
+  }
 
   // Bright flash centered on the scene swap, fading out over flashWindow.
   const sinceSwap = dockEffect.elapsed - swapAt
@@ -2259,10 +2479,21 @@ function updateDockEffect(dt) {
       dock(finishedBody)
     } else {
       gameState.player.ship.velocity = [0, 0, 0]
+      // Ensure a clean unit orientation for boresight/camera after undock
+      // (especially load-from-docked where awayQuat is rebuilt from save).
+      const q = new THREE.Quaternion().fromArray(gameState.player.ship.quaternion).normalize()
+      gameState.player.ship.quaternion = q.toArray()
+      mouseAim.dx = 0
+      mouseAim.dy = 0
+      if (playerMesh) syncMeshToEntity(playerMesh, gameState.player.ship)
+      // Final hard reset: bay → space handoff must leave a neutral chase seat.
+      snapChaseCamera(camera, gameState.player.ship)
       dockEffect = null
       docked = false
       dockedApproach = null
       clearDockedSaveFields()
+      // Re-place reticle immediately on the bolt path (don't wait a frame).
+      if (flightMode) updateCrosshair()
     }
   }
 }
@@ -2299,30 +2530,29 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault()
     doSave()
   } else if (e.code === 'Escape' && !dockEffect && !navMapOpen && !inventoryOpen && !missionsOpen) {
-    // Pause works in flight and while docked (not mid dock/undock animation).
-    paused = !paused
-    audio.setThrustState(null)
-    if (paused) {
-      exitFlightMode()
-      pauseMenu.show()
-    } else {
-      pauseMenu.hide()
-      if (!docked) reenterFlightMode()
-    }
-  } else if (e.code === 'KeyM' && !docked && !paused && !inventoryOpen && !missionsOpen) {
+    // One Esc: pause. Pointer-lock may unlock first (pointerlockchange opens
+    // pause); ignore a same-tick keydown so we don't immediately unpause.
+    e.preventDefault()
+    if (paused && performance.now() - pauseOpenedAtMs < 200) return
+    setGamePaused(!paused)
+  } else if (e.code === 'KeyM' && !paused && !inventoryOpen && !missionsOpen && !dockEffect) {
+    // Map is available in flight and while docked (plan jumps from a bay).
     navMapOpen = !navMapOpen
     audio.setThrustState(null)
     if (navMapOpen) {
       exitFlightMode()
       navMap.show({
         onJump: handleJump,
-        onClose: () => { navMapOpen = false; reenterFlightMode() },
+        onClose: () => {
+          navMapOpen = false
+          if (!docked) reenterFlightMode()
+        },
         supercruiseActive: cruising,
         inCombat: !!gameState.inCombat
       })
     } else {
       navMap.hide()
-      reenterFlightMode()
+      if (!docked) reenterFlightMode()
     }
   } else if (e.code === 'KeyC' && !docked && !navMapOpen && !paused && !inventoryOpen && !missionsOpen) {
     if (cruising) {
@@ -2366,25 +2596,26 @@ window.addEventListener('keydown', (e) => {
       inventoryUI.hide()
       reenterFlightMode()
     }
-  } else if (e.code === 'KeyJ' && !docked && !navMapOpen && !paused && !inventoryOpen) {
+  } else if (e.code === 'KeyJ' && !navMapOpen && !paused && !inventoryOpen && !dockEffect) {
+    // Missions tracker is available in flight and while docked.
     missionsOpen = !missionsOpen
     audio.setThrustState(null)
     if (missionsOpen) {
       exitFlightMode()
-      missionsUI.show(() => { missionsOpen = false; reenterFlightMode() })
+      missionsUI.show(() => {
+        missionsOpen = false
+        if (!docked) reenterFlightMode()
+      })
     } else {
       missionsUI.hide()
-      reenterFlightMode()
+      if (!docked) reenterFlightMode()
     }
   }
 })
 
-// Tab-targeting range matches radar for ships/wrecks/rocks. Celestial bodies
-// (planets, moons, stations, settlements, star) use distance-to-surface so a
-// large world stays lockable without needing to be inside its shell.
-const TARGET_RANGE = RADAR_RANGE
-// Rough star shell for range checks (real star mesh radii vary by type/scale;
-// this only gates "near enough to tab-lock", not collision).
+// Tab-lock range for ships/wrecks/rocks/bodies (surface dist for celestials).
+// Radar draws farther so contacts appear before they are lockable.
+const TARGET_RANGE = 60000
 // Rough star shell for Tab-target range (tracks 6× sun scale; was 2200).
 const STAR_TARGET_RADIUS = 13200
 
@@ -2794,38 +3025,58 @@ function updateTargetDirectionIndicator() {
   arrow.style.borderBottomColor = color
 }
 
-// World-space point the crosshair aims at (ship +Z × CROSSHAIR_DISTANCE).
-// Shared by the reticle projection and supercruise/hyperspace tunnel origin.
-const _crosshairAim = new THREE.Vector3()
-const _crosshairFwd = new THREE.Vector3()
-const _crosshairQuat = new THREE.Quaternion()
+// Shared with chase cam + guns: ship +Z × AIM_LOOK_AHEAD (see sceneSync).
+const _boresightAim = new THREE.Vector3()
+const _boresightFwd = new THREE.Vector3()
+const _boresightQuat = new THREE.Quaternion()
 
-function getCrosshairAimWorld(out = _crosshairAim) {
-  out.fromArray(gameState.player.ship.position)
-  _crosshairQuat.fromArray(gameState.player.ship.quaternion)
-  _crosshairFwd.set(0, 0, 1).applyQuaternion(_crosshairQuat)
-  return out.addScaledVector(_crosshairFwd, CROSSHAIR_DISTANCE)
+function getShipForwardWorld(out = _boresightFwd) {
+  const ship = gameState.player.ship
+  _boresightQuat.fromArray(ship.quaternion).normalize()
+  out.set(0, 0, 1).applyQuaternion(_boresightQuat)
+  if (out.lengthSq() < 1e-8) out.set(0, 0, 1)
+  else out.normalize()
+  return out
 }
 
-// Shows exactly where the ship is currently pointing (and thus where fixed
-// hardpoints will shoot) — projected the same way updateWaypointIndicator
-// projects the waypoint arrow, just for a point a fixed distance ahead of
-// the ship instead of a distant body.
+/** Tunnel FX / short helpers — same axis as combat aim, shorter distance. */
+function getCrosshairAimWorld(out = _boresightAim) {
+  out.fromArray(gameState.player.ship.position)
+  return out.addScaledVector(getShipForwardWorld(_boresightFwd), CROSSHAIR_DISTANCE)
+}
+
+/**
+ * Reticle always marks the projected combat aim point (same point guns use).
+ * Scale X/Y separately so the ring is round in pixels (not NDC-squashed).
+ */
 function updateCrosshair() {
-  crosshairEl.style.display = flightMode ? 'block' : 'none'
-  if (!flightMode) return
+  if (crosshairEl) crosshairEl.style.display = 'none'
+  if (combatReticle3d) combatReticle3d.visible = false
+  // Hide while Alt free-look frames the hull (reticle would sit on the ship).
+  const on = !!(flightMode && gameState && !docked && !paused && !isChaseFreeLook())
+  hudReticleRing.visible = on
+  hudReticleDot.visible = on
+  if (!on) return
 
-  const aimPoint = getCrosshairAimWorld()
-  // Camera matrices must match the seat we just placed (see syncChaseCamera).
+  // ~16px outer radius in screen pixels → NDC half-extents (aspect-correct).
+  const w = Math.max(1, renderer.domElement.clientWidth)
+  const h = Math.max(1, renderer.domElement.clientHeight)
+  const outerPx = 8
+  const sx = (outerPx / w) * 2
+  const sy = (outerPx / h) * 2
+  hudReticleRing.scale.set(sx, sy, 1)
+  hudReticleDot.scale.set(sx, sy, 1)
+
   camera.updateMatrixWorld(true)
-  const projected = aimPoint.clone().project(camera)
-  if (projected.z > 1) return
-
-  // Whole pixels — subpixel left/top churn reads as a shaky reticle.
-  const x = Math.round((projected.x * 0.5 + 0.5) * window.innerWidth)
-  const y = Math.round((-projected.y * 0.5 + 0.5) * window.innerHeight)
-  crosshairEl.style.left = `${x}px`
-  crosshairEl.style.top = `${y}px`
+  getShipAimPoint(gameState.player.ship, _boresightAim, AIM_LOOK_AHEAD)
+  const p = _boresightAim.project(camera)
+  if (Number.isFinite(p.x) && Number.isFinite(p.y) && p.z <= 1) {
+    hudReticleRing.position.set(p.x, p.y, -1)
+    hudReticleDot.position.set(p.x, p.y, -1)
+  } else {
+    hudReticleRing.position.set(0, 0, -1)
+    hudReticleDot.position.set(0, 0, -1)
+  }
 }
 
 /** After SC drops the waypoint, lock Tab-target on the destination for a reticle. */
@@ -2918,6 +3169,14 @@ function applyOrbitalCarry(sysBodies, prevPositions, dt) {
     ship.position[0] += best.dx
     ship.position[1] += best.dy
     ship.position[2] += best.dz
+    // Player munitions co-move so the trail doesn't shear off the reticle
+    // while the ship is carried with a planet/moon (no projectile gravity).
+    for (const p of gameState.projectiles) {
+      if (p.ownerId !== 'player') continue
+      p.position[0] += best.dx
+      p.position[1] += best.dy
+      p.position[2] += best.dz
+    }
     return
   }
 
@@ -2933,6 +3192,17 @@ function applyOrbitalCarry(sysBodies, prevPositions, dt) {
   const s = Math.sin(a)
   ship.position[0] = x * c - z * s
   ship.position[2] = x * s + z * c
+  for (const p of gameState.projectiles) {
+    if (p.ownerId !== 'player') continue
+    const px = p.position[0]
+    const pz = p.position[2]
+    p.position[0] = px * c - pz * s
+    p.position[2] = px * s + pz * c
+    const vx = p.velocity[0]
+    const vz = p.velocity[2]
+    p.velocity[0] = vx * c - vz * s
+    p.velocity[2] = vx * s + vz * c
+  }
 }
 
 function updateWaypointIndicator() {
@@ -3137,7 +3407,15 @@ function animate() {
     updateFlight(gameState.player.ship, playerShipClass, flightMode ? keys : EMPTY_KEYS, mouseAim, dt)
     thrustState = !flightMode ? null : keys.has('KeyW') ? 'accel' : keys.has('KeyS') ? 'brake' : null
     audio.setThrustState(thrustState)
+    // Drop laser bolts from the last turn so a stationary burst isn't buried
+    // under ~1s of off-boresight trail (ttl 1.2s otherwise).
+    prunePlayerLasersOffBoresight(gameState)
   }
+  // Keep mesh + chase seat in sync with the post-flight pose *before* weapons
+  // and reticles so undock/load can't leave a one-frame cam/gun skew.
+  if (playerMesh) syncMeshToEntity(playerMesh, gameState.player.ship)
+  syncChaseCamera(camera, gameState.player.ship, { cruising, dt })
+
   // Edge-detect engage/disengage so sample spool-down + voice callout both
   // fire on auto-arrival, combat interrupt, and manual KeyC alike.
   audio.setSupercruiseActive(cruising)
@@ -3188,7 +3466,10 @@ function animate() {
       thrusterEffects?.playTunnelBurst(tunnel.from, tunnel.to)
     }
   } else {
-    resolveBodyCollisions(gameState.player.ship, currentBodies, shipRadius)
+    // Belts: collide with individual rocks only (not the field bounding shell).
+    resolveBodyCollisions(gameState.player.ship, currentBodies, shipRadius, {
+      isRockAlive: (fieldId, index) => isRockAlive(gameState, fieldId, index)
+    })
   }
 
   const shipSpeed = Math.hypot(...gameState.player.ship.velocity)
@@ -3207,15 +3488,16 @@ function animate() {
   // Skybox stays unwarped; cruise uses motionFx full-screen star tunnel.
   updateStarfieldMotion(starfield, motion.intensity, cruising)
   // Speed FOV: mild in normal flight; cruise uses a fixed +5% FOV only.
-  // Snap when close so continuous FOV lerp doesn't jitter projected HUD reticles.
+  // Snap when close / nearly stopped so FOV settle doesn't smear projected aim.
   const targetFov = cruising ? CRUISE_FOV : BASE_FOV + motion.fovBoost
-  if (Math.abs(camera.fov - targetFov) < 0.03) {
+  const fovErr = Math.abs(camera.fov - targetFov)
+  if (fovErr < 0.08 || (!cruising && shipSpeed < 2 && motion.fovBoost < 0.05)) {
     if (camera.fov !== targetFov) {
       camera.fov = targetFov
       camera.updateProjectionMatrix()
     }
   } else {
-    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4)
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6)
     camera.updateProjectionMatrix()
   }
   // SUPERCRUISE ENGAGED: shown/hidden with glitch enter/exit on wasCruising edge.
@@ -3242,11 +3524,6 @@ function animate() {
     hullLength: playerShipClass.hull.length
   })
 
-  // Normal weapons only — lasers mine asteroids on hit (see combat.js).
-  if (flightMode && !cruising) {
-    if (laserFireHeld) fireProjectile(gameState, gameState.player.ship, playerShipClass, 'player', onWeaponFired, 'laser')
-    if (missileFireHeld) fireProjectile(gameState, gameState.player.ship, playerShipClass, 'player', onWeaponFired, 'missile')
-  }
   oreScoopEffects?.update(dt, new THREE.Vector3().fromArray(gameState.player.ship.position))
 
   for (const npc of gameState.npcs) {
@@ -3442,10 +3719,15 @@ function animate() {
   }
   applyOrbitalCarry(sysBodies, prevBodyPositions, dt)
 
-  // Chase cam + mesh after orbital carry so crosshair projection matches the
-  // final ship pose this frame (syncing earlier left a one-frame wobble).
+  // Chase cam + mesh after orbital carry so gun boresight and reticle share
+  // the final ship pose this frame.
   syncMeshToEntity(playerMesh, gameState.player.ship)
-  syncChaseCamera(camera, gameState.player.ship, { cruising })
+  syncChaseCamera(camera, gameState.player.ship, { cruising, dt })
+
+  // Fire after final pose + camera; mesh-sync again so new bolts draw this frame.
+  if (laserFireHeld) tryPlayerFire('laser')
+  if (missileFireHeld) tryPlayerFire('missile')
+  syncProjectileMeshesNow()
 
   // Tidally locked moons face their parent; others keep spinning via updateStationMesh.
   for (const [id, mesh] of bodyMeshes) {
@@ -3527,6 +3809,14 @@ function animate() {
   updateTargetDirectionIndicator()
 
   renderer.render(scene, camera)
+  // HUD reticle on top in true framebuffer NDC (same space as camera.project).
+  if (hudReticleRing.visible) {
+    const prevAutoClear = renderer.autoClear
+    renderer.autoClear = false
+    renderer.clearDepth()
+    renderer.render(hudScene, hudCamera)
+    renderer.autoClear = prevAutoClear
+  }
 
   if (gameState.player.ship.hull <= 0) handlePlayerDeath()
 }
