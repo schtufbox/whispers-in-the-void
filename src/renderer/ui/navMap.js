@@ -1,6 +1,7 @@
 import { getSystem, canJumpTo, findHyperspaceRoute } from '../procgen/galaxy.js'
-import { missionMarkedSystemIds, missionMarkedBodyIds } from '../game/missions.js'
+import { missionMarkedSystemIds } from '../game/missions.js'
 import { playerAssetSystemIds } from '../game/economy.js'
+import { shipHasAutopilot } from '../data/accessories.js'
 import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
@@ -16,14 +17,6 @@ const STYLE = `
 #nav-map h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
 #nav-map h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 0 0 8px 0; }
 #nav-map .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-#nav-map .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid rgba(111,216,242,0.25); }
-#nav-map .tab {
-  background: transparent; border: none; border-bottom: 2px solid transparent; color: #8fb3d9;
-  padding: 8px 16px; cursor: pointer; font-family: monospace; font-size: 11px;
-  letter-spacing: 1.5px; text-transform: uppercase; transition: color 0.15s ease, border-color 0.15s ease;
-}
-#nav-map .tab:hover { color: #cfe3ff; }
-#nav-map .tab.active { color: #7fe6ff; border-bottom-color: #6fd8f2; text-shadow: 0 0 6px rgba(79,195,217,0.6); }
 #nav-map button.close {
   background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
   padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
@@ -117,9 +110,6 @@ const BODY_ICONS = {
   star: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="#ffe066"/><circle cx="6" cy="6" r="5.5" fill="none" stroke="#ffb347" stroke-width="0.8" opacity="0.7"/></svg>'
 }
 
-// Synthetic waypoint id for the system sun (must match main.js).
-const SYSTEM_STAR_WAYPOINT_ID = 'system-star'
-
 function dist3(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 }
@@ -134,12 +124,8 @@ export function createNavMap(container, gameState) {
   root.innerHTML = `
     <div class="panel">
       <div class="header">
-        <h2>Navigation</h2>
+        <h2>Galaxy Map</h2>
         <button class="close">Close</button>
-      </div>
-      <div class="tabs">
-        <button data-tab="system" class="tab active">Current System</button>
-        <button data-tab="galaxy" class="tab">Galaxy Map</button>
       </div>
       <div class="tab-content"></div>
     </div>
@@ -147,8 +133,6 @@ export function createNavMap(container, gameState) {
   container.appendChild(root)
 
   const contentEl = root.querySelector('.tab-content')
-  const tabButtons = [...root.querySelectorAll('.tab')]
-  let currentTab = 'system'
   let selectedSystemId = null
   let hoveredSystemId = null
 
@@ -438,7 +422,31 @@ export function createNavMap(container, gameState) {
         contentEl.querySelector('.sel-distance').textContent = ''
         hintEl.textContent = ''
         jumpBtn.disabled = true
-        jumpBtn.textContent = 'Hyperspace Jump'
+        jumpBtn.textContent = docked ? 'Cannot Jump While Docked' : 'Hyperspace Jump'
+        // Still allow Jump Route when a plotted hop is ready (selection optional).
+        const hop = nextRouteHopId()
+        const rem = remainingRoute()
+        if (
+          !docked &&
+          !inCombat &&
+          !supercruiseActive &&
+          hop &&
+          rem?.length &&
+          shipHasAutopilot(gameState.player.ship)
+        ) {
+          jumpBtn.disabled = false
+          jumpBtn.textContent =
+            rem.length > 1 ? `Jump Route (${rem.length} jumps)` : 'Jump Route'
+        } else if (
+          !docked &&
+          !inCombat &&
+          !supercruiseActive &&
+          hop
+        ) {
+          const hopSys = byId.get(hop)
+          jumpBtn.disabled = false
+          jumpBtn.textContent = hopSys ? `Jump: ${hopSys.name}` : 'Hyperspace Jump'
+        }
         plotBtn.disabled = true
         plotBtn.textContent = 'Plot Route'
         renderRouteList()
@@ -478,13 +486,25 @@ export function createNavMap(container, gameState) {
       const jumpTarget = resolveJumpTargetId()
       const jumpSys = jumpTarget ? byId.get(jumpTarget) : null
       const routeHop = nextRouteHopId()
+      const routeRem = remainingRoute()
+      const hasAutopilot = shipHasAutopilot(gameState.player.ship)
+      // Jump Route: autopilot fitted + a plotted multi-hop (or any remaining route).
+      const jumpRouteMode = hasAutopilot && !!routeRem?.length && !!routeHop
 
-      if (inCombat) {
+      if (docked) {
+        jumpBtn.disabled = true
+        jumpBtn.textContent = 'Cannot Jump While Docked'
+      } else if (inCombat) {
         jumpBtn.disabled = true
         jumpBtn.textContent = 'Cannot Jump in Combat'
       } else if (supercruiseActive) {
         jumpBtn.disabled = true
         jumpBtn.textContent = 'Drop Supercruise First'
+      } else if (jumpRouteMode && jumpSys) {
+        jumpBtn.disabled = false
+        const hops = routeRem.length
+        jumpBtn.textContent =
+          hops > 1 ? `Jump Route (${hops} jumps)` : `Jump Route · ${jumpSys.name}`
       } else if (jumpTarget && jumpSys) {
         jumpBtn.disabled = false
         jumpBtn.textContent = routeHop
@@ -557,10 +577,13 @@ export function createNavMap(container, gameState) {
     })
 
     contentEl.querySelector('.jump').addEventListener('click', () => {
-      if (!onJumpCallback || supercruiseActive || inCombat) return
+      if (!onJumpCallback || supercruiseActive || inCombat || docked) return
       const target = resolveJumpTargetId()
       if (!target) return
-      onJumpCallback(target)
+      const routeRem = remainingRoute()
+      const routeAutopilot =
+        shipHasAutopilot(gameState.player.ship) && !!routeRem?.length && !!nextRouteHopId()
+      onJumpCallback(target, { routeAutopilot })
     })
 
     contentEl.querySelector('.plot-route').addEventListener('click', () => {
@@ -578,91 +601,26 @@ export function createNavMap(container, gameState) {
     updateInfoPanel()
   }
 
-  function renderSystemTab() {
-    const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-    const playerPos = gameState.player.ship.position
-    const missionBodies = missionMarkedBodyIds(gameState, system.id)
-    const starPos = [0, 0, 0]
-    const starRow = {
-      b: { id: SYSTEM_STAR_WAYPOINT_ID, name: `${system.name} Star`, kind: 'star' },
-      d: dist3(playerPos, starPos)
-    }
-    const rows = [
-      starRow,
-      ...system.bodies.map((b) => ({ b, d: dist3(playerPos, b.position) })).sort((a, b) => a.d - b.d)
-    ]
-
-    contentEl.innerHTML = `
-      <p>Bodies in ${system.name}:</p>
-      <table>
-        <thead><tr><th>Name</th><th>Kind</th><th>Distance</th><th></th></tr></thead>
-        <tbody>${rows
-          .map(
-            ({ b, d }) => {
-              const isWp = gameState.player.waypointBodyId === b.id
-              const isMission = missionBodies.has(b.id)
-              const classes = [isWp ? 'active-waypoint' : '', isMission ? 'mission-marker' : ''].filter(Boolean).join(' ')
-              const distLabel = d >= 10000 ? `${(d / 1000).toFixed(1)}km` : `${Math.round(d)}m`
-              return `
-          <tr class="${classes}">
-            <td class="body-name">${BODY_ICONS[b.kind] ?? ''}${b.name}${isMission ? '<span class="mission-tag">mission</span>' : ''}</td>
-            <td>${b.kind}</td><td>${distLabel}</td>
-            <td><button class="waypoint" data-id="${b.id}">${isWp ? 'Clear' : 'Set Waypoint'}</button></td>
-          </tr>`
-            }
-          )
-          .join('')}</tbody>
-      </table>
-    `
-    contentEl.querySelectorAll('.waypoint').forEach((btn) =>
-      btn.addEventListener('click', () => {
-        if (gameState.player.waypointBodyId === btn.dataset.id) {
-          gameState.player.waypointBodyId = null
-          gameState.player.waypointPosition = null
-        } else {
-          gameState.player.waypointBodyId = btn.dataset.id
-          // Star is at system origin; body waypoints clear free-space markers.
-          gameState.player.waypointPosition =
-            btn.dataset.id === SYSTEM_STAR_WAYPOINT_ID ? [0, 0, 0] : null
-        }
-        renderSystemTab()
-      })
-    )
-  }
-
-  const renderers = { galaxy: renderGalaxyTab, system: renderSystemTab }
-
-  tabButtons.forEach((btn) =>
-    btn.addEventListener('click', () => {
-      currentTab = btn.dataset.tab
-      tabButtons.forEach((b) => b.classList.toggle('active', b === btn))
-      renderers[currentTab]()
-    })
-  )
-
   let onJumpCallback = null
   let onCloseCallback = null
-  // Set each time the map opens — hyperspace blocked in combat / supercruise.
+  // Set each time the map opens — hyperspace blocked in combat / supercruise / docked.
   let supercruiseActive = false
   let inCombat = false
+  let docked = false
   root.querySelector('.close').addEventListener('click', () => {
     root.style.display = 'none'
     onCloseCallback?.()
   })
 
   return {
-    show({ onJump, onClose, supercruiseActive: sc = false, inCombat: combat = false }) {
+    show({ onJump, onClose, supercruiseActive: sc = false, inCombat: combat = false, docked: isDocked = false }) {
       onJumpCallback = onJump
       onCloseCallback = onClose
       supercruiseActive = !!sc
       inCombat = !!combat
+      docked = !!isDocked
       selectedSystemId = null
-      // With a plotted route, open Galaxy so the next hop + Jump are ready.
-      const hasRoute =
-        Array.isArray(gameState.player.plottedRoute) && gameState.player.plottedRoute.length > 0
-      currentTab = hasRoute ? 'galaxy' : 'system'
-      tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === currentTab))
-      renderers[currentTab]()
+      renderGalaxyTab()
       root.style.display = 'flex'
     },
     hide() {

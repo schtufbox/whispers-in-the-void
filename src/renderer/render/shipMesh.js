@@ -9,44 +9,53 @@ function hashString(str) {
   return Math.abs(h)
 }
 
-// Shared CC0 metal/panel maps (same packs as stations). Materials are built
-// lazily inside buildShipMesh so node:test never hits TextureLoader at import.
-function hullMaps() {
-  return stationMaterialMaps('hull', 0.4)
+// Ship-specific CC0 PBR (ambientCG) — tinted via material.color per class.
+function shipHullMaps(normalStrength = 0.55) {
+  return stationMaterialMaps('shipHull', normalStrength)
 }
-function panelMaps() {
-  return stationMaterialMaps('panel', 0.35)
+function shipStructureMaps(normalStrength = 0.5) {
+  return stationMaterialMaps('shipStructure', normalStrength)
 }
-function radiatorMaps() {
-  return stationMaterialMaps('radiator', 0.35)
+function shipArmorMaps(normalStrength = 0.62) {
+  return stationMaterialMaps('shipArmor', normalStrength)
+}
+function shipTrimMaps(normalStrength = 0.45) {
+  return stationMaterialMaps('shipTrim', normalStrength)
 }
 
-function makeDetailMaterials() {
+function makeDetailMaterials(hullTint) {
+  const tint = hullTint?.clone?.() ?? new THREE.Color(0x8899aa)
+  const darkTint = tint.clone().multiplyScalar(0.55)
+  const lightTint = tint.clone().lerp(new THREE.Color(0xffffff), 0.25)
   return {
     hardpoint: new THREE.MeshStandardMaterial({
-      color: 0x2a2a30, metalness: 0.85, roughness: 0.4, ...panelMaps()
+      color: 0x2a2e34,
+      metalness: 0.9,
+      roughness: 0.35,
+      ...shipTrimMaps(0.5)
     }),
     canopy: new THREE.MeshStandardMaterial({
-      color: 0x152838,
+      color: 0x0c1a28,
       flatShading: false,
       transparent: true,
-      opacity: 0.88,
-      metalness: 0.15,
-      roughness: 0.08,
-      emissive: 0x0a2840,
-      emissiveIntensity: 0.45
+      opacity: 0.82,
+      metalness: 0.12,
+      roughness: 0.06,
+      emissive: 0x0a3048,
+      emissiveIntensity: 0.55,
+      envMapIntensity: 1.2
     }),
     window: new THREE.MeshStandardMaterial({
-      color: 0x1a4058,
-      emissive: 0x3a80a0,
-      emissiveIntensity: 0.55,
-      metalness: 0.2,
-      roughness: 0.2
+      color: 0x143848,
+      emissive: 0x3a90b0,
+      emissiveIntensity: 0.65,
+      metalness: 0.15,
+      roughness: 0.12
     }),
     engineGlow: new THREE.MeshBasicMaterial({
       color: 0x7fe6ff,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.92,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide
@@ -54,48 +63,154 @@ function makeDetailMaterials() {
     engineCone: new THREE.MeshBasicMaterial({
       color: 0x4fc3d9,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.34,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide
     }),
     panel: new THREE.MeshStandardMaterial({
-      color: 0x2a3038, metalness: 0.8, roughness: 0.55, ...panelMaps()
+      color: darkTint,
+      metalness: 0.86,
+      roughness: 0.42,
+      ...shipArmorMaps(0.58)
+    }),
+    structure: new THREE.MeshStandardMaterial({
+      color: lightTint,
+      metalness: 0.9,
+      roughness: 0.38,
+      ...shipStructureMaps(0.52)
     }),
     radiator: new THREE.MeshStandardMaterial({
       color: 0x4a3830,
-      metalness: 0.85,
-      roughness: 0.45,
-      emissive: 0x1a1010,
-      emissiveIntensity: 0.12,
-      ...radiatorMaps()
+      metalness: 0.88,
+      roughness: 0.4,
+      emissive: 0x1a1008,
+      emissiveIntensity: 0.14,
+      ...shipTrimMaps(0.4)
     }),
     accent: new THREE.MeshStandardMaterial({
-      color: 0xc45a18, metalness: 0.55, roughness: 0.5, ...panelMaps()
+      color: 0xc45a18,
+      metalness: 0.5,
+      roughness: 0.45,
+      ...shipHullMaps(0.4)
     }),
     antenna: new THREE.MeshStandardMaterial({
-      color: 0x9aabbc, metalness: 0.9, roughness: 0.3, ...hullMaps()
+      color: 0xa0b0c0,
+      metalness: 0.92,
+      roughness: 0.28,
+      ...shipTrimMaps(0.35)
     }),
     nacelle: new THREE.MeshStandardMaterial({
-      color: 0x4a525c, metalness: 0.82, roughness: 0.42, ...hullMaps()
+      color: darkTint.clone().offsetHSL(0, 0, -0.05),
+      metalness: 0.88,
+      roughness: 0.4,
+      ...shipStructureMaps(0.48)
     })
   }
 }
 
-const hardpointMarkerGeometry = new THREE.ConeGeometry(0.18, 0.45, 6)
+const hardpointMarkerGeometry = new THREE.ConeGeometry(0.16, 0.4, 6)
 
 function defaultStyle(hull, rng) {
   if (hull.style) return hull.style
   // Hand-crafted classes may omit style — invent a stable one from class seed.
+  // Match roster policy: strong asymmetry is rare (~5%).
   return {
-    asymmetric: rng() < 0.35,
-    bridgeSide: rng() < 0.3 ? (rng() < 0.5 ? -1 : 1) : 0,
+    asymmetric: rng() < 0.05,
+    bridgeSide: 0,
     engineLayout: Math.max(...hull.stationWidths) > hull.length * 0.08 ? 'twin' : 'single',
     hasRadiator: rng() < 0.5,
     hasCargoPods: rng() < 0.25,
     hasSensorMast: true,
-    hasDockingRing: rng() < 0.15
+    // 'top' | 'bottom' — dorsal bridge vs ventral belly cockpit.
+    cockpitMount: rng() < 0.18 ? 'bottom' : 'top',
+    // Radar dish mounts: 'top' | 'bottom' | 'left' | 'right' | 'side' (both flanks).
+    radarDishes: ['top'],
+    hasDockingRing: rng() < 0.15,
+    detailDensity: 1
   }
+}
+
+/**
+ * Place a radar dish + short mast at a hull surface.
+ * mount: 'top' | 'bottom' | 'left' | 'right' | 'side' (both flanks).
+ * Optional zFrac (fraction of length along +Z) and size (relative to peakWidth).
+ */
+function addRadarDish(group, mats, peakWidth, peakHeight, length, mount, opts = {}) {
+  const z = (opts.zFrac ?? 0.22) * length
+  const size = peakWidth * (opts.size ?? 0.13)
+  const mastH = peakHeight * (opts.mastScale ?? 0.35)
+  const xOff = opts.x ?? 0
+  const yOff = opts.y ?? 0
+
+  const addOne = (mastPos, dishPos, dishRot) => {
+    const mast = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakWidth * 0.014, peakWidth * 0.022, mastH, 6),
+      mats.antenna
+    )
+    mast.position.copy(mastPos)
+    // Orient mast along the outward axis from root to dish.
+    const dir = new THREE.Vector3().subVectors(dishPos, mastPos)
+    if (dir.lengthSq() > 1e-8) {
+      mast.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize())
+      mast.position.lerpVectors(mastPos, dishPos, 0.45)
+    }
+    group.add(mast)
+
+    const dish = new THREE.Mesh(new THREE.CircleGeometry(size, 16), mats.antenna)
+    dish.position.copy(dishPos)
+    dish.rotation.set(dishRot.x, dishRot.y, dishRot.z)
+    group.add(dish)
+
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(size * 0.98, size * 0.08, 4, 16),
+      mats.structure
+    )
+    rim.position.copy(dish.position)
+    rim.rotation.copy(dish.rotation)
+    group.add(rim)
+  }
+
+  if (mount === 'top') {
+    const root = new THREE.Vector3(xOff, peakHeight * 0.92, z)
+    const tip = new THREE.Vector3(xOff, peakHeight * 0.92 + mastH, z)
+    addOne(root, tip, { x: -Math.PI / 3, y: 0, z: 0 })
+  } else if (mount === 'bottom') {
+    const root = new THREE.Vector3(xOff, -peakHeight * 0.92, z)
+    const tip = new THREE.Vector3(xOff, -peakHeight * 0.92 - mastH, z)
+    addOne(root, tip, { x: Math.PI / 3, y: 0, z: 0 })
+  } else if (mount === 'left' || mount === 'right' || mount === 'side') {
+    const sides = mount === 'side' ? [-1, 1] : [mount === 'right' ? 1 : -1]
+    for (const sx of sides) {
+      const root = new THREE.Vector3(sx * peakWidth * 0.95, yOff || peakHeight * 0.08, z)
+      const tip = new THREE.Vector3(sx * (peakWidth * 0.95 + mastH), yOff || peakHeight * 0.08, z)
+      addOne(root, tip, { x: -0.25, y: sx * (Math.PI / 2 - 0.4), z: 0 })
+    }
+  }
+}
+
+/** Expand style.radarDishes into concrete mount tokens. */
+function resolveRadarMounts(style, rng) {
+  const list = style.radarDishes
+  if (Array.isArray(list) && list.length > 0) {
+    const out = []
+    for (const m of list) {
+      if (typeof m === 'string') {
+        if (m === 'side') {
+          out.push('left', 'right')
+        } else {
+          out.push(m)
+        }
+      } else if (m && typeof m === 'object' && m.mount) {
+        if (m.mount === 'side') out.push({ ...m, mount: 'left' }, { ...m, mount: 'right' })
+        else out.push(m)
+      }
+    }
+    return out
+  }
+  // Legacy: hasSensorMast alone → single dorsal dish (previous look).
+  if (style.hasSensorMast !== false) return ['top']
+  return []
 }
 
 function engineOffsets(layout, peakWidth) {
@@ -103,7 +218,11 @@ function engineOffsets(layout, peakWidth) {
     case 'single':
       return [[0, 0]]
     case 'triple':
-      return [[-peakWidth * 0.38, 0], [0, peakWidth * 0.12], [peakWidth * 0.38, 0]]
+      return [
+        [-peakWidth * 0.38, 0],
+        [0, peakWidth * 0.12],
+        [peakWidth * 0.38, 0]
+      ]
     case 'quad':
       return [
         [-peakWidth * 0.4, peakWidth * 0.12],
@@ -113,7 +232,47 @@ function engineOffsets(layout, peakWidth) {
       ]
     case 'twin':
     default:
-      return [[-peakWidth * 0.35, 0], [peakWidth * 0.35, 0]]
+      return [
+        [-peakWidth * 0.35, 0],
+        [peakWidth * 0.35, 0]
+      ]
+  }
+}
+
+/** Forward-pointing aerial at the tip of a ventral (underside) wing. */
+function addVentralWingAerials(group, hull, mats) {
+  const { length, stationWidths, stationHeights, wings = [], stationOffsetsX, stationOffsetsY } = hull
+  const n = stationWidths.length
+  for (const w of wings) {
+    if (w.side !== 'bottom' && w.side !== 'ventral') continue
+    if (!w.tipAerial) continue
+    const i = Math.max(0, Math.min(n - 1, w.atStation ?? 0))
+    const zc = -length / 2 + (length * i) / Math.max(1, n - 1)
+    const rootH = stationHeights[i]
+    const rootOy = stationOffsetsY?.[i] ?? 0
+    const rootOx = stationOffsetsX?.[i] ?? 0
+    const tipY = rootOy - rootH - (w.span ?? 1)
+    const tipZ = zc + (w.sweep ?? 0)
+    const tipX = rootOx + (w.tipOffsetX ?? 0)
+    // Mast base at tip, boom aims +Z (ship forward / nose).
+    const aerialLen = Math.max(1.2, length * 0.14)
+    const boom = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.05, aerialLen, 6),
+      mats.antenna
+    )
+    boom.rotation.x = Math.PI / 2 // cylinder Y → +Z after rot
+    boom.position.set(tipX, tipY, tipZ + aerialLen * 0.5)
+    group.add(boom)
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mats.antenna)
+    tip.position.set(tipX, tipY, tipZ + aerialLen)
+    group.add(tip)
+    // Small root fairing where aerial meets the wing tip.
+    const fairing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.16, 0.28),
+      mats.structure
+    )
+    fairing.position.set(tipX, tipY, tipZ)
+    group.add(fairing)
   }
 }
 
@@ -125,40 +284,104 @@ function addHullDetails(group, hull, mats) {
   const peakWidth = Math.max(...stationWidths)
   const peakHeight = Math.max(...stationHeights)
   const style = defaultStyle(hull, rng)
-  const bridgeX = style.bridgeSide * peakWidth * 0.28
+  addVentralWingAerials(group, hull, mats)
+  // Asymmetric: full bridge offset. Symmetric: stay centered (or tiny noise only never).
+  const bridgeX = style.asymmetric ? style.bridgeSide * peakWidth * 0.32 : 0
+  const density = style.detailDensity ?? 1
 
-  // Bridge / cockpit canopy — can sit off-center on asymmetric hulls.
+  // Longitudinal armor belts + ventral/dorsal plate rails (plated hull read).
+  const bandCount = Math.round((6 + Math.floor(rng() * 5)) * density)
+  for (let i = 0; i < bandCount; i++) {
+    const z = -length * 0.38 + (i / Math.max(1, bandCount - 1)) * length * 0.76
+    const yOff = (i % 3 === 0 ? 0.35 : i % 3 === 1 ? 0.12 : -0.28) * peakHeight
+    const band = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * (1.05 + (i % 2) * 0.08), peakHeight * 0.05, length * 0.032),
+      i % 2 === 0 ? mats.panel : mats.structure
+    )
+    band.position.set(bridgeX * 0.12, yOff, z)
+    group.add(band)
+  }
+  // Side keel rails.
+  for (const sx of [-1, 1]) {
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.06, peakHeight * 0.08, length * 0.55),
+      mats.structure
+    )
+    rail.position.set(sx * peakWidth * 0.92, -peakHeight * 0.15, length * 0.02)
+    group.add(rail)
+  }
+
+  // Bridge / cockpit canopy — dorsal (top) or ventral (bottom) mount.
+  // Bottom cockpits flip the dome under the belly for a gunship/dropship look.
+  const cockpitBottom = style.cockpitMount === 'bottom' || style.cockpitMount === 'ventral'
+  const cockpitYSign = cockpitBottom ? -1 : 1
   const canopy = new THREE.Mesh(
-    new THREE.SphereGeometry(peakWidth * 0.32, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(peakWidth * 0.34, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2),
     mats.canopy
   )
-  canopy.scale.set(1.05, 0.5, 1.85)
-  canopy.position.set(bridgeX, peakHeight * 0.78, length * 0.22)
+  canopy.scale.set(1.08, 0.52, 1.9)
+  if (cockpitBottom) canopy.rotation.z = Math.PI // dome faces down
+  canopy.position.set(bridgeX, cockpitYSign * peakHeight * 0.8, length * 0.22)
   group.add(canopy)
+  // Canopy frame ribs.
+  for (let i = 0; i < 4; i++) {
+    const rib = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.02, peakHeight * 0.28, peakWidth * 0.35),
+      mats.structure
+    )
+    rib.position.set(
+      bridgeX + (i - 1.5) * peakWidth * 0.12,
+      cockpitYSign * peakHeight * 0.78,
+      length * 0.22
+    )
+    group.add(rib)
+  }
 
-  // Framed window strip under the canopy (reads as a bridge).
-  const windowCount = 3 + Math.floor(rng() * 3)
+  // Framed window strip near the canopy (reads as a bridge).
+  const windowCount = 5 + Math.floor(rng() * 5)
   for (let i = 0; i < windowCount; i++) {
     const w = new THREE.Mesh(
-      new THREE.BoxGeometry(peakWidth * 0.08, peakHeight * 0.07, peakWidth * 0.06),
+      new THREE.BoxGeometry(peakWidth * 0.07, peakHeight * 0.06, peakWidth * 0.05),
       mats.window
     )
     w.position.set(
-      bridgeX + (i - (windowCount - 1) / 2) * peakWidth * 0.12,
-      peakHeight * 0.62,
+      bridgeX + (i - (windowCount - 1) / 2) * peakWidth * 0.095,
+      cockpitYSign * peakHeight * 0.64,
       length * 0.28
     )
     group.add(w)
   }
+  // Second window row aft of bridge.
+  if (rng() < 0.75) {
+    for (let i = 0; i < 3; i++) {
+      const w = new THREE.Mesh(
+        new THREE.BoxGeometry(peakWidth * 0.06, peakHeight * 0.05, peakWidth * 0.04),
+        mats.window
+      )
+      w.position.set(
+        bridgeX + (i - 1) * peakWidth * 0.1,
+        cockpitYSign * peakHeight * 0.55,
+        length * 0.12
+      )
+      group.add(w)
+    }
+  }
 
-  // Raised bridge tower for freighter-like silhouettes.
-  if (style.bridgeSide !== 0 || rng() < 0.35) {
+  // Raised (or lowered) bridge tower for freighter / gunship silhouettes.
+  if (style.asymmetric || rng() < 0.4 || cockpitBottom) {
     const tower = new THREE.Mesh(
-      new THREE.BoxGeometry(peakWidth * 0.35, peakHeight * 0.55, peakWidth * 0.5),
-      mats.panel
+      new THREE.BoxGeometry(peakWidth * 0.38, peakHeight * 0.6, peakWidth * 0.55),
+      mats.structure
     )
-    tower.position.set(bridgeX, peakHeight * 0.95, length * 0.05)
+    tower.position.set(bridgeX, cockpitYSign * peakHeight * 0.98, length * 0.04)
     group.add(tower)
+    // Tower sensor blister.
+    const blister = new THREE.Mesh(
+      new THREE.SphereGeometry(peakWidth * 0.1, 10, 8),
+      mats.antenna
+    )
+    blister.position.set(bridgeX, cockpitYSign * peakHeight * 1.28, length * 0.04)
+    group.add(blister)
   }
 
   // Engine nacelles + glow — real housings, not floating discs.
@@ -167,131 +390,189 @@ function addHullDetails(group, hull, mats) {
   const engineR = peakHeight * (layout === 'quad' ? 0.28 : 0.36)
   for (const [ox, oy] of offsets) {
     const nacelle = new THREE.Mesh(
-      new THREE.CylinderGeometry(engineR * 0.95, engineR * 1.05, peakHeight * 0.85, 8),
+      new THREE.CylinderGeometry(engineR * 0.95, engineR * 1.08, peakHeight * 0.95, 12),
       mats.nacelle
     )
     nacelle.rotation.x = Math.PI / 2
-    nacelle.position.set(ox, oy, -length / 2 + peakHeight * 0.35)
+    nacelle.position.set(ox, oy, -length / 2 + peakHeight * 0.38)
     group.add(nacelle)
 
-    // Bell / nozzle flare.
+    // Cooling fins around nacelle (denser).
+    for (let f = 0; f < 8; f++) {
+      const ang = (f / 8) * Math.PI * 2 + 0.15
+      const fin = new THREE.Mesh(
+        new THREE.BoxGeometry(engineR * 0.07, engineR * 0.6, peakHeight * 0.55),
+        mats.panel
+      )
+      fin.position.set(
+        ox + Math.cos(ang) * engineR * 0.98,
+        oy + Math.sin(ang) * engineR * 0.98,
+        -length / 2 + peakHeight * 0.4
+      )
+      fin.rotation.z = ang
+      group.add(fin)
+    }
+    // Nacelle ring clamps.
+    for (const zOff of [0.15, 0.55]) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(engineR * 1.05, engineR * 0.08, 6, 16),
+        mats.structure
+      )
+      ring.rotation.y = Math.PI / 2
+      ring.position.set(ox, oy, -length / 2 + peakHeight * zOff)
+      group.add(ring)
+    }
+
     const bell = new THREE.Mesh(
-      new THREE.CylinderGeometry(engineR * 1.15, engineR * 0.75, peakHeight * 0.35, 8),
-      mats.panel
+      new THREE.CylinderGeometry(engineR * 1.2, engineR * 0.7, peakHeight * 0.4, 14),
+      mats.structure
     )
     bell.rotation.x = Math.PI / 2
-    bell.position.set(ox, oy, -length / 2 - 0.05)
+    bell.position.set(ox, oy, -length / 2 - 0.06)
     group.add(bell)
 
-    const glow = new THREE.Mesh(new THREE.CircleGeometry(engineR * 0.85, 12), mats.engineGlow)
-    glow.position.set(ox, oy, -length / 2 - peakHeight * 0.2)
+    const glow = new THREE.Mesh(new THREE.CircleGeometry(engineR * 0.9, 20), mats.engineGlow)
+    glow.position.set(ox, oy, -length / 2 - peakHeight * 0.22)
     glow.rotation.y = Math.PI
     group.add(glow)
 
     const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(engineR * 0.55, peakHeight * 1.1, 8, 1, true),
+      new THREE.ConeGeometry(engineR * 0.6, peakHeight * 1.2, 12, 1, true),
       mats.engineCone
     )
     cone.rotation.x = -Math.PI / 2
-    cone.position.set(ox, oy, -length / 2 - peakHeight * 0.55)
+    cone.position.set(ox, oy, -length / 2 - peakHeight * 0.58)
     group.add(cone)
 
-    // Nacelle mount strut if offset from centerline.
     if (Math.abs(ox) > 0.05 || Math.abs(oy) > 0.05) {
       const strutLen = Math.hypot(ox, oy)
       const strut = new THREE.Mesh(
-        new THREE.BoxGeometry(strutLen, peakHeight * 0.12, peakHeight * 0.18),
-        mats.panel
+        new THREE.BoxGeometry(strutLen, peakHeight * 0.14, peakHeight * 0.22),
+        mats.structure
       )
-      strut.position.set(ox * 0.5, oy * 0.5, -length / 2 + peakHeight * 0.5)
+      strut.position.set(ox * 0.5, oy * 0.5, -length / 2 + peakHeight * 0.52)
       strut.rotation.z = Math.atan2(oy, ox)
       group.add(strut)
+      // Strut brace plates.
+      const brace = new THREE.Mesh(
+        new THREE.BoxGeometry(strutLen * 0.45, peakHeight * 0.08, peakHeight * 0.35),
+        mats.panel
+      )
+      brace.position.set(ox * 0.35, oy * 0.35, -length / 2 + peakHeight * 0.62)
+      brace.rotation.z = Math.atan2(oy, ox)
+      group.add(brace)
     }
   }
 
-  // Heat radiators — flat dark panels hanging off one side (very "human spacecraft").
+  // Heat radiators — flat dark panels (very "human spacecraft").
   if (style.hasRadiator) {
-    const side = style.asymmetric ? (rng() < 0.5 ? -1 : 1) : 1
-    const radW = peakWidth * (0.9 + rng() * 0.6)
-    const radH = peakHeight * (0.08 + rng() * 0.06)
-    const radL = length * (0.28 + rng() * 0.2)
+    const side = style.asymmetric ? (style.bridgeSide !== 0 ? style.bridgeSide : rng() < 0.5 ? -1 : 1) : 1
+    const radW = peakWidth * (0.95 + rng() * 0.65)
+    const radH = peakHeight * (0.07 + rng() * 0.06)
+    const radL = length * (0.3 + rng() * 0.22)
     const rad = new THREE.Mesh(new THREE.BoxGeometry(radW, radH, radL), mats.radiator)
     rad.position.set(side * (peakWidth * 0.55 + radW * 0.45), peakHeight * 0.15, -length * 0.05)
-    rad.rotation.z = side * 0.15
+    rad.rotation.z = side * 0.12
     group.add(rad)
-    // Ribs on radiator.
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 9; i++) {
       const rib = new THREE.Mesh(
-        new THREE.BoxGeometry(radW * 0.95, radH * 1.4, radL * 0.03),
+        new THREE.BoxGeometry(radW * 0.95, radH * 1.55, radL * 0.022),
         mats.panel
       )
       rib.position.set(
         side * (peakWidth * 0.55 + radW * 0.45),
         peakHeight * 0.15,
-        -length * 0.05 + (i - 1.5) * (radL * 0.22)
+        -length * 0.05 + (i - 4) * (radL * 0.1)
       )
       group.add(rib)
+    }
+    // Second radiator plane (common on industrial hulls).
+    if (rng() < 0.55 || density > 1.5) {
+      const rad2 = new THREE.Mesh(
+        new THREE.BoxGeometry(radW * 0.7, radH * 0.9, radL * 0.65),
+        mats.radiator
+      )
+      rad2.position.set(
+        -side * (peakWidth * 0.5 + radW * 0.3),
+        peakHeight * 0.05,
+        -length * 0.12
+      )
+      rad2.rotation.z = -side * 0.1
+      group.add(rad2)
     }
   }
 
   // Cargo pods / ISO containers bolted under freighters.
   if (style.hasCargoPods) {
-    const pods = 2 + Math.floor(rng() * 3)
+    const pods = 4 + Math.floor(rng() * 5)
     for (let i = 0; i < pods; i++) {
-      const pw = peakWidth * (0.35 + rng() * 0.25)
-      const ph = peakHeight * (0.35 + rng() * 0.2)
-      const pl = length * (0.12 + rng() * 0.1)
+      const pw = peakWidth * (0.32 + rng() * 0.28)
+      const ph = peakHeight * (0.32 + rng() * 0.22)
+      const pl = length * (0.11 + rng() * 0.12)
       const pod = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pl), mats.panel)
-      const side = style.asymmetric && i === 0 ? (rng() < 0.5 ? -1 : 1) : (i % 2 === 0 ? -1 : 1)
+      const side =
+        style.asymmetric && i === 0 ? (rng() < 0.5 ? -1 : 1) : i % 2 === 0 ? -1 : 1
       pod.position.set(
-        side * peakWidth * (0.55 + rng() * 0.2),
-        -peakHeight * (0.55 + rng() * 0.15),
-        (rng() - 0.5) * length * 0.35
+        side * peakWidth * (0.55 + rng() * 0.22),
+        -peakHeight * (0.55 + rng() * 0.18),
+        (rng() - 0.5) * length * 0.38
       )
       group.add(pod)
+      // Pod clamp.
+      const clamp = new THREE.Mesh(
+        new THREE.BoxGeometry(pw * 1.05, ph * 0.12, pl * 0.15),
+        mats.structure
+      )
+      clamp.position.copy(pod.position)
+      clamp.position.y += ph * 0.45
+      group.add(clamp)
     }
   }
 
-  // Hazard / fleet accent stripe.
+  // Hazard / identity accent stripe.
   const stripe = new THREE.Mesh(
-    new THREE.BoxGeometry(peakWidth * 0.1, peakHeight * 0.06, length * 0.5),
+    new THREE.BoxGeometry(peakWidth * 0.1, peakHeight * 0.055, length * 0.52),
     mats.accent
   )
-  stripe.position.set(bridgeX * 0.3, peakHeight * 0.48, length * 0.02)
+  stripe.position.set(bridgeX * 0.35, peakHeight * 0.5, length * 0.02)
   group.add(stripe)
 
-  // Sensor mast / comms array.
-  if (style.hasSensorMast !== false) {
-    const mastX = style.asymmetric ? peakWidth * (0.2 + rng() * 0.25) * (rng() < 0.5 ? -1 : 1) : peakWidth * 0.12
-    const mast = new THREE.Mesh(
-      new THREE.CylinderGeometry(peakWidth * 0.018, peakWidth * 0.028, peakHeight * 0.7, 5),
+  // Radar dishes — top, bottom, and/or side mounts (see style.radarDishes).
+  const radarMounts = resolveRadarMounts(style, rng)
+  const asymX =
+    style.asymmetric
+      ? peakWidth * (0.18 + rng() * 0.2) * (style.bridgeSide || (rng() < 0.5 ? -1 : 1))
+      : peakWidth * 0.08
+  let dishIdx = 0
+  for (const entry of radarMounts) {
+    const mount = typeof entry === 'string' ? entry : entry.mount
+    const zFrac = (typeof entry === 'object' && entry.zFrac != null)
+      ? entry.zFrac
+      : 0.18 + dishIdx * 0.08 + (rng() - 0.5) * 0.06
+    const size = typeof entry === 'object' && entry.size != null ? entry.size : 0.11 + rng() * 0.05
+    addRadarDish(group, mats, peakWidth, peakHeight, length, mount, {
+      x: mount === 'top' || mount === 'bottom' ? asymX * (dishIdx % 2 === 0 ? 1 : -0.6) : 0,
+      zFrac,
+      size,
+      mastScale: 0.28 + rng() * 0.2
+    })
+    dishIdx++
+  }
+  // Legacy whip antenna near the primary dorsal dish when sensors are on.
+  if ((style.hasSensorMast !== false || radarMounts.length > 0) && rng() < 0.65) {
+    const whip = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakWidth * 0.009, peakWidth * 0.009, peakHeight * 0.95, 5),
       mats.antenna
     )
-    mast.position.set(mastX, peakHeight * 1.05, length * 0.3)
-    group.add(mast)
-    const dish = new THREE.Mesh(
-      new THREE.CircleGeometry(peakWidth * 0.12, 10),
-      mats.antenna
-    )
-    dish.position.set(mastX, peakHeight * 1.35, length * 0.3)
-    dish.rotation.x = -Math.PI / 3
-    group.add(dish)
-    // Secondary whip antenna.
-    if (rng() < 0.6) {
-      const whip = new THREE.Mesh(
-        new THREE.CylinderGeometry(peakWidth * 0.01, peakWidth * 0.01, peakHeight * 0.9, 4),
-        mats.antenna
-      )
-      whip.position.set(-mastX * 0.7, peakHeight * 1.1, length * 0.15)
-      whip.rotation.z = 0.2
-      group.add(whip)
-    }
+    whip.position.set(-asymX * 0.7, peakHeight * 1.12, length * 0.15)
+    whip.rotation.z = 0.18
+    group.add(whip)
   }
 
   // Docking collar ring near nose (freighters / explorers).
   if (style.hasDockingRing) {
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(peakWidth * 0.55, peakWidth * 0.06, 6, 14),
+      new THREE.TorusGeometry(peakWidth * 0.55, peakWidth * 0.055, 8, 20),
       mats.nacelle
     )
     ring.position.set(0, 0, length * 0.35)
@@ -299,80 +580,208 @@ function addHullDetails(group, hull, mats) {
   }
 
   // RCS thruster blocks (four corners of mid-body).
-  for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+  for (const [sx, sy] of [
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1]
+  ]) {
     const rcs = new THREE.Mesh(
       new THREE.BoxGeometry(peakWidth * 0.1, peakHeight * 0.1, peakWidth * 0.12),
       mats.nacelle
     )
-    rcs.position.set(sx * peakWidth * 0.85, sy * peakHeight * 0.55, length * 0.05)
+    rcs.position.set(sx * peakWidth * 0.88, sy * peakHeight * 0.55, length * 0.05)
     group.add(rcs)
+    // Tiny thruster nozzle.
+    const noz = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakWidth * 0.025, peakWidth * 0.03, peakWidth * 0.06, 6),
+      mats.structure
+    )
+    noz.rotation.z = sx > 0 ? Math.PI / 2 : -Math.PI / 2
+    noz.position.set(sx * peakWidth * 0.95, sy * peakHeight * 0.55, length * 0.05)
+    group.add(noz)
   }
 
-  // Surface plating / greeble panels — denser, more industrial.
-  const greebleCount = 8 + Math.floor(rng() * 8)
+  // Surface plating / greeble panels — high industrial clutter.
+  const greebleCount = Math.round((28 + Math.floor(rng() * 18)) * density)
   for (let i = 0; i < greebleCount; i++) {
-    const w = peakWidth * (0.05 + rng() * 0.14)
-    const h = peakHeight * (0.04 + rng() * 0.1)
-    const d = peakWidth * (0.08 + rng() * 0.25)
-    const greeble = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats.panel)
-    const sideBias = style.asymmetric && rng() < 0.4 ? (rng() < 0.5 ? -0.3 : 0.3) : 0
-    greeble.position.set(
-      (rng() - 0.5 + sideBias) * peakWidth * 1.5,
-      (rng() - 0.35) * peakHeight * 1.1,
-      (rng() - 0.5) * length * 0.7
+    const w = peakWidth * (0.035 + rng() * 0.13)
+    const h = peakHeight * (0.03 + rng() * 0.1)
+    const d = peakWidth * (0.06 + rng() * 0.26)
+    const greeble = new THREE.Mesh(
+      new THREE.BoxGeometry(w, h, d),
+      rng() < 0.45 ? mats.panel : mats.structure
     )
-    greeble.rotation.y = rng() * Math.PI * 0.3
+    const sideBias = style.asymmetric && rng() < 0.55 ? (style.bridgeSide || 1) * 0.35 : 0
+    greeble.position.set(
+      (rng() - 0.5 + sideBias) * peakWidth * 1.6,
+      (rng() - 0.35) * peakHeight * 1.2,
+      (rng() - 0.5) * length * 0.74
+    )
+    greeble.rotation.y = rng() * Math.PI * 0.4
+    if (rng() < 0.25) greeble.rotation.z = (rng() - 0.5) * 0.4
     group.add(greeble)
   }
 
-  // Underside cargo bay / heat shield plate.
-  const plate = new THREE.Mesh(
-    new THREE.BoxGeometry(peakWidth * 0.85, peakHeight * 0.07, length * 0.32),
-    mats.panel
-  )
-  plate.position.set(style.asymmetric ? peakWidth * 0.08 * style.bridgeSide : 0, -peakHeight * 0.5, -length * 0.05)
-  group.add(plate)
+  // Conduit / cable trunks.
+  const conduitCount = Math.round((4 + Math.floor(rng() * 4)) * density)
+  for (let i = 0; i < conduitCount; i++) {
+    const conduit = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.04, peakHeight * 0.05, length * (0.15 + rng() * 0.2)),
+      mats.structure
+    )
+    conduit.position.set(
+      (rng() - 0.5) * peakWidth * 1.1,
+      (rng() - 0.2) * peakHeight * 0.9,
+      (rng() - 0.5) * length * 0.4
+    )
+    group.add(conduit)
+  }
 
-  // Side airlock / hatch (often off-center on real ships).
-  const hatchSide = style.asymmetric ? (style.bridgeSide !== 0 ? -style.bridgeSide : 1) : (rng() < 0.5 ? -1 : 1)
+  // Pipe runs along the spine + flanks.
+  const pipeCount = Math.round((5 + Math.floor(rng() * 5)) * density)
+  for (let i = 0; i < pipeCount; i++) {
+    const pipe = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakWidth * 0.018, peakWidth * 0.018, length * (0.3 + rng() * 0.3), 8),
+      mats.antenna
+    )
+    pipe.rotation.x = Math.PI / 2
+    if (rng() < 0.3) pipe.rotation.z = (rng() - 0.5) * 0.5
+    pipe.position.set(
+      (rng() - 0.5) * peakWidth * 0.85 + bridgeX * 0.2,
+      peakHeight * (0.35 + rng() * 0.35),
+      (rng() - 0.5) * length * 0.2
+    )
+    group.add(pipe)
+    // Pipe joint sphere.
+    if (rng() < 0.5) {
+      const joint = new THREE.Mesh(
+        new THREE.SphereGeometry(peakWidth * 0.035, 8, 6),
+        mats.structure
+      )
+      joint.position.copy(pipe.position)
+      joint.position.z += length * 0.08
+      group.add(joint)
+    }
+  }
+
+  // Vent / grille blocks.
+  const ventCount = Math.round((3 + Math.floor(rng() * 4)) * density)
+  for (let i = 0; i < ventCount; i++) {
+    const vent = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.2, peakHeight * 0.04, peakWidth * 0.25),
+      mats.panel
+    )
+    vent.position.set(
+      (rng() - 0.5) * peakWidth * 1.2,
+      peakHeight * (0.3 + rng() * 0.4),
+      (rng() - 0.5) * length * 0.5
+    )
+    group.add(vent)
+    for (let g = 0; g < 3; g++) {
+      const grill = new THREE.Mesh(
+        new THREE.BoxGeometry(peakWidth * 0.18, peakHeight * 0.01, peakWidth * 0.02),
+        mats.structure
+      )
+      grill.position.set(vent.position.x, vent.position.y + peakHeight * 0.03, vent.position.z + (g - 1) * peakWidth * 0.05)
+      group.add(grill)
+    }
+  }
+
+  // Underside cargo bay / heat shield plates (segmented).
+  for (let i = 0; i < 3; i++) {
+    const plate = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.82, peakHeight * 0.055, length * 0.12),
+      mats.panel
+    )
+    plate.position.set(
+      style.asymmetric ? peakWidth * 0.1 * (style.bridgeSide || 1) : 0,
+      -peakHeight * 0.52,
+      -length * 0.15 + i * length * 0.12
+    )
+    group.add(plate)
+  }
+
+  // Side airlock / hatch (often off-center on asymmetric ships).
+  const hatchSide = style.asymmetric
+    ? style.bridgeSide !== 0
+      ? -style.bridgeSide
+      : 1
+    : rng() < 0.5
+      ? -1
+      : 1
   const hatch = new THREE.Mesh(
-    new THREE.CylinderGeometry(peakHeight * 0.22, peakHeight * 0.22, peakWidth * 0.08, 10),
+    new THREE.CylinderGeometry(peakHeight * 0.22, peakHeight * 0.22, peakWidth * 0.08, 14),
     mats.nacelle
   )
   hatch.rotation.z = Math.PI / 2
   hatch.position.set(hatchSide * peakWidth * 0.95, 0, length * 0.1)
   group.add(hatch)
+  const hatchRing = new THREE.Mesh(
+    new THREE.TorusGeometry(peakHeight * 0.24, peakWidth * 0.02, 6, 16),
+    mats.structure
+  )
+  hatchRing.rotation.y = Math.PI / 2
+  hatchRing.position.copy(hatch.position)
+  group.add(hatchRing)
+  // Second hatch opposite side (common industrial detail).
+  if (density > 1.4) {
+    const hatch2 = hatch.clone()
+    hatch2.position.x *= -1
+    group.add(hatch2)
+    const ring2 = hatchRing.clone()
+    ring2.position.x *= -1
+    group.add(ring2)
+  }
+
+  // Dorsal sensor ridge / spine armor.
+  const spine = new THREE.Mesh(
+    new THREE.BoxGeometry(peakWidth * 0.18, peakHeight * 0.12, length * 0.4),
+    mats.structure
+  )
+  spine.position.set(bridgeX * 0.3, peakHeight * 0.72, length * 0.05)
+  group.add(spine)
+  for (let i = 0; i < 4; i++) {
+    const tile = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.22, peakHeight * 0.04, length * 0.06),
+      mats.panel
+    )
+    tile.position.set(bridgeX * 0.3, peakHeight * 0.8, -length * 0.1 + i * length * 0.1)
+    group.add(tile)
+  }
 }
 
 export function buildShipMesh(shipClass) {
   const group = new THREE.Group()
   group.name = shipClass.id
-  const mats = makeDetailMaterials()
+
+  const baseColor = new THREE.Color(shipClass.hull.color)
+  const mats = makeDetailMaterials(baseColor)
 
   const geometry = buildHullGeometry(shipClass.hull)
-  const baseColor = new THREE.Color(shipClass.hull.color)
-  // Smooth + metal PBR maps; hull.color tints the shared metal albedo.
+  // Painted PBR hull tinted by class color — maps read as real metal panels.
   const material = new THREE.MeshStandardMaterial({
     color: baseColor,
     side: THREE.DoubleSide,
-    metalness: 0.88,
-    roughness: 0.48,
-    ...hullMaps()
+    metalness: 0.72,
+    roughness: 0.42,
+    envMapIntensity: 1.05,
+    ...shipHullMaps(0.58)
   })
   const hullMesh = new THREE.Mesh(geometry, material)
   group.add(hullMesh)
 
-  // Softer seams so they don't fight the normal maps.
+  // Soft panel seams from edges (doesn't fight normal maps).
   const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry, 22),
-    new THREE.LineBasicMaterial({ color: 0x0a0c10, transparent: true, opacity: 0.4 })
+    new THREE.EdgesGeometry(geometry, 24),
+    new THREE.LineBasicMaterial({ color: 0x0a0c10, transparent: true, opacity: 0.35 })
   )
   group.add(edges)
 
   // Soft hull rim highlight against black space.
   const rim = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry, 35),
-    new THREE.LineBasicMaterial({ color: 0x6a8aaa, transparent: true, opacity: 0.18 })
+    new THREE.EdgesGeometry(geometry, 38),
+    new THREE.LineBasicMaterial({ color: 0x6a8aaa, transparent: true, opacity: 0.16 })
   )
   group.add(rim)
 

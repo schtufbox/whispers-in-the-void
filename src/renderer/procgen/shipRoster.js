@@ -44,6 +44,14 @@ const ROLE_HARDPOINT_COUNTS = {
   explorer: [1, 2]
 }
 
+// Accessory bays (0–4). Starter Bravia is hard-set to 0; generated hulls
+// usually have at least one bay so Autopilot and later modules can fit.
+const ROLE_ACCESSORY_SLOT_COUNTS = {
+  trader: [1, 2, 2, 3, 4],
+  fighter: [0, 1, 1, 2, 2],
+  explorer: [1, 1, 2, 2, 3]
+}
+
 function hslToHex(h, s, l) {
   h = ((h % 360) + 360) % 360
   const c = (1 - Math.abs(2 * l - 1)) * s
@@ -75,115 +83,195 @@ function generateShipModelName(rng, usedNames) {
   return fallback
 }
 
+// Strong asymmetry rate — most hulls stay mirrored; ~1 in 20 is a true oddball.
+export const STRONG_ASYMMETRY_CHANCE = 0.05
+
 // Role-shaped silhouettes that read as human engineering:
 //   trader  — blunt nose, fat mid cargo block, truncated tail
 //   fighter — needle nose, pinched mid, broad engine rear
 //   explorer — long slender spine with modest mid flare
+// 12 loft stations for high geometric complexity.
 function generateHullSilhouette(rng, role) {
   const [minLen, maxLen] = ROLE_LENGTH_RANGES[role]
   const length = range(rng, minLen, maxLen)
   const peakWidth = range(rng, length * 0.055, length * 0.12)
 
+  // 12 width fractions aft→nose (smooth complex curvature).
   let fracs
   if (role === 'trader') {
-    // Boxy freighter: fat through most of the length.
     fracs = [
-      range(rng, 0.25, 0.45),
-      range(rng, 0.75, 0.95),
+      range(rng, 0.2, 0.38),
+      range(rng, 0.4, 0.65),
+      range(rng, 0.7, 0.92),
+      range(rng, 0.9, 1.0),
       range(rng, 0.95, 1.0),
       range(rng, 0.95, 1.0),
-      range(rng, 0.7, 0.9),
-      range(rng, 0.35, 0.55)
+      range(rng, 0.95, 1.0),
+      range(rng, 0.9, 0.99),
+      range(rng, 0.75, 0.92),
+      range(rng, 0.5, 0.75),
+      range(rng, 0.35, 0.55),
+      range(rng, 0.22, 0.42)
     ]
   } else if (role === 'fighter') {
-    // Combat craft: sharp nose, wasp waist optional, engine flare aft.
     fracs = [
-      range(rng, 0.04, 0.12),
-      range(rng, 0.35, 0.55),
-      range(rng, 0.7, 0.95),
+      range(rng, 0.04, 0.1),
+      range(rng, 0.12, 0.28),
+      range(rng, 0.3, 0.55),
+      range(rng, 0.55, 0.9),
+      range(rng, 0.75, 1.0),
+      range(rng, 0.55, 0.9),
+      range(rng, 0.45, 0.8),
+      range(rng, 0.55, 0.95),
+      range(rng, 0.7, 1.0),
       range(rng, 0.55, 0.85),
-      range(rng, 0.65, 1.0),
-      range(rng, 0.2, 0.45)
+      range(rng, 0.28, 0.5),
+      range(rng, 0.12, 0.32)
     ]
   } else {
-    // Explorer: long taper, modest mid, sensor nose.
     fracs = [
-      range(rng, 0.08, 0.18),
-      range(rng, 0.4, 0.65),
+      range(rng, 0.05, 0.12),
+      range(rng, 0.15, 0.32),
+      range(rng, 0.35, 0.6),
+      range(rng, 0.55, 0.85),
+      range(rng, 0.8, 1.0),
+      range(rng, 0.85, 1.0),
       range(rng, 0.75, 0.95),
-      range(rng, 0.7, 0.9),
+      range(rng, 0.6, 0.85),
       range(rng, 0.45, 0.7),
-      range(rng, 0.12, 0.3)
+      range(rng, 0.3, 0.5),
+      range(rng, 0.18, 0.35),
+      range(rng, 0.08, 0.22)
     ]
   }
 
   const stationWidths = fracs.map((f) => f * peakWidth)
-  // Human hulls are usually flatter than they are tall (decks).
   const heightRatio = role === 'trader' ? range(rng, 0.55, 0.85) : range(rng, 0.45, 0.75)
   const stationHeights = stationWidths.map((w) => w * heightRatio * range(rng, 0.9, 1.1))
-  // Prefer boxy / octagonal industrial cross-sections over organic high-n.
-  const crossSectionSides = pick(rng, role === 'fighter' ? [4, 6, 8] : [4, 4, 6, 8])
+  // High side counts for smooth facets; superellipse keeps industrial boxiness.
+  const crossSectionSides = pick(
+    rng,
+    role === 'fighter' ? [12, 14, 16, 16] : role === 'trader' ? [10, 12, 12, 14] : [12, 14, 16]
+  )
+  const superellipseExponent =
+    role === 'trader' ? range(rng, 2.4, 3.6) : role === 'fighter' ? range(rng, 1.8, 2.6) : range(rng, 2.0, 3.0)
 
-  // ~40% of human ships are deliberately asymmetrical (radiator, crane wing,
-  // offset bridge, snaking cargo spine) — real spacecraft almost never mirror.
-  const asymmetric = rng() < 0.42
+  const asymmetric = rng() < STRONG_ASYMMETRY_CHANCE
   let stationOffsetsX = null
   let stationOffsetsY = null
-  if (asymmetric && rng() < 0.55) {
-    // Mild lateral snake on mid stations — "module bolted off-center".
-    const bias = (rng() < 0.5 ? -1 : 1) * peakWidth * range(rng, 0.08, 0.28)
+  if (asymmetric) {
+    const bias = (rng() < 0.5 ? -1 : 1) * peakWidth * range(rng, 0.12, 0.32)
     stationOffsetsX = stationWidths.map((_, i) => {
       if (i === 0 || i === stationWidths.length - 1) return 0
-      return bias * (0.4 + 0.6 * Math.sin((i / (stationWidths.length - 1)) * Math.PI))
+      return bias * (0.45 + 0.55 * Math.sin((i / (stationWidths.length - 1)) * Math.PI))
     })
-  }
-  if (asymmetric && rng() < 0.35) {
-    // Slight dorsal hump bias mid-body (raised bridge / cargo tower).
-    const hump = peakWidth * range(rng, 0.05, 0.18)
-    stationOffsetsY = stationHeights.map((_, i) => (i >= 2 && i <= 3 ? hump : 0))
+    if (rng() < 0.7) {
+      const hump = peakWidth * range(rng, 0.08, 0.2)
+      stationOffsetsY = stationHeights.map((_, i) =>
+        i >= 3 && i <= 8 ? hump * (i >= 5 && i <= 6 ? 1 : 0.55) : 0
+      )
+    }
   }
 
   const wings = []
-  const wingChance = role === 'fighter' ? 0.85 : role === 'explorer' ? 0.7 : 0.45
+  const wingChance = role === 'fighter' ? 0.92 : role === 'explorer' ? 0.78 : 0.55
   if (rng() < wingChance) {
-    const atStation = pick(rng, role === 'trader' ? [2, 3] : [2, 3, 4])
+    const atStation = pick(rng, role === 'trader' ? [4, 5, 6] : [3, 4, 5, 6, 7])
     let side = 'both'
-    if (asymmetric && rng() < 0.55) side = pick(rng, ['left', 'right', 'both'])
-    // Rare double-row: primary wings + smaller canards.
+    if (asymmetric && rng() < 0.75) side = pick(rng, ['left', 'right', 'both'])
     wings.push({
       atStation,
       span: range(rng, peakWidth * (role === 'fighter' ? 2.2 : 1.4), peakWidth * (role === 'fighter' ? 5 : 3.2)),
       sweep: range(rng, role === 'fighter' ? 0.2 : -0.4, role === 'fighter' ? 1.6 : 0.9),
-      thickness: range(rng, 0.18, 0.45),
+      thickness: range(rng, 0.22, 0.55),
       side,
-      tipOffsetY: asymmetric && rng() < 0.4 ? range(rng, -0.4, 0.5) : 0,
+      tipOffsetY: asymmetric && rng() < 0.55 ? range(rng, -0.45, 0.55) : 0,
       chordScale: range(rng, 0.85, 1.15)
     })
-    if (role === 'fighter' && rng() < 0.3) {
+    // Secondary / tertiary wing planes for denser silhouettes.
+    if (rng() < (role === 'fighter' ? 0.7 : 0.4)) {
       wings.push({
-        atStation: pick(rng, [1, 2]),
-        span: range(rng, peakWidth * 0.8, peakWidth * 1.8),
-        sweep: range(rng, -0.2, 0.6),
-        thickness: range(rng, 0.12, 0.25),
-        side: asymmetric && rng() < 0.4 ? pick(rng, ['left', 'right']) : 'both'
+        atStation: pick(rng, [2, 3, 4, 5]),
+        span: range(rng, peakWidth * 0.9, peakWidth * 2.2),
+        sweep: range(rng, -0.3, 0.7),
+        thickness: range(rng, 0.14, 0.3),
+        side: asymmetric && rng() < 0.5 ? pick(rng, ['left', 'right']) : 'both'
+      })
+    }
+    if (role === 'fighter' && rng() < 0.45) {
+      wings.push({
+        atStation: pick(rng, [1, 2, 3]),
+        span: range(rng, peakWidth * 0.7, peakWidth * 1.6),
+        sweep: range(rng, -0.15, 0.5),
+        thickness: range(rng, 0.12, 0.24),
+        side: 'both'
       })
     }
   }
 
-  // Detail hints consumed by shipMesh (not geometry loft).
+  // Dorsal tail wing toward the rear (low atStation = aft). Common on fighters
+  // and explorers; occasional on traders as a cargo-fin stabilizer.
+  const tailChance = role === 'fighter' ? 0.72 : role === 'explorer' ? 0.58 : 0.28
+  if (rng() < tailChance) {
+    wings.push({
+      atStation: pick(rng, [1, 2, 3]),
+      span: range(rng, peakWidth * 0.9, peakWidth * (role === 'fighter' ? 2.4 : 1.8)),
+      sweep: range(rng, -0.55, 0.15),
+      thickness: range(rng, 0.16, 0.38),
+      side: 'top',
+      tipOffsetX: asymmetric && rng() < 0.4 ? range(rng, -0.25, 0.25) : 0,
+      chordScale: range(rng, 0.75, 1.1)
+    })
+  }
+
+  // Ventral keel wing — rarer, adds gunship / freighter belly mass.
+  const bellyChance = role === 'trader' ? 0.35 : role === 'fighter' ? 0.22 : 0.18
+  if (rng() < bellyChance) {
+    wings.push({
+      atStation: pick(rng, [3, 4, 5, 6]),
+      span: range(rng, peakWidth * 0.7, peakWidth * 1.8),
+      sweep: range(rng, -0.2, 0.5),
+      thickness: range(rng, 0.18, 0.4),
+      side: 'bottom',
+      tipOffsetX: asymmetric && rng() < 0.45 ? range(rng, -0.3, 0.3) : 0,
+      chordScale: range(rng, 0.8, 1.1),
+      tipAerial: rng() < 0.25
+    })
+  }
+
+  // Radar dish mounts: top / bottom / side (left+right). Explorers stack more.
+  const radarDishes = []
+  if (role === 'explorer' || rng() < 0.7) radarDishes.push('top')
+  if (role === 'explorer' ? rng() < 0.55 : rng() < 0.22) radarDishes.push('bottom')
+  if (role === 'fighter' ? rng() < 0.4 : role === 'explorer' ? rng() < 0.5 : rng() < 0.28) {
+    radarDishes.push(rng() < 0.55 ? 'side' : pick(rng, ['left', 'right']))
+  }
+  if (radarDishes.length === 0) radarDishes.push('top')
+
+  // Bottom cockpits: gunship / freighter-bridge underbelly look (~18% overall,
+  // a bit higher on fighters, lower on sleek explorers).
+  const cockpitBottomChance = role === 'fighter' ? 0.28 : role === 'trader' ? 0.2 : 0.12
+  const cockpitMount = rng() < cockpitBottomChance ? 'bottom' : 'top'
+
   const style = {
     asymmetric,
-    // Bridge / superstructure bias: -1 left, 0 center, +1 right.
-    bridgeSide: asymmetric && rng() < 0.65 ? (rng() < 0.5 ? -1 : 1) : 0,
-    engineLayout: pick(rng, role === 'trader'
-      ? ['twin', 'triple', 'quad']
-      : role === 'fighter'
-        ? ['twin', 'twin', 'triple', 'single']
-        : ['single', 'twin', 'twin']),
-    hasRadiator: rng() < (role === 'trader' ? 0.7 : 0.45),
-    hasCargoPods: role === 'trader' && rng() < 0.75,
-    hasSensorMast: role === 'explorer' || rng() < 0.4,
-    hasDockingRing: role === 'trader' && rng() < 0.35
+    bridgeSide: asymmetric ? (rng() < 0.5 ? -1 : 1) : 0,
+    engineLayout: pick(
+      rng,
+      role === 'trader'
+        ? ['twin', 'triple', 'quad']
+        : role === 'fighter'
+          ? ['twin', 'twin', 'triple', 'single']
+          : ['single', 'twin', 'twin']
+    ),
+    hasRadiator: rng() < (role === 'trader' ? 0.8 : 0.55),
+    hasCargoPods: role === 'trader' && rng() < 0.85,
+    hasSensorMast: radarDishes.includes('top') || role === 'explorer' || rng() < 0.45,
+    radarDishes,
+    cockpitMount,
+    hasDockingRing: role === 'trader' && rng() < 0.45,
+    // Kitbash density — roughly 2× prior generation.
+    detailDensity: range(rng, 1.7, 2.5)
   }
 
   return {
@@ -191,6 +279,7 @@ function generateHullSilhouette(rng, role) {
     stationWidths,
     stationHeights,
     crossSectionSides,
+    superellipseExponent,
     wings,
     stationOffsetsX,
     stationOffsetsY,
@@ -212,9 +301,12 @@ function generateHardpoints(rng, role, hull) {
   return hardpoints
 }
 
+// Shop floor for buyable hulls (hand-crafted Scout sits here; generated scale up).
+export const MIN_SHIP_BUY_PRICE = 8500
+
 function computePrice(stats, rng) {
   const raw = stats.hull + stats.shields * 1.5 + stats.armor * 1.2 + stats.cargoCapacity * 2 + stats.speed * 1.5 + stats.accel * 2
-  return Math.round(raw * range(rng, 8, 14))
+  return Math.max(MIN_SHIP_BUY_PRICE, Math.round(raw * range(rng, 8, 14)))
 }
 
 const MINING_HOLD_ROLE_MULTIPLIER = { trader: 1.3, fighter: 0.6, explorer: 0.9 }
@@ -264,6 +356,7 @@ export function generateShipClassRoster(rng, count) {
       price,
       stats,
       hardpoints: generateHardpoints(rng, role, hull),
+      accessorySlots: pick(rng, ROLE_ACCESSORY_SLOT_COUNTS[role]),
       hull
     })
   }

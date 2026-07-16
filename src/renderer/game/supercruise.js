@@ -93,16 +93,18 @@ export function supercruiseRampUpFactor(elapsedS) {
 }
 
 /**
- * Approach factor 0→1: full speed far out, eases down inside decelerateDistance.
+ * Approach factor 0→1: full speed far out, eases down near the arrival sphere.
+ * Decel distance is hard-capped — giant star shells (tens of km) used to stretch
+ * the old arrivalRange*6 formula into hundreds of km of crawl, then a hard stop.
  */
 export function supercruiseApproachFactor(dist, arrivalRange, cruiseTopSpeed) {
-  const decelDistance = Math.max(
-    arrivalRange * 20,
-    cruiseTopSpeed * DECEL_TRAVEL_S,
-    400
-  )
-  // Remaining distance past a soft buffer inside the arrival sphere.
-  const remaining = Math.max(0, dist - arrivalRange * 0.35)
+  const DECEL_MAX = 12000
+  // Prefer a short standoff-proportional ramp, but never more than DECEL_MAX.
+  const fromArrival = Math.min(Math.max(arrivalRange * 2.2, 400), DECEL_MAX)
+  const fromSpeed = Math.min(cruiseTopSpeed * DECEL_TRAVEL_S, DECEL_MAX)
+  const decelDistance = Math.max(400, Math.min(DECEL_MAX, Math.max(fromArrival, fromSpeed)))
+  // Distance left until the arrival sphere (not a fraction inside it).
+  const remaining = Math.max(0, dist - arrivalRange)
   return Math.min(1, Math.max(APPROACH_MIN, remaining / decelDistance))
 }
 

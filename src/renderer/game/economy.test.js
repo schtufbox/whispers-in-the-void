@@ -1,32 +1,51 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  getPrice, buyGood, sellGood, sellMinedOre, purchaseShip, repairCost, repairShip,
+  getPrice, getMarketAvailable, defaultMarketStock, buyGood, sellGood, sellMinedOre, buyMinedOre, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip, storeCargo, retrieveCargo, useShipPart,
   renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon,
+  buyAccessory, sellStoredAccessory, equipAccessory, transferStorageItem,
   playerAssetSystemIds, storageHasAssets
 } from './economy.js'
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
 import { BASE_WEAPON_ID } from '../data/weapons.js'
+import { defaultAccessoriesFor, shipHasAutopilot } from '../data/accessories.js'
 
 function makeGameState() {
   return {
     player: {
       credits: 1000,
-      ship: { classId: STARTER_SHIP_CLASS_ID, cargo: {}, miningHold: {}, shipParts: 0, position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
+      ship: {
+        classId: STARTER_SHIP_CLASS_ID,
+        cargo: {},
+        miningHold: {},
+        shipParts: 0,
+        equippedAccessories: defaultAccessoriesFor(getShipClass(STARTER_SHIP_CLASS_ID)),
+        position: [0, 0, 0],
+        quaternion: [0, 0, 0, 1]
+      }
     },
     galaxy: {
       systems: [
         {
           id: 'sys-0',
+          galaxyPosition: [0, 0, 0],
           bodies: [
-            { id: 'agri-world', economyTags: ['agricultural'] },
-            { id: 'industrial-world', economyTags: ['industrial'] }
+            { id: 'agri-world', kind: 'station', economyTags: ['agricultural'] },
+            { id: 'industrial-world', kind: 'station', economyTags: ['industrial'] }
+          ]
+        },
+        {
+          id: 'sys-rim',
+          galaxyPosition: [1e6, 0, 0], // far rim (coreFraction clamps at 1)
+          bodies: [
+            { id: 'rim-station', kind: 'station', economyTags: ['frontier', 'mining'] }
           ]
         }
       ]
     },
     economyOverrides: {},
+    marketStock: {},
     stationStorage: {}
   }
 }
@@ -38,22 +57,88 @@ test('the same good is cheaper where its tag matches a discount multiplier', () 
   assert.ok(agriPrice < industrialPrice, 'grain should be cheaper on an agricultural world than an industrial one')
 })
 
-test('buying then selling round-trips credits and cargo (minus the price nudge)', () => {
+test('buying and selling both use station storage, not ship cargo', () => {
   const gameState = makeGameState()
   const startCredits = gameState.player.credits
+  const beforeAvail = getMarketAvailable(gameState, 'agri-world', 'grain')
   buyGood(gameState, 'agri-world', 'grain', 5)
-  assert.equal(gameState.player.ship.cargo.grain, 5)
+  assert.equal(gameState.player.ship.cargo.grain, undefined, 'purchases do not go to ship cargo')
+  assert.equal(gameState.stationStorage['agri-world'].cargo.grain, 5)
+  assert.equal(getMarketAvailable(gameState, 'agri-world', 'grain'), beforeAvail - 5)
   assert.ok(gameState.player.credits < startCredits)
 
   sellGood(gameState, 'agri-world', 'grain', 5)
+  assert.equal(gameState.stationStorage['agri-world'].cargo.grain, undefined)
   assert.equal(gameState.player.ship.cargo.grain, undefined)
+  assert.equal(getMarketAvailable(gameState, 'agri-world', 'grain'), beforeAvail, 'selling restocks the bay')
 })
 
-test('buyGood rejects purchases beyond cargo capacity or available credits', () => {
+test('buyGood rejects purchases beyond credits or bay stock', () => {
   const gameState = makeGameState()
   assert.throws(() => buyGood(gameState, 'agri-world', 'grain', 100000))
   gameState.player.credits = 0
   assert.throws(() => buyGood(gameState, 'agri-world', 'grain', 1))
+})
+
+test('selling ore raises market available; buying ore consumes it', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 50000
+  gameState.stationStorage['agri-world'] = {
+    cargo: {}, miningHold: { raw_ore: 4 }, shipParts: 0, ships: [], weapons: {}, accessories: {}, blueprints: {}
+  }
+  const before = getMarketAvailable(gameState, 'agri-world', 'raw_ore')
+  sellMinedOre(gameState, 'agri-world', 'raw_ore', 4)
+  assert.equal(getMarketAvailable(gameState, 'agri-world', 'raw_ore'), before + 4)
+  buyMinedOre(gameState, 'agri-world', 'raw_ore', 2)
+  assert.equal(getMarketAvailable(gameState, 'agri-world', 'raw_ore'), before + 2)
+  assert.equal(gameState.stationStorage['agri-world'].miningHold.raw_ore, 2)
+})
+
+test('core stations stock ample low-grade ore and scarce rare ore; rim reverses', () => {
+  const coreStation = { id: 'c', kind: 'station', economyTags: [] }
+  const rimStation = { id: 'r', kind: 'station', economyTags: [] }
+  const coreSys = { galaxyPosition: [0, 0, 0] }
+  const rimSys = { galaxyPosition: [1e6, 0, 0] }
+
+  const coreRaw = defaultMarketStock(coreStation, 'raw_ore', coreSys)
+  const coreQuantum = defaultMarketStock(coreStation, 'quantum_ore', coreSys)
+  const rimRaw = defaultMarketStock(rimStation, 'raw_ore', rimSys)
+  const rimQuantum = defaultMarketStock(rimStation, 'quantum_ore', rimSys)
+
+  assert.ok(coreRaw > coreQuantum * 5, 'core: raw ore shelves much deeper than quantum')
+  assert.ok(rimQuantum > rimRaw, 'rim: rare ore more available than low-grade')
+  assert.ok(coreRaw > rimRaw, 'core has more raw ore than rim')
+  assert.ok(rimQuantum > coreQuantum, 'rim has more quantum ore than core')
+})
+
+test('rare ores are ~20% cheaper at the rim; low-grade stays cheap', () => {
+  const gameState = makeGameState()
+  const coreQuantum = getPrice(gameState, 'agri-world', 'quantum_ore')
+  const rimQuantum = getPrice(gameState, 'rim-station', 'quantum_ore')
+  assert.ok(
+    rimQuantum <= Math.round(coreQuantum * 0.85),
+    `rim quantum should be ~20% cheaper (core ${coreQuantum}, rim ${rimQuantum})`
+  )
+
+  const coreRaw = getPrice(gameState, 'agri-world', 'raw_ore')
+  const rimRaw = getPrice(gameState, 'rim-station', 'raw_ore')
+  // Low-grade must not get expensive out on the rim
+  assert.ok(rimRaw <= coreRaw * 1.15, `rim raw should stay low (core ${coreRaw}, rim ${rimRaw})`)
+})
+
+test('goods in demand cost more; thin stock raises price further', () => {
+  const gameState = makeGameState()
+  // industrial demand for grain (tag +0.3) vs agricultural supply (−0.5)
+  const demandPrice = getPrice(gameState, 'industrial-world', 'grain')
+  const supplyPrice = getPrice(gameState, 'agri-world', 'grain')
+  assert.ok(demandPrice > supplyPrice)
+
+  // Drain stock at industrial bay → scarcity premium
+  const before = getPrice(gameState, 'industrial-world', 'grain')
+  const avail = getMarketAvailable(gameState, 'industrial-world', 'grain')
+  gameState.marketStock['industrial-world'].grain = 0
+  const after = getPrice(gameState, 'industrial-world', 'grain')
+  assert.ok(after > before, `empty shelves raise price (${before} → ${after}, was ${avail} stock)`)
 })
 
 test('purchaseShip stores the new ship at that station rather than making it active', () => {
@@ -127,6 +212,16 @@ test('useShipPart heals 10% of max hull/armor and consumes one part', () => {
   assert.throws(() => useShipPart(gameState), /No ship parts/)
 })
 
+test('useShipPart does not consume a part when already at full hull and armour', () => {
+  const gameState = makeGameState()
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  gameState.player.ship.shipParts = 3
+  gameState.player.ship.hull = shipClass.stats.hull
+  gameState.player.ship.armor = shipClass.stats.armor
+  assert.throws(() => useShipPart(gameState), /No repair needed/)
+  assert.equal(gameState.player.ship.shipParts, 3)
+})
+
 test('repairCost is zero for a fully-healthy ship and positive for a damaged one', () => {
   const gameState = makeGameState()
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
@@ -159,13 +254,17 @@ test('repairShip restores hull/armor to max and deducts credits; throws if alrea
   assert.throws(() => repairShip(gameState), /Not enough credits/)
 })
 
-test('sellMinedOre pays out from the mining hold, separate from regular cargo', () => {
+test('sellMinedOre pays out from station ore storage, not the ship mining hold', () => {
   const gameState = makeGameState()
   gameState.player.ship.miningHold.raw_ore = 5
+  gameState.stationStorage['agri-world'] = {
+    cargo: {}, miningHold: { raw_ore: 5 }, shipParts: 0, ships: [], weapons: {}, accessories: {}, blueprints: {}
+  }
   const startCredits = gameState.player.credits
 
   sellMinedOre(gameState, 'agri-world', 'raw_ore', 3)
-  assert.equal(gameState.player.ship.miningHold.raw_ore, 2)
+  assert.equal(gameState.stationStorage['agri-world'].miningHold.raw_ore, 2)
+  assert.equal(gameState.player.ship.miningHold.raw_ore, 5, 'ship hold untouched')
   assert.ok(gameState.player.credits > startCredits)
 
   assert.throws(() => sellMinedOre(gameState, 'agri-world', 'raw_ore', 10))
@@ -210,10 +309,77 @@ test('equipWeapon swaps a hardpoint\'s weapon with one in storage, returning the
 
 test('storageHasAssets is true only when something of value is parked', () => {
   assert.equal(storageHasAssets(null), false)
-  assert.equal(storageHasAssets({ ships: [], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} }), false)
-  assert.equal(storageHasAssets({ ships: [{ classId: 'x' }], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} }), true)
-  assert.equal(storageHasAssets({ ships: [], cargo: { grain: 2 }, miningHold: {}, shipParts: 0, weapons: {}, blueprints: {} }), true)
-  assert.equal(storageHasAssets({ ships: [], cargo: {}, miningHold: {}, shipParts: 3, weapons: {}, blueprints: {} }), true)
+  assert.equal(storageHasAssets({ ships: [], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, accessories: {}, blueprints: {} }), false)
+  assert.equal(storageHasAssets({ ships: [{ classId: 'x' }], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, accessories: {}, blueprints: {} }), true)
+  assert.equal(storageHasAssets({ ships: [], cargo: { grain: 2 }, miningHold: {}, shipParts: 0, weapons: {}, accessories: {}, blueprints: {} }), true)
+  assert.equal(storageHasAssets({ ships: [], cargo: {}, miningHold: {}, shipParts: 3, weapons: {}, accessories: {}, blueprints: {} }), true)
+  assert.equal(storageHasAssets({ ships: [], cargo: {}, miningHold: {}, shipParts: 0, weapons: {}, accessories: { autopilot: 1 }, blueprints: {} }), true)
+})
+
+test('buyAccessory / equipAccessory / unequip Autopilot on a hull with slots', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 50000
+  // Bravia has 0 slots — equip must fail.
+  buyAccessory(gameState, 'agri-world', 'autopilot')
+  assert.equal(gameState.stationStorage['agri-world'].accessories.autopilot, 1)
+  assert.throws(() => equipAccessory(gameState, 'agri-world', 0, 'autopilot'), /No such accessory slot/)
+
+  // Switch to scout (1 accessory slot) via storage activate path simulation.
+  gameState.player.ship.classId = 'scout'
+  gameState.player.ship.equippedAccessories = defaultAccessoriesFor(getShipClass('scout'))
+  equipAccessory(gameState, 'agri-world', 0, 'autopilot')
+  assert.equal(gameState.player.ship.equippedAccessories[0], 'autopilot')
+  assert.equal(gameState.stationStorage['agri-world'].accessories.autopilot, undefined)
+  assert.ok(shipHasAutopilot(gameState.player.ship))
+
+  // Unequip returns to storage.
+  equipAccessory(gameState, 'agri-world', 0, null)
+  assert.equal(gameState.player.ship.equippedAccessories[0], null)
+  assert.equal(gameState.stationStorage['agri-world'].accessories.autopilot, 1)
+  assert.equal(shipHasAutopilot(gameState.player.ship), false)
+
+  const creditsBefore = gameState.player.credits
+  sellStoredAccessory(gameState, 'agri-world', 'autopilot')
+  assert.ok(gameState.player.credits > creditsBefore)
+})
+
+test('purchaseShip stores empty equippedAccessories sized to class slots', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 100000
+  purchaseShip(gameState, 'agri-world', 'scout', 'Probe Runner')
+  const stored = gameState.stationStorage['agri-world'].ships[0]
+  assert.deepEqual(stored.equippedAccessories, defaultAccessoriesFor(getShipClass('scout')))
+})
+
+test('transferStorageItem moves cargo ship↔station and capacity-limits retrieve', () => {
+  const gameState = makeGameState()
+  gameState.player.ship.cargo = { grain: 10 }
+  let r = transferStorageItem(gameState, 'agri-world', 'cargo', 'grain', 4, 'toStation')
+  assert.equal(r.moved, 4)
+  assert.equal(gameState.player.ship.cargo.grain, 6)
+  assert.equal(gameState.stationStorage['agri-world'].cargo.grain, 4)
+
+  // Fill ship cargo to capacity then try to retrieve more than free space.
+  const cap = getShipClass(STARTER_SHIP_CLASS_ID).stats.cargoCapacity
+  gameState.player.ship.cargo = { grain: cap - 1 }
+  gameState.stationStorage['agri-world'].cargo = { grain: 20 }
+  r = transferStorageItem(gameState, 'agri-world', 'cargo', 'grain', 20, 'toShip')
+  assert.equal(r.moved, 1)
+  assert.equal(r.capacityLimited, true)
+  assert.equal(gameState.player.ship.cargo.grain, cap)
+  assert.equal(gameState.stationStorage['agri-world'].cargo.grain, 19)
+})
+
+test('transferStorageItem moves ship parts both ways', () => {
+  const gameState = makeGameState()
+  gameState.player.ship.shipParts = 5
+  const r = transferStorageItem(gameState, 'agri-world', 'parts', 'ship_parts', 3, 'toStation')
+  assert.equal(r.moved, 3)
+  assert.equal(gameState.player.ship.shipParts, 2)
+  assert.equal(gameState.stationStorage['agri-world'].shipParts, 3)
+  transferStorageItem(gameState, 'agri-world', 'parts', 'ship_parts', 2, 'toShip')
+  assert.equal(gameState.player.ship.shipParts, 4)
+  assert.equal(gameState.stationStorage['agri-world'].shipParts, 1)
 })
 
 test('playerAssetSystemIds marks remote systems with stored assets, not the current system', () => {

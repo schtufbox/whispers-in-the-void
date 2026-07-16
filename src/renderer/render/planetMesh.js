@@ -239,12 +239,15 @@ export function buildPlanetMesh(body) {
   mesh.userData.axialTilt = axialTilt
 
   // ~55% of moons are tidally locked (main.js aims them at their parent);
-  // the rest and all planets get a slow axial spin.
+  // the rest and all planets get a visible axial spin. Body positions stay
+  // fixed in the system (no orbital motion) — only rotation about the axis.
   const tidallyLocked = body.kind === 'moon' && rng() < 0.55
   mesh.userData.tidallyLocked = tidallyLocked
   mesh.userData.parentId = body.parentId
-  // Axial spin only (orbits are separate). Slowed another 80% vs prior range.
-  mesh.userData.spinSpeed = tidallyLocked ? 0 : range(rng, 0.00016, 0.00056) * (rng() < 0.5 ? 1 : -1)
+  // rad/s — readable day cycle without looking frantic (~4–12 min/turn).
+  mesh.userData.spinSpeed = tidallyLocked
+    ? 0
+    : range(rng, 0.008, 0.024) * (rng() < 0.5 ? 1 : -1)
 
   return mesh
 }

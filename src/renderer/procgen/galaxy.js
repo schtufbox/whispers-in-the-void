@@ -81,7 +81,7 @@ function localPosition(rng, systemScale) {
   return [radius * Math.sin(phi) * Math.cos(theta), radius * Math.cos(phi) * 0.3, radius * Math.sin(phi) * Math.sin(theta)]
 }
 
-// XZ orbital radius of a body around its host (matches main.js moonOrbits).
+// XZ orbital radius of a body around its host (placement only; orbits are fixed in play).
 function xzOrbitRadius(position, parentPosition = [0, 0, 0]) {
   const dx = position[0] - parentPosition[0]
   const dz = position[2] - parentPosition[2]
@@ -358,7 +358,8 @@ function missionChance(kind) {
 function radiusFor(rng, kind, systemScale) {
   if (kind === 'planet') return range(rng, 8, 21) * PLANET_SIZE_SCALE * systemScale
   if (kind === 'moon') return range(rng, 3, 8) * MOON_SIZE_SCALE * systemScale
-  if (kind === 'asteroidField') return range(rng, 70, 110) * systemScale
+  // Wider belt volume so rocks can pack with clear gaps (see asteroidFieldMesh).
+  if (kind === 'asteroidField') return range(rng, 180, 320) * systemScale
   return null
 }
 
@@ -403,18 +404,36 @@ function makePlanetOrMoon(rng, idCounter, kind, parent, systemScale, name, sibli
   }
 }
 
-function makeAsteroidField(rng, idCounter, systemScale, usedNames) {
+function makeAsteroidField(rng, idCounter, systemScale, usedNames, position = null) {
   return {
     id: `body-${idCounter}`,
     name: generateBodyName(rng, 'asteroidField', usedNames),
     kind: 'asteroidField',
-    position: localPosition(rng, systemScale),
+    position: position ?? localPosition(rng, systemScale),
     radius: radiusFor(rng, 'asteroidField', systemScale),
     economyTags: randomTags(rng),
     hasMissions: false,
     hasShipyard: false,
     hasShipParts: false
   }
+}
+
+/**
+ * Home-system belt near the hyperspace arrival hang so New Game always has a
+ * short-SC mining target (random localPosition can land 100–300km from spawn).
+ */
+function makeHomeAsteroidField(rng, idCounter, system, usedNames) {
+  const systemScale = system.sizeScale ?? 1
+  const [ax, ay, az] = SYSTEM_ARRIVAL_POSITION
+  const angle = rng() * Math.PI * 2
+  // Short hop from arrival — far enough to not sit on the ship spawn.
+  const dist = range(rng, 12000, 28000)
+  const position = [
+    ax + Math.cos(angle) * dist,
+    ay + range(rng, -400, 400) * systemScale,
+    az + Math.sin(angle) * dist
+  ]
+  return makeAsteroidField(rng, idCounter, systemScale, usedNames, position)
 }
 
 function tryStationPosition(rng, system, mode, host) {
@@ -721,9 +740,10 @@ export function ensureStartingSystemFacilities(system, rng, startId = 0) {
     if (s) system.bodies.push(s)
     else break
   }
-  // Always at least one asteroid belt in the starting system (mining available at home).
+  // Always at least one asteroid belt in the starting system (mining at home).
+  // Place it near arrival so it shows up on Overview and is a short SC hop.
   if (!system.bodies.some((b) => b.kind === 'asteroidField')) {
-    system.bodies.push(makeAsteroidField(rng, bodyIdCounter++, system.sizeScale ?? 1, system._usedNames))
+    system.bodies.push(makeHomeAsteroidField(rng, bodyIdCounter++, system, system._usedNames))
   }
   // Optional unique planet names for newly hosted worlds (home system polish).
   applyFacilityHostPlanetNames([system], rng, system._usedNames)
@@ -736,8 +756,8 @@ export function generateGalaxy(seed, opts = {}) {
     totalPlanets = 1500,
     stationCount = 180,
     settlementCount = 120,
-    // ~19% of systems (was 40 ≈ 9%; +10 percentage points).
-    asteroidFieldCount = 85,
+    // ~1/3 of systems get a belt so mining isn't rare when exploring.
+    asteroidFieldCount = 150,
     speciesCount = 20
   } = opts
   const rng = mulberry32(seed)

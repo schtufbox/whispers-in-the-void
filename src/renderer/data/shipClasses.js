@@ -8,32 +8,64 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     role: 'trader',
     price: 12000,
     stats: { hull: 100, shields: 50, armor: 20, cargoCapacity: 40, speed: 120, turnRate: 1.8, accel: 30 },
-    // Hardpoint near the rounded nose (Gallente-shuttle-ish silhouette).
-    hardpoints: [{ id: 'fwd1', position: [0, 0.35, 8.5], type: 'laser' }],
+    // Forward hardpoint on the industrial prow.
+    hardpoints: [{ id: 'fwd1', position: [0, 0.25, 8.2], type: 'laser' }],
+    // Starter has no accessory bay — upgrade hull for Autopilot etc.
+    accessorySlots: 0,
     hull: {
-      // Compact shuttle: rounded organic mid (Gallente starter vibe — Velator/
-      // Imicus family: bulbous body, short fins, twin rear drives), not a box freighter.
+      // Compact industrial starter frigate: angular prow, rugged plating,
+      // twin aft drives — utilitarian rather than sleek.
       length: 18,
-      // Needle tip → swollen mid capsule → slim engine bustle.
-      stationWidths: [0.35, 1.15, 2.05, 2.15, 1.55, 0.85],
-      stationHeights: [0.3, 0.95, 1.55, 1.65, 1.2, 0.7],
-      crossSectionSides: 12,
-      // Short swept-back fins mid-body (not cargo wings).
+      // 12 stations aft→nose: broad engine bus → tall mid → sharp wedge prow.
+      stationWidths: [0.7, 0.9, 1.1, 1.3, 1.5, 1.55, 1.5, 1.35, 1.1, 0.8, 0.5, 0.28],
+      stationHeights: [0.82, 1.0, 1.2, 1.4, 1.52, 1.55, 1.4, 1.2, 0.9, 0.6, 0.4, 0.24],
+      crossSectionSides: 14,
+      superellipseExponent: 3.1,
+      // Angular plate fins + ventral keel wing (industrial slabs).
       wings: [
-        { atStation: 3, span: 2.6, sweep: -0.85, thickness: 0.22, side: 'both', tipOffsetY: -0.15 }
+        {
+          atStation: 4,
+          span: 3.2,
+          sweep: 0.55,
+          thickness: 0.34,
+          side: 'both',
+          tipOffsetY: -0.35,
+          chordScale: 1.05
+        },
+        {
+          atStation: 7,
+          span: 1.6,
+          sweep: -0.2,
+          thickness: 0.2,
+          side: 'both',
+          tipOffsetY: 0.08,
+          chordScale: 0.9
+        },
+        // Underside keel wing — tip carries a forward aerial (see shipMesh).
+        {
+          atStation: 5,
+          span: 2.4,
+          sweep: 0.35,
+          thickness: 0.28,
+          side: 'bottom',
+          tipOffsetX: 0,
+          chordScale: 1.0,
+          tipAerial: true
+        }
       ],
-      stationOffsetsX: [0, 0, 0, 0, 0, 0],
-      stationOffsetsY: [0, 0.05, 0.08, 0.05, 0, -0.05],
-      // Soft blue-green hull — Gallente-adjacent, not industrial grey.
-      color: '#6a9a88',
+      stationOffsetsX: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      stationOffsetsY: [0.04, 0.06, 0.09, 0.12, 0.1, 0.08, 0.05, 0.02, 0, -0.02, -0.02, 0],
+      // Matte bronze-steel hull.
+      color: '#8a7a68',
       style: {
         asymmetric: false,
         bridgeSide: 0,
         engineLayout: 'twin',
-        hasRadiator: false,
+        hasRadiator: true,
         hasCargoPods: false,
-        hasSensorMast: false,
-        hasDockingRing: false
+        hasSensorMast: true,
+        hasDockingRing: false,
+        detailDensity: 2.2
       }
     }
   },
@@ -44,14 +76,24 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     price: 20000,
     stats: { hull: 150, shields: 30, armor: 40, cargoCapacity: 120, speed: 70, turnRate: 0.9, accel: 15 },
     hardpoints: [{ id: 'fwd1', position: [0, 0.5, 12], type: 'laser' }],
+    accessorySlots: 2,
     hull: {
       length: 32,
-      // Boxy bulk freighter — nearly constant cross-section.
-      stationWidths: [1.4, 3.4, 3.8, 3.8, 3.5, 1.8],
-      stationHeights: [1.2, 2.6, 2.8, 2.8, 2.5, 1.4],
-      crossSectionSides: 4,
-      wings: [{ atStation: 2, span: 2.2, sweep: -0.2, thickness: 0.4, side: 'left' }],
-      stationOffsetsX: [0, -0.15, -0.25, -0.2, -0.1, 0],
+      // Boxy bulk freighter — fat cargo block, blunt nose, truncated tail.
+      stationWidths: [1.2, 2.2, 3.2, 3.7, 3.85, 3.85, 3.8, 3.6, 3.2, 2.4, 1.6, 1.1],
+      stationHeights: [1.0, 1.8, 2.5, 2.75, 2.85, 2.85, 2.8, 2.6, 2.3, 1.7, 1.15, 0.85],
+      crossSectionSides: 12,
+      superellipseExponent: 3.2,
+      wings: [
+        // Port cargo fin.
+        { atStation: 5, span: 2.4, sweep: -0.25, thickness: 0.42, side: 'left', chordScale: 1.05 },
+        // Aft dorsal stabilizer over the drive bus.
+        { atStation: 2, span: 1.8, sweep: -0.35, thickness: 0.32, side: 'top', chordScale: 0.95 },
+        // Ventral cargo keel.
+        { atStation: 6, span: 1.6, sweep: 0.15, thickness: 0.3, side: 'bottom', chordScale: 0.9 }
+      ],
+      stationOffsetsX: [0, -0.08, -0.16, -0.22, -0.25, -0.22, -0.18, -0.12, -0.06, 0, 0, 0],
+      stationOffsetsY: [0, 0.02, 0.05, 0.08, 0.1, 0.1, 0.08, 0.05, 0.02, 0, 0, 0],
       color: '#a89870',
       style: {
         asymmetric: true,
@@ -60,7 +102,11 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         hasRadiator: true,
         hasCargoPods: true,
         hasSensorMast: true,
-        hasDockingRing: true
+        // Underside freighter bridge + side cargo radars.
+        cockpitMount: 'bottom',
+        radarDishes: ['top', 'side', 'bottom'],
+        hasDockingRing: true,
+        detailDensity: 2.1
       }
     }
   },
@@ -74,14 +120,21 @@ const HAND_CRAFTED_SHIP_CLASSES = [
       { id: 'fwd1', position: [-1.2, 0, 9], type: 'laser' },
       { id: 'fwd2', position: [1.2, 0, 9], type: 'laser' }
     ],
+    accessorySlots: 1,
     hull: {
       length: 20,
-      stationWidths: [0.12, 0.55, 1.05, 0.95, 1.15, 0.35],
-      stationHeights: [0.1, 0.35, 0.5, 0.48, 0.55, 0.2],
-      crossSectionSides: 6,
+      // Needle fighter — pinched mid, broad rear engines, sharp prow.
+      stationWidths: [0.1, 0.28, 0.55, 0.85, 1.05, 0.95, 0.9, 1.1, 1.15, 0.7, 0.35, 0.14],
+      stationHeights: [0.08, 0.2, 0.35, 0.48, 0.52, 0.48, 0.45, 0.52, 0.55, 0.35, 0.18, 0.1],
+      crossSectionSides: 14,
+      superellipseExponent: 2.1,
       wings: [
-        { atStation: 3, span: 7.5, sweep: 1.3, thickness: 0.22, side: 'both' },
-        { atStation: 1, span: 2.2, sweep: 0.4, thickness: 0.14, side: 'both' }
+        // Main swept combat wings mid-body.
+        { atStation: 6, span: 6.8, sweep: 1.25, thickness: 0.2, side: 'both', tipOffsetY: -0.15, chordScale: 1.05 },
+        // Canard-ish forward stubs.
+        { atStation: 9, span: 1.6, sweep: 0.35, thickness: 0.12, side: 'both', chordScale: 0.75 },
+        // Tall rear tail fin.
+        { atStation: 2, span: 2.1, sweep: -0.4, thickness: 0.16, side: 'top', chordScale: 0.85 }
       ],
       color: '#c8cdd4',
       style: {
@@ -91,7 +144,10 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         hasRadiator: false,
         hasCargoPods: false,
         hasSensorMast: true,
-        hasDockingRing: false
+        cockpitMount: 'top',
+        radarDishes: ['top', 'side'],
+        hasDockingRing: false,
+        detailDensity: 2.0
       }
     }
   },
@@ -105,17 +161,25 @@ const HAND_CRAFTED_SHIP_CLASSES = [
       { id: 'wing1', position: [-3, 0, 6], type: 'laser' },
       { id: 'wing2', position: [3, 0, 6], type: 'missile' }
     ],
+    accessorySlots: 2,
     hull: {
       length: 26,
-      stationWidths: [0.4, 1.5, 2.1, 2.0, 1.6, 0.7],
-      stationHeights: [0.3, 1.0, 1.4, 1.35, 1.0, 0.45],
-      crossSectionSides: 4,
-      // One heavier weapons wing — classic asymmetric gunship.
+      // Heavy gunship — broad mid, armored prow, asymmetric weapon plane.
+      stationWidths: [0.35, 0.75, 1.3, 1.75, 2.05, 2.1, 2.0, 1.85, 1.55, 1.1, 0.65, 0.35],
+      stationHeights: [0.25, 0.55, 0.95, 1.25, 1.4, 1.42, 1.35, 1.2, 1.0, 0.7, 0.4, 0.22],
+      crossSectionSides: 12,
+      superellipseExponent: 2.8,
       wings: [
-        { atStation: 2, span: 9.5, sweep: 0.4, thickness: 0.45, side: 'left' },
-        { atStation: 2, span: 6.5, sweep: 0.6, thickness: 0.3, side: 'right', tipOffsetY: 0.3 }
+        // Heavier port weapons wing.
+        { atStation: 5, span: 8.8, sweep: 0.45, thickness: 0.42, side: 'left', chordScale: 1.1 },
+        // Shorter starboard plane with anhedral.
+        { atStation: 5, span: 6.0, sweep: 0.55, thickness: 0.28, side: 'right', tipOffsetY: 0.35, chordScale: 0.95 },
+        // Rear dorsal stabilizer.
+        { atStation: 2, span: 2.4, sweep: -0.3, thickness: 0.28, side: 'top', chordScale: 0.9 },
+        // Ventral keel for belly mass.
+        { atStation: 6, span: 1.9, sweep: 0.25, thickness: 0.26, side: 'bottom', chordScale: 0.85 }
       ],
-      stationOffsetsY: [0, 0.05, 0.15, 0.12, 0.05, 0],
+      stationOffsetsY: [0, 0.02, 0.05, 0.1, 0.14, 0.15, 0.12, 0.08, 0.04, 0.02, 0, 0],
       color: '#6a7680',
       style: {
         asymmetric: true,
@@ -124,7 +188,11 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         hasRadiator: true,
         hasCargoPods: false,
         hasSensorMast: true,
-        hasDockingRing: false
+        // Gunship belly cockpit.
+        cockpitMount: 'bottom',
+        radarDishes: ['top', 'right', 'bottom'],
+        hasDockingRing: false,
+        detailDensity: 2.3
       }
     }
   },
@@ -132,15 +200,22 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     id: 'scout',
     name: 'Scout',
     role: 'explorer',
-    price: 9000,
+    price: 8500,
     stats: { hull: 50, shields: 40, armor: 5, cargoCapacity: 15, speed: 180, turnRate: 2.5, accel: 45 },
     hardpoints: [{ id: 'fwd1', position: [0, 0.1, 7], type: 'laser' }],
+    accessorySlots: 1,
     hull: {
       length: 15,
-      stationWidths: [0.15, 0.65, 0.95, 0.85, 0.55, 0.2],
-      stationHeights: [0.12, 0.5, 0.7, 0.65, 0.4, 0.15],
-      crossSectionSides: 8,
-      wings: [{ atStation: 3, span: 3.2, sweep: 0.5, thickness: 0.16, side: 'both' }],
+      // Compact survey boat — slender spine, modest mid flare.
+      stationWidths: [0.12, 0.28, 0.5, 0.72, 0.9, 0.95, 0.88, 0.75, 0.55, 0.38, 0.22, 0.12],
+      stationHeights: [0.1, 0.22, 0.4, 0.55, 0.68, 0.72, 0.66, 0.55, 0.4, 0.28, 0.16, 0.1],
+      crossSectionSides: 14,
+      superellipseExponent: 2.2,
+      wings: [
+        { atStation: 6, span: 2.8, sweep: 0.45, thickness: 0.14, side: 'both', chordScale: 0.95 },
+        // Small survey tail fin.
+        { atStation: 2, span: 1.3, sweep: -0.25, thickness: 0.12, side: 'top', chordScale: 0.8 }
+      ],
       color: '#7a9a88',
       style: {
         asymmetric: false,
@@ -149,7 +224,11 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         hasRadiator: false,
         hasCargoPods: false,
         hasSensorMast: true,
-        hasDockingRing: false
+        cockpitMount: 'top',
+        // Sensor suite: top + bottom dishes.
+        radarDishes: ['top', 'bottom', 'side'],
+        hasDockingRing: false,
+        detailDensity: 1.9
       }
     }
   },
@@ -164,14 +243,23 @@ const HAND_CRAFTED_SHIP_CLASSES = [
       { id: 'fwd1', position: [-1, 0, 8], type: 'laser' },
       { id: 'fwd2', position: [1, 0, 8], type: 'missile' }
     ],
+    accessorySlots: 1,
     hull: {
       length: 19,
-      // Rough scavenged silhouette — deliberately ugly/asymmetric.
-      stationWidths: [0.15, 0.85, 1.4, 1.15, 1.55, 0.45],
-      stationHeights: [0.1, 0.45, 0.65, 0.6, 0.85, 0.25],
-      crossSectionSides: 5,
-      wings: [{ atStation: 4, span: 5.5, sweep: -0.5, thickness: 0.28, side: 'right', tipOffsetY: -0.25 }],
-      stationOffsetsX: [0, 0.1, 0.25, 0.2, -0.15, 0],
+      // Rough scavenged silhouette — deliberately ugly / asymmetric.
+      stationWidths: [0.12, 0.4, 0.75, 1.15, 1.35, 1.2, 1.05, 1.45, 1.5, 0.95, 0.45, 0.18],
+      stationHeights: [0.08, 0.28, 0.45, 0.6, 0.68, 0.62, 0.55, 0.78, 0.82, 0.5, 0.25, 0.12],
+      crossSectionSides: 10,
+      superellipseExponent: 2.4,
+      wings: [
+        { atStation: 7, span: 5.2, sweep: -0.45, thickness: 0.26, side: 'right', tipOffsetY: -0.28, chordScale: 1.0 },
+        // Crooked tail stub.
+        { atStation: 1, span: 1.5, sweep: 0.2, thickness: 0.18, side: 'top', tipOffsetX: 0.2, chordScale: 0.75 },
+        // Scrap ventral plate.
+        { atStation: 5, span: 1.2, sweep: 0.1, thickness: 0.2, side: 'bottom', tipOffsetX: -0.15 }
+      ],
+      stationOffsetsX: [0, 0.05, 0.12, 0.2, 0.22, 0.18, 0.1, -0.08, -0.15, -0.08, 0, 0],
+      stationOffsetsY: [0, 0, 0.02, 0.05, 0.08, 0.06, 0.03, 0.1, 0.12, 0.05, 0, 0],
       color: '#8a4540',
       style: {
         asymmetric: true,
@@ -180,7 +268,10 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         hasRadiator: true,
         hasCargoPods: true,
         hasSensorMast: true,
-        hasDockingRing: false
+        cockpitMount: 'bottom',
+        radarDishes: ['top', 'left', 'bottom'],
+        hasDockingRing: false,
+        detailDensity: 2.2
       }
     }
   },
@@ -191,12 +282,22 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     price: 18000,
     stats: { hull: 80, shields: 50, armor: 15, cargoCapacity: 60, speed: 150, turnRate: 1.6, accel: 28 },
     hardpoints: [{ id: 'fwd1', position: [0, 0.3, 13], type: 'laser' }],
+    accessorySlots: 2,
     hull: {
       length: 28,
-      stationWidths: [0.2, 1.0, 1.55, 1.45, 0.95, 0.3],
-      stationHeights: [0.15, 0.65, 0.95, 0.9, 0.55, 0.2],
-      crossSectionSides: 6,
-      wings: [{ atStation: 2, span: 9, sweep: 0.9, thickness: 0.22, side: 'both' }],
+      // Long-range explorer — elegant spine, broad mid wings, proud tail.
+      stationWidths: [0.18, 0.45, 0.85, 1.2, 1.5, 1.55, 1.48, 1.3, 1.0, 0.65, 0.35, 0.16],
+      stationHeights: [0.12, 0.32, 0.58, 0.82, 0.95, 0.98, 0.92, 0.8, 0.58, 0.38, 0.2, 0.1],
+      crossSectionSides: 14,
+      superellipseExponent: 2.3,
+      wings: [
+        // Primary mid-body sails.
+        { atStation: 5, span: 8.2, sweep: 0.85, thickness: 0.2, side: 'both', tipOffsetY: 0.12, chordScale: 1.05 },
+        // Rear dorsal tail wing.
+        { atStation: 2, span: 2.6, sweep: -0.45, thickness: 0.18, side: 'top', chordScale: 0.9 },
+        // Slim forward canards.
+        { atStation: 9, span: 1.8, sweep: 0.3, thickness: 0.12, side: 'both', chordScale: 0.7 }
+      ],
       color: '#6a8fa0',
       style: {
         asymmetric: false,
@@ -205,7 +306,10 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         hasRadiator: true,
         hasCargoPods: false,
         hasSensorMast: true,
-        hasDockingRing: true
+        cockpitMount: 'top',
+        radarDishes: ['top', 'bottom', 'side'],
+        hasDockingRing: true,
+        detailDensity: 2.0
       }
     }
   }

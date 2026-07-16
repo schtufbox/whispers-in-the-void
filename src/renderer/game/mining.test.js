@@ -1,8 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { oreTierForSystem, mineRock, isRockAlive, rockDisplayName } from './mining.js'
+import {
+  oreTierForSystem,
+  mineRock,
+  isRockAlive,
+  rockDisplayName,
+  mineYieldForWeapon,
+  isFieldDepleted,
+  fieldRespawnRemainingS,
+  formatRespawnTime
+} from './mining.js'
 import { GALAXY_MAX_RADIUS } from '../procgen/galaxy.js'
 import { MINED_ORE_GOOD_IDS } from '../data/goods.js'
+import { getWeapon } from '../data/weapons.js'
 
 function systemAtRadius(radius) {
   return { galaxyPosition: [radius, 0, 0] }
@@ -26,16 +36,25 @@ test('ore tier increases monotonically with distance from the core', () => {
   }
 })
 
+test('default laser yields 1 ore, default missile yields 2, stronger guns scale up', () => {
+  assert.equal(mineYieldForWeapon('pulse_laser'), 1)
+  assert.equal(mineYieldForWeapon('rocket_pod'), 2)
+  assert.equal(mineYieldForWeapon(getWeapon('pulse_laser')), 1)
+  assert.equal(mineYieldForWeapon(getWeapon('rocket_pod')), 2)
+  assert.ok(mineYieldForWeapon('plasma_cannon') > mineYieldForWeapon('pulse_laser'))
+  assert.ok(mineYieldForWeapon('torpedo') > mineYieldForWeapon('rocket_pod'))
+})
+
 test('mining scoops until the hold is full, but still depletes the rock afterward', () => {
   const shipClass = { stats: { miningCapacity: 2 } }
   const gameState = { simTime: 0, player: { ship: { miningHold: {} } } }
   const system = systemAtRadius(0)
 
   assert.deepEqual(mineRock(gameState, shipClass, system, 'field-1', 0), {
-    goodId: 'raw_ore', mined: true, scooped: true, destroyed: false
+    goodId: 'raw_ore', mined: true, scooped: true, scoopedAmount: 1, amount: 1, destroyed: false
   })
   assert.deepEqual(mineRock(gameState, shipClass, system, 'field-1', 0), {
-    goodId: 'raw_ore', mined: true, scooped: true, destroyed: false
+    goodId: 'raw_ore', mined: true, scooped: true, scoopedAmount: 1, amount: 1, destroyed: false
   })
   assert.equal(gameState.player.ship.miningHold.raw_ore, 2)
 
@@ -43,7 +62,18 @@ test('mining scoops until the hold is full, but still depletes the rock afterwar
   const full = mineRock(gameState, shipClass, system, 'field-1', 0)
   assert.equal(full.mined, true)
   assert.equal(full.scooped, false)
+  assert.equal(full.amount, 1)
   assert.equal(gameState.player.ship.miningHold.raw_ore, 2, 'a full hold should not exceed capacity')
+})
+
+test('higher yield strips more ore and scoops up to capacity', () => {
+  const shipClass = { stats: { miningCapacity: 5 } }
+  const gameState = { simTime: 0, player: { ship: { miningHold: {} } } }
+  const system = systemAtRadius(0)
+  const r = mineRock(gameState, shipClass, system, 'field-hi', 0, 4)
+  assert.equal(r.amount, 4)
+  assert.equal(r.scoopedAmount, 4)
+  assert.equal(gameState.player.ship.miningHold.raw_ore, 4)
 })
 
 test('a rock holds 10-200 ore, depletes, explodes, and stops being mineable until it respawns', () => {
@@ -67,13 +97,13 @@ test('a rock holds 10-200 ore, depletes, explodes, and stops being mineable unti
 
   assert.equal(isRockAlive(gameState, 'field-2', 3), false, 'a depleted rock is not alive/mineable')
   assert.deepEqual(mineRock(gameState, shipClass, system, 'field-2', 3), {
-    goodId: 'raw_ore', mined: false, scooped: false, destroyed: false
+    goodId: 'raw_ore', mined: false, scooped: false, scoopedAmount: 0, amount: 0, destroyed: false
   })
 
   gameState.simTime = destroyedAt + 24 * 3600 + 1 // past even the longest possible respawn delay
   assert.equal(isRockAlive(gameState, 'field-2', 3), true, 'the rock respawns after its delay elapses')
   assert.deepEqual(mineRock(gameState, shipClass, system, 'field-2', 3), {
-    goodId: 'raw_ore', mined: true, scooped: true, destroyed: false
+    goodId: 'raw_ore', mined: true, scooped: true, scoopedAmount: 1, amount: 1, destroyed: false
   })
 })
 
@@ -96,4 +126,40 @@ test('full mining hold can still exhaust a rock to destruction', () => {
 
 test('rockDisplayName names the deposit after the ore it yields', () => {
   assert.equal(rockDisplayName(systemAtRadius(0)), 'Raw Ore Deposit')
+})
+
+test('destroyed rocks revive after offline simTime catch-up', () => {
+  const shipClass = { stats: { miningCapacity: 0 } }
+  const gameState = { simTime: 0, player: { ship: { miningHold: {} } } }
+  const system = systemAtRadius(0)
+  let hits = 0
+  while (isRockAlive(gameState, 'belt-offline', 0) && hits < 300) {
+    mineRock(gameState, shipClass, system, 'belt-offline', 0, 50)
+    hits++
+  }
+  assert.equal(isRockAlive(gameState, 'belt-offline', 0), false)
+  // Simulate loading after 25h of wall-clock offline (past max 24h respawn).
+  gameState.simTime += 25 * 3600
+  assert.equal(isRockAlive(gameState, 'belt-offline', 0), true)
+})
+
+test('isFieldDepleted and fieldRespawnRemainingS track a fully mined belt', () => {
+  const shipClass = { stats: { miningCapacity: 0 } }
+  const gameState = { simTime: 0, player: { ship: { miningHold: {} } } }
+  const system = systemAtRadius(0)
+  const fieldId = 'belt-empty'
+  const rockCount = 3
+  for (let i = 0; i < rockCount; i++) {
+    let hits = 0
+    while (isRockAlive(gameState, fieldId, i) && hits < 300) {
+      mineRock(gameState, shipClass, system, fieldId, i, 50)
+      hits++
+    }
+  }
+  assert.equal(isFieldDepleted(gameState, fieldId, rockCount), true)
+  const rem = fieldRespawnRemainingS(gameState, fieldId, rockCount)
+  assert.ok(rem > 0, 'depleted field should report time until next rock respawns')
+  assert.ok(formatRespawnTime(rem).length > 0)
+  assert.equal(formatRespawnTime(3661), '1h 1m')
+  assert.equal(formatRespawnTime(90), '1m 30s')
 })

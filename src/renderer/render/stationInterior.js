@@ -1,9 +1,8 @@
 import * as THREE from 'three'
 import { stationMaterialMaps } from './textures.js'
 
-// Shared docking-bay backdrop for every dockable body. Built once, animated
-// while the player is docked (loaders, drones, lights, hangar door field).
-// Station + settlement docks share this interior (same bay mesh for both).
+// Docking-bay backdrop. Settlements use the standard bay; stations pass
+// { fancy: true } for richer neon/point-light treatment (same structure).
 
 const BAY_WIDTH = 72
 const BAY_HEIGHT = 48
@@ -156,8 +155,15 @@ function makeCargoCrate(mat) {
   return new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 2.2), mat)
 }
 
-export function buildStationInteriorMesh() {
+/**
+ * @param {{ fancy?: boolean }} [options]
+ * fancy: stations get extra neon, colored washes, and light fixtures.
+ * Settlements omit fancy (current baseline bay).
+ */
+export function buildStationInteriorMesh(options = {}) {
+  const fancy = !!options.fancy
   const group = new THREE.Group()
+  group.userData.fancy = fancy
   const wall = wallMat()
   const floor = floorMat()
   const beam = beamMat()
@@ -177,6 +183,10 @@ export function buildStationInteriorMesh() {
     sparks: [],
     fans: [],
     crane: null,
+    pointLights: [],
+    neonStrips: [],
+    glowPlanes: [],
+    fancy,
     elapsed: 0
   }
 
@@ -472,24 +482,125 @@ export function buildStationInteriorMesh() {
     anim.sparks.push({ group: sparkGroup, phase: x * 0.1 })
   }
 
-  // Ambient lights.
-  const bayLight = new THREE.PointLight(0x8fb3ff, 2.4, 280)
+  // Ambient lights (baseline — settlements keep this look).
+  const bayLight = new THREE.PointLight(0x8fb3ff, fancy ? 2.8 : 2.4, 280)
   bayLight.position.set(0, BAY_HEIGHT / 2 - 8, 10)
   group.add(bayLight)
   anim.bayLight = bayLight
 
-  const padLight = new THREE.PointLight(0x4fc3d9, 1.6, 80)
+  const padLight = new THREE.PointLight(0x4fc3d9, fancy ? 2.0 : 1.6, 80)
   padLight.position.set(0, 8, 18)
   group.add(padLight)
   anim.padLight = padLight
 
-  const doorLight = new THREE.PointLight(0x6a9aaa, 1.2, 100)
+  const doorLight = new THREE.PointLight(0x6a9aaa, fancy ? 1.6 : 1.2, 100)
   doorLight.position.set(0, 5, doorZ + 10)
   group.add(doorLight)
 
   // Fill so the ship isn't a silhouette.
-  const fill = new THREE.AmbientLight(0x406080, 0.35)
+  const fill = new THREE.AmbientLight(0x406080, fancy ? 0.28 : 0.35)
   group.add(fill)
+
+  if (fancy) {
+    // Colored accent washes along the bay flanks.
+    const cyanWash = new THREE.PointLight(0x40e0ff, 1.4, 90)
+    cyanWash.position.set(-BAY_WIDTH / 2 + 8, 4, 0)
+    group.add(cyanWash)
+    anim.pointLights.push({ light: cyanWash, base: 1.4, phase: 0.2, speed: 0.9, hueShift: true, hue0: 0.5 })
+
+    const magentaWash = new THREE.PointLight(0xff60c8, 1.1, 85)
+    magentaWash.position.set(BAY_WIDTH / 2 - 8, 6, 20)
+    group.add(magentaWash)
+    anim.pointLights.push({ light: magentaWash, base: 1.1, phase: 1.4, speed: 1.1, hueShift: false })
+
+    const amberSpot = new THREE.PointLight(0xffb347, 1.3, 70)
+    amberSpot.position.set(0, BAY_HEIGHT / 2 - 10, -30)
+    group.add(amberSpot)
+    anim.pointLights.push({ light: amberSpot, base: 1.3, phase: 2.2, speed: 0.7, hueShift: false })
+
+    const rimDoor = new THREE.PointLight(0x7fe6ff, 2.2, 120)
+    rimDoor.position.set(0, 2, doorZ + 4)
+    group.add(rimDoor)
+    anim.pointLights.push({ light: rimDoor, base: 2.2, phase: 0.5, speed: 1.6, hueShift: false })
+
+    // Neon edge strips along floor and catwalks (additive glow quads).
+    const neonMat = (hex, opacity = 0.55) =>
+      new THREE.MeshBasicMaterial({
+        color: hex,
+        transparent: true,
+        opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    for (const side of [-1, 1]) {
+      const strip = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.35, BAY_LENGTH - 24),
+        neonMat(side < 0 ? 0x4fc3d9 : 0xff6ad1, 0.45)
+      )
+      strip.rotation.x = -Math.PI / 2
+      strip.rotation.z = Math.PI / 2
+      strip.position.set(side * (BAY_WIDTH / 2 - 3.2), -BAY_HEIGHT / 2 + 1.15, 5)
+      group.add(strip)
+      anim.neonStrips.push({ mesh: strip, phase: side * 0.8, base: 0.4, amp: 0.25 })
+    }
+    // Ceiling light veins.
+    for (let x of [-20, 0, 20]) {
+      const vein = new THREE.Mesh(
+        new THREE.PlaneGeometry(BAY_LENGTH * 0.7, 0.45),
+        neonMat(0xa8d8ff, 0.35)
+      )
+      vein.rotation.x = Math.PI / 2
+      vein.position.set(x, BAY_HEIGHT / 2 - 1.3, 0)
+      group.add(vein)
+      anim.neonStrips.push({ mesh: vein, phase: x * 0.05, base: 0.3, amp: 0.2 })
+    }
+    // Soft volumetric haze planes near the pad and door.
+    for (const [y, z, op] of [
+      [2, 18, 0.06],
+      [4, doorZ + 16, 0.08]
+    ]) {
+      const haze = new THREE.Mesh(
+        new THREE.PlaneGeometry(48, 28),
+        neonMat(0x6fd8f2, op)
+      )
+      haze.position.set(0, y, z)
+      group.add(haze)
+      anim.glowPlanes.push({ mesh: haze, phase: z * 0.02, base: op, amp: op * 0.7 })
+    }
+    // Extra hanging fixtures with stronger bulbs (station only).
+    for (let z = -40; z <= 50; z += 22) {
+      for (const x of [-12, 12]) {
+        const bulb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.55, 10, 8),
+          new THREE.MeshBasicMaterial({
+            color: 0xc8e8ff,
+            transparent: true,
+            opacity: 0.75,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+          })
+        )
+        bulb.position.set(x, BAY_HEIGHT / 2 - 6.5, z)
+        group.add(bulb)
+        anim.lights.push({ mesh: bulb, phase: z * 0.04 + x, base: 0.65 })
+        const pl = new THREE.PointLight(0xb0d0ff, 0.55, 40)
+        pl.position.copy(bulb.position)
+        group.add(pl)
+        anim.pointLights.push({ light: pl, base: 0.55, phase: z * 0.03, speed: 1.3, hueShift: false })
+      }
+    }
+    // Vertical light columns at hangar mouth.
+    for (const side of [-1, 1]) {
+      const col = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.35, BAY_HEIGHT * 0.7, 8),
+        neonMat(0x5ee6ff, 0.4)
+      )
+      col.position.set(side * 18, 0, doorZ + 2)
+      group.add(col)
+      anim.neonStrips.push({ mesh: col, phase: side, base: 0.35, amp: 0.3 })
+    }
+  }
 
   group.userData.anim = anim
   return group
@@ -619,6 +730,32 @@ export function updateStationInterior(mesh, dt) {
   }
 
   // Soft bay light pulse.
-  if (anim.bayLight) anim.bayLight.intensity = 2.1 + 0.35 * Math.sin(t * 0.8)
-  if (anim.padLight) anim.padLight.intensity = 1.3 + 0.5 * Math.sin(t * 1.4)
+  if (anim.bayLight) {
+    const boost = anim.fancy ? 0.55 : 0.35
+    anim.bayLight.intensity = (anim.fancy ? 2.4 : 2.1) + boost * Math.sin(t * 0.8)
+  }
+  if (anim.padLight) {
+    anim.padLight.intensity = (anim.fancy ? 1.7 : 1.3) + (anim.fancy ? 0.7 : 0.5) * Math.sin(t * 1.4)
+  }
+
+  // Station-only fancy lighting animation.
+  if (anim.fancy) {
+    for (const pl of anim.pointLights ?? []) {
+      const pulse = pl.base * (0.75 + 0.35 * Math.sin(t * pl.speed + pl.phase))
+      pl.light.intensity = Math.max(0.15, pulse)
+      if (pl.hueShift) {
+        pl.light.color.setHSL(0.48 + 0.06 * Math.sin(t * 0.4 + pl.phase), 0.85, 0.6)
+      }
+    }
+    for (const strip of anim.neonStrips ?? []) {
+      const op = strip.base + strip.amp * (0.5 + 0.5 * Math.sin(t * 1.8 + strip.phase))
+      strip.mesh.material.opacity = Math.max(0.12, Math.min(0.85, op))
+    }
+    for (const gp of anim.glowPlanes ?? []) {
+      gp.mesh.material.opacity =
+        gp.base + gp.amp * (0.5 + 0.5 * Math.sin(t * 1.1 + gp.phase))
+      // Slow color drift for atmosphere haze.
+      gp.mesh.material.color.setHSL(0.52 + 0.04 * Math.sin(t * 0.35 + gp.phase), 0.65, 0.55)
+    }
+  }
 }

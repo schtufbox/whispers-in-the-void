@@ -7,11 +7,16 @@ import {
   recordProbeAttempt,
   isActiveMissionProbeTarget,
   MAX_PROBE_ATTEMPTS,
+  PROBE_FIND_CHANCE,
+  EXPLORER_PROBE_LOOT_BONUS,
+  probeFindChance,
+  probeBlueprintChance,
   probeExhaustedMessage,
   probeSurveyReport,
   planetArchetypeForBody
 } from './probe.js'
-import { getShipClass, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
+import { PROBE_BLUEPRINT_DROP_CHANCE } from './crafting.js'
+import { getShipClass, STARTER_SHIP_CLASS_ID, SHIP_CLASSES } from '../data/shipClasses.js'
 import { generateGalaxy } from '../procgen/galaxy.js'
 
 function freshShip() {
@@ -73,6 +78,31 @@ test('forceFind always yields a survey-data find when cargo has room', () => {
   assert.equal(result.stored, true)
 })
 
+test('explorer ships get a base +5% survey-data find chance and +5% blueprint odds', () => {
+  const explorer = SHIP_CLASSES.find((c) => c.role === 'explorer')
+  assert.ok(explorer, 'need at least one explorer hull in catalog')
+  const fighter = SHIP_CLASSES.find((c) => c.role !== 'explorer') ?? getShipClass(STARTER_SHIP_CLASS_ID)
+
+  assert.equal(probeFindChance(fighter), PROBE_FIND_CHANCE)
+  assert.equal(probeFindChance(explorer), PROBE_FIND_CHANCE + EXPLORER_PROBE_LOOT_BONUS)
+  assert.ok(
+    Math.abs(probeBlueprintChance(explorer) - PROBE_BLUEPRINT_DROP_CHANCE * 1.05) < 1e-9
+  )
+  assert.equal(probeBlueprintChance(fighter), PROBE_BLUEPRINT_DROP_CHANCE)
+
+  // Roll just above base chance but within explorer bonus → explorer finds, non-explorer misses.
+  const edge = PROBE_FIND_CHANCE + EXPLORER_PROBE_LOOT_BONUS / 2
+  const gameExplorer = { player: { ship: freshShip() } }
+  const gameOther = { player: { ship: freshShip() } }
+  // First rng = blueprint miss; second = survey roll
+  const makeRng = (surveyRoll) => {
+    let n = 0
+    return () => (++n === 1 ? 0.99 : surveyRoll)
+  }
+  assert.equal(launchProbe(gameExplorer, explorer, makeRng(edge)).found, true)
+  assert.equal(launchProbe(gameOther, fighter, makeRng(edge)).found, false)
+})
+
 test('isActiveMissionProbeTarget detects open probe and investigation targets', () => {
   const gameState = {
     missions: {
@@ -109,7 +139,7 @@ test('probeSurveyReport classifies planets, moons, stars, and asteroid fields', 
   }
 
   const starLines = probeSurveyReport(
-    { id: `${system.id}:star`, name: `${system.name} Star`, kind: 'star' },
+    { id: `${system.id}:star`, name: system.name, kind: 'star' },
     system
   )
   assert.ok(starLines.some((l) => /Star/.test(l)))

@@ -7,6 +7,7 @@ import {
   advancePlottedRoute,
   ensureStartingSystemFacilities,
   coreFraction,
+  SYSTEM_ARRIVAL_POSITION,
   WHISPERS_SYSTEM_NAME,
   WHISPERS_STATION_NAME
 } from './galaxy.js'
@@ -221,7 +222,7 @@ test("a moon's orbit radius always clears its parent planet's collision shell", 
 test('a handful of asteroid fields are scattered across the galaxy and are not mission givers', () => {
   const galaxy = generateGalaxy(42)
   const fields = allBodies(galaxy).filter((b) => b.kind === 'asteroidField')
-  assert.equal(fields.length, 85)
+  assert.equal(fields.length, 150)
   assert.ok(fields.every((f) => f.hasMissions === false && f.hasShipyard === false))
 })
 
@@ -236,7 +237,7 @@ test('planets, moons, and asteroid fields have a physical radius sized for their
   const MOON_SIZE_SCALE = 123.75
   for (const b of byKind('planet')) assert.ok(b.radius >= 8 * PLANET_SIZE_SCALE * 0.85 && b.radius <= 21 * PLANET_SIZE_SCALE * 1.15)
   for (const b of byKind('moon')) assert.ok(b.radius >= 3 * MOON_SIZE_SCALE * 0.85 && b.radius <= 8 * MOON_SIZE_SCALE * 1.15)
-  for (const b of byKind('asteroidField')) assert.ok(b.radius >= 70 * 0.85 && b.radius <= 110 * 1.15)
+  for (const b of byKind('asteroidField')) assert.ok(b.radius >= 180 * 0.85 && b.radius <= 320 * 1.15)
   for (const b of [...byKind('station'), ...byKind('settlement')]) assert.equal(b.radius, null)
 })
 
@@ -374,7 +375,12 @@ test('ensureStartingSystemFacilities adds at least 1 station, 2 settlements, and
   ensureStartingSystemFacilities(system, mulberry32(99), galaxy._nextBodyId ?? 0)
   assert.ok(system.bodies.filter((b) => b.kind === 'station').length >= 1)
   assert.ok(system.bodies.filter((b) => b.kind === 'settlement').length >= 2)
-  assert.ok(system.bodies.filter((b) => b.kind === 'asteroidField').length >= 1)
+  const fields = system.bodies.filter((b) => b.kind === 'asteroidField')
+  assert.ok(fields.length >= 1)
+  // Home belt is a short hop from arrival (not a random far-rim scatter).
+  const [ax, ay, az] = SYSTEM_ARRIVAL_POSITION
+  const d = Math.hypot(fields[0].position[0] - ax, fields[0].position[1] - ay, fields[0].position[2] - az)
+  assert.ok(d >= 10000 && d <= 35000, `home belt should be near arrival (d=${d})`)
 })
 
 test('every system name is unique across the galaxy', () => {

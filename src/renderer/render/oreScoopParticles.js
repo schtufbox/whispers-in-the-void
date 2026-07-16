@@ -1,112 +1,147 @@
 import * as THREE from 'three'
-import { buildGlowTexture } from './thrusterParticles.js'
 
-// Short-lived ore chunks that stream from a hit rock toward the ship when
-// the mining hold actually scoops the yield (hold not full).
+// Rock fragments that stream from a hit asteroid toward the ship when the
+// ore hold scoops yield. Small 3D blocks (not soft point sprites).
 
-const POOL = 48
+const POOL = 36
 const _toShip = new THREE.Vector3()
 const _tmp = new THREE.Vector3()
+const _pos = new THREE.Vector3()
+
+function makeFragmentMesh() {
+  // Irregular rock chips — boxes and tetrahedra, non-uniform scale.
+  const kind = Math.random()
+  let geo
+  if (kind < 0.45) {
+    geo = new THREE.BoxGeometry(1, 1, 1)
+  } else if (kind < 0.75) {
+    geo = new THREE.TetrahedronGeometry(0.85, 0)
+  } else {
+    geo = new THREE.OctahedronGeometry(0.7, 0)
+  }
+  const warm = 0.55 + Math.random() * 0.35
+  const mat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(0.07 + Math.random() * 0.05, 0.28, 0.28 + Math.random() * 0.18),
+    roughness: 0.95,
+    metalness: 0.04 + Math.random() * 0.08,
+    flatShading: true,
+    transparent: true,
+    opacity: 1
+  })
+  // Slight amber ore flecks on some chunks.
+  if (Math.random() < 0.35) {
+    mat.color.offsetHSL(0.02, 0.15, 0.08 * warm)
+  }
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.visible = false
+  mesh.frustumCulled = false
+  const sx = 0.55 + Math.random() * 1.1
+  const sy = 0.45 + Math.random() * 1.2
+  const sz = 0.55 + Math.random() * 1.1
+  mesh.userData.baseScale = new THREE.Vector3(sx, sy, sz)
+  mesh.scale.copy(mesh.userData.baseScale).multiplyScalar(1.6)
+  return mesh
+}
 
 export function createOreScoopEffects() {
-  const texture = buildGlowTexture()
   const group = new THREE.Group()
   group.frustumCulled = false
 
-  const geometry = new THREE.BufferGeometry()
-  const positions = new Float32Array(POOL * 3)
-  const colors = new Float32Array(POOL * 3)
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-
-  const material = new THREE.PointsMaterial({
-    map: texture,
-    vertexColors: true,
-    size: 2.4,
-    transparent: true,
-    opacity: 0.95,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    sizeAttenuation: true
+  /** @type {{
+   *   alive: boolean,
+   *   t: number,
+   *   life: number,
+   *   start: THREE.Vector3,
+   *   jitter: THREE.Vector3,
+   *   spin: THREE.Vector3,
+   *   mesh: THREE.Mesh
+   * }[]} */
+  const slots = Array.from({ length: POOL }, () => {
+    const mesh = makeFragmentMesh()
+    group.add(mesh)
+    return {
+      alive: false,
+      t: 0,
+      life: 0.7,
+      start: new THREE.Vector3(),
+      jitter: new THREE.Vector3(),
+      spin: new THREE.Vector3(),
+      mesh
+    }
   })
-  const points = new THREE.Points(geometry, material)
-  points.frustumCulled = false
-  group.add(points)
-
-  /** @type {{ alive: boolean, t: number, life: number, start: THREE.Vector3, jitter: THREE.Vector3 }[]} */
-  const slots = Array.from({ length: POOL }, () => ({
-    alive: false,
-    t: 0,
-    life: 0.55,
-    start: new THREE.Vector3(),
-    jitter: new THREE.Vector3()
-  }))
   let next = 0
-
-  // Amber / gold ore tint with slight variation per particle.
-  function tint(i) {
-    const warm = 0.75 + Math.random() * 0.25
-    colors[i * 3] = 0.85 * warm
-    colors[i * 3 + 1] = 0.55 * warm
-    colors[i * 3 + 2] = 0.2 * warm
-  }
 
   return {
     group,
     /**
-     * Spawn a burst of ore particles at `fromWorld` that will home to the ship.
+     * Spawn rock fragments at `fromWorld` that tumble toward the ship.
      */
-    burst(fromWorld, count = 6) {
-      for (let n = 0; n < count; n++) {
+    burst(fromWorld, count = 7) {
+      const n = Math.min(count, 12)
+      for (let k = 0; k < n; k++) {
         const i = next
         next = (next + 1) % POOL
         const s = slots[i]
         s.alive = true
         s.t = 0
-        s.life = 0.4 + Math.random() * 0.35
+        s.life = 0.55 + Math.random() * 0.45
         s.start.copy(fromWorld).add(
-          _tmp.set((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4)
+          _tmp.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5)
         )
-        s.jitter.set((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 8)
-        positions[i * 3] = s.start.x
-        positions[i * 3 + 1] = s.start.y
-        positions[i * 3 + 2] = s.start.z
-        tint(i)
+        // Initial scatter so chips peel off the rock before being sucked in.
+        s.jitter.set(
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 14
+        )
+        s.spin.set(
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14
+        )
+        s.mesh.position.copy(s.start)
+        s.mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6)
+        const base = s.mesh.userData.baseScale
+        const size = 1.4 + Math.random() * 2.2
+        s.mesh.scale.set(base.x * size, base.y * size, base.z * size)
+        s.mesh.material.opacity = 1
+        s.mesh.visible = true
       }
-      geometry.attributes.position.needsUpdate = true
-      geometry.attributes.color.needsUpdate = true
-      points.visible = true
     },
     update(dt, shipWorldPos) {
-      let any = false
       for (let i = 0; i < POOL; i++) {
         const s = slots[i]
         if (!s.alive) {
-          // Park dead slots far away so they don't draw as a cluttered origin blob.
-          if (positions[i * 3] !== 0 || positions[i * 3 + 1] !== 0) {
-            positions[i * 3] = 0
-            positions[i * 3 + 1] = -1e6
-            positions[i * 3 + 2] = 0
-          }
+          if (s.mesh.visible) s.mesh.visible = false
           continue
         }
-        any = true
         s.t += dt / s.life
         const u = Math.min(1, s.t)
-        // Ease-in toward the ship; early frames drift with jitter.
+        // Ease: drift outward early, then pull hard into the ship.
         const ease = u * u * (3 - 2 * u)
+        const pull = ease * ease
+        const drift = (1 - ease) * (1 + u * 0.35)
         _toShip.copy(shipWorldPos)
-        const drift = 1 - ease
-        positions[i * 3] = s.start.x * (1 - ease) + _toShip.x * ease + s.jitter.x * drift
-        positions[i * 3 + 1] = s.start.y * (1 - ease) + _toShip.y * ease + s.jitter.y * drift
-        positions[i * 3 + 2] = s.start.z * (1 - ease) + _toShip.z * ease + s.jitter.z * drift
+        _pos.set(
+          s.start.x * (1 - pull) + _toShip.x * pull + s.jitter.x * drift,
+          s.start.y * (1 - pull) + _toShip.y * pull + s.jitter.y * drift,
+          s.start.z * (1 - pull) + _toShip.z * pull + s.jitter.z * drift
+        )
+        s.mesh.position.copy(_pos)
+        s.mesh.rotation.x += s.spin.x * dt
+        s.mesh.rotation.y += s.spin.y * dt
+        s.mesh.rotation.z += s.spin.z * dt
+        // Shrink as they reach the hold.
+        const shrink = 1 - pull * 0.75
+        const base = s.mesh.userData.baseScale
+        const size = (1.4 + (1 - u) * 1.2) * shrink
+        s.mesh.scale.set(base.x * size, base.y * size, base.z * size)
+        s.mesh.material.opacity = Math.min(1, 1.15 - pull * 0.95)
         if (u >= 1) {
           s.alive = false
-          positions[i * 3 + 1] = -1e6
+          s.mesh.visible = false
         }
       }
-      geometry.attributes.position.needsUpdate = true
-      points.visible = any
     }
   }
 }

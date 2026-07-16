@@ -10,6 +10,7 @@ import { starTypeForSystem, isExoticStarType } from '../procgen/starType.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { seedMissionsForGalaxy } from '../data/missionTemplates.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
+import { defaultAccessoriesFor } from '../data/accessories.js'
 import { quatFacingSun } from './hyperspace.js'
 
 // Dev convenience: start new games in the outer-rim Whispers system.
@@ -88,6 +89,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
         // weapon (see data/weapons.js) — the same stats combat.js's old
         // fixed presets used, so an untouched loadout plays identically.
         equippedWeapons: defaultLoadoutFor(shipClass),
+        // Optional modules (Autopilot, …) — empty array when class has 0 slots.
+        equippedAccessories: defaultAccessoriesFor(shipClass),
         // Salvaged hardpoint weapons from wrecks — equip or sell at a shipyard.
         spareWeapons: {},
         // Rare industry blueprints (ships/weapons) — craft at station Industry.
@@ -100,6 +103,9 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
     },
     galaxy,
     economyOverrides: {},
+    // Per-body market depth: how many units of each good the bay has for sale.
+    // Lazy-seeded on first trade access (see game/economy.js getMarketAvailable).
+    marketStock: {},
     missions: { available: availableMissions, active: [] },
     visitedBodyIds: [],
     probedBodyIds: [],
@@ -117,12 +123,14 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
     // Wrecks left behind by destroyed ships (game/wrecks.js) — ephemeral like
     // npcs/projectiles, never persisted (see game/save.js).
     wrecks: [],
-    // Per-rock mining state (remaining ore, destroyed-at time), keyed by
-    // "fieldId:index" — lazily populated by game/mining.js. Ephemeral like
-    // wrecks/npcs, never persisted (see game/save.js).
+    // Per-rock mining state (remaining ore, destroyedAt simTime), keyed by
+    // "fieldId:index" — persisted so fields can respawn while offline.
     asteroids: {},
     inCombat: false,
+    // Seconds of campaign time; driven by wall clock (see game/gameClock.js).
     simTime: 0,
+    // Date.now() origin such that simTime ≈ (now - simClockOriginMs) / 1000.
+    simClockOriginMs: Date.now(),
     // startingSystemPeaceBroken flips permanently true the moment the player
     // fires on a non-hostile ship while home (see combat.js's
     // updateProjectiles) — until then, the starting system spawns only

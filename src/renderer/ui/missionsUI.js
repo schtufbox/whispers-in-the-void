@@ -111,7 +111,7 @@ function renderLog(mission) {
   `
 }
 
-export function createMissionsUI(container, gameState) {
+export function createMissionsUI(container, gameState, hooks = {}) {
   const style = document.createElement('style')
   style.textContent = STYLE
   document.head.appendChild(style)
@@ -152,7 +152,7 @@ export function createMissionsUI(container, gameState) {
         return `
           <div class="mission ${ready ? 'ready' : ''}">
             <div class="title">${escapeHtml(m.title)}${chain}</div>
-            <div class="meta">${escapeHtml(m.type)} · Reward ${m.reward}cr</div>
+            <div class="meta">${escapeHtml(m.type ? m.type.charAt(0).toUpperCase() + m.type.slice(1) : '')} · Reward ${m.reward}cr</div>
             <div class="meta">${escapeHtml(describeTarget(m, gameState))}</div>
             ${renderLog(m)}
             <div class="status ${ready ? 'ready' : 'progress'}">${ready ? 'Ready to turn in' : 'In progress'}</div>
@@ -169,6 +169,7 @@ export function createMissionsUI(container, gameState) {
     contentEl.querySelectorAll('.track').forEach((btn) =>
       btn.addEventListener('click', async () => {
         try {
+          if (hooks.canSetWaypoint && !hooks.canSetWaypoint()) return
           setWaypointForMission(gameState, btn.dataset.id)
           render()
         } catch (err) {

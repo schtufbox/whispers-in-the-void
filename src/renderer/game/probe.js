@@ -10,7 +10,23 @@ import { starTypeForSystem } from '../procgen/starType.js'
 import { oreTierForSystem } from './mining.js'
 
 export const PROBE_FIND_CHANCE = 0.08
+/** Explorer hulls: +5 percentage points to survey-data finds when probing. */
+export const EXPLORER_PROBE_LOOT_BONUS = 0.05
 export const MAX_PROBE_ATTEMPTS = 3
+
+/** Effective survey-data find chance for this ship class. */
+export function probeFindChance(shipClass) {
+  let p = PROBE_FIND_CHANCE
+  if (shipClass?.role === 'explorer') p += EXPLORER_PROBE_LOOT_BONUS
+  return Math.min(1, Math.max(0, p))
+}
+
+/** Effective blueprint drop chance (explorers get +5% relative). */
+export function probeBlueprintChance(shipClass) {
+  let p = PROBE_BLUEPRINT_DROP_CHANCE
+  if (shipClass?.role === 'explorer') p *= 1 + EXPLORER_PROBE_LOOT_BONUS
+  return Math.min(1, Math.max(0, p))
+}
 /** Shown after the last allowed probe attempt on a body. */
 export function probeExhaustedMessage(bodyName) {
   const name = bodyName?.trim() || 'Target'
@@ -101,7 +117,7 @@ export function probeSurveyReport(body, system) {
             : null
       lines.push(`Ore survey: Dominant yield — ${primary}`)
       if (secondary) lines.push(`Ore survey: Trace / secondary — ${secondary}`)
-      lines.push('Ore survey: Fire weapons at individual rocks to mine (mining hold).')
+      lines.push('Ore survey: Fire weapons at individual rocks to mine (ore hold).')
     } else {
       lines.push('Ore survey: Composition unknown (no system context).')
     }
@@ -240,7 +256,8 @@ export function isActiveMissionProbeTarget(gameState, bodyId) {
 // (caller still handles mission logic separately; this only affects survey data).
 export function launchProbe(gameState, shipClass, rng, { forceFind = false } = {}) {
   // Independent ultra-rare blueprint find (does not require survey-data roll).
-  const blueprintId = tryRollBlueprintDrop(rng, PROBE_BLUEPRINT_DROP_CHANCE)
+  // Explorer role: better odds on blueprint drops and survey-data finds.
+  const blueprintId = tryRollBlueprintDrop(rng, probeBlueprintChance(shipClass))
   let blueprint = null
   if (blueprintId) {
     grantShipBlueprint(gameState, blueprintId)
@@ -251,7 +268,7 @@ export function launchProbe(gameState, shipClass, rng, { forceFind = false } = {
     }
   }
 
-  if (!forceFind && rng() >= PROBE_FIND_CHANCE) {
+  if (!forceFind && rng() >= probeFindChance(shipClass)) {
     return { found: false, stored: false, blueprint }
   }
 

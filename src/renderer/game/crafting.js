@@ -8,6 +8,7 @@ import {
 } from '../data/blueprints.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
+import { defaultAccessoriesFor } from '../data/accessories.js'
 import { getSystem, findBody } from '../procgen/galaxy.js'
 import { MINED_ORE_GOOD_IDS } from '../data/goods.js'
 
@@ -24,9 +25,11 @@ function storageFor(gameState, bodyId) {
     shipParts: 0,
     ships: [],
     weapons: {},
+    accessories: {},
     blueprints: {}
   })
   storage.weapons ??= {}
+  storage.accessories ??= {}
   storage.blueprints ??= {}
   storage.miningHold ??= {}
   return storage
@@ -38,6 +41,7 @@ export function ensureBlueprintMaps(gameState) {
   gameState.stationStorage ??= {}
   for (const storage of Object.values(gameState.stationStorage)) {
     storage.blueprints ??= {}
+    storage.accessories ??= {}
   }
 }
 
@@ -74,6 +78,39 @@ export function retrieveBlueprints(gameState, bodyId) {
     ship.blueprints[id] = (ship.blueprints[id] ?? 0) + qty
   }
   storage.blueprints = {}
+}
+
+/**
+ * Transfer quantity of one blueprint id ship ↔ station.
+ * direction: 'toStation' | 'toShip'
+ * Returns { moved, requested, capacityLimited: false }.
+ */
+export function transferBlueprintItem(gameState, bodyId, blueprintId, quantity, direction) {
+  ensureBlueprintMaps(gameState)
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0))
+  if (qty < 1) return { moved: 0, requested: 0, capacityLimited: false }
+  const storage = storageFor(gameState, bodyId)
+  const ship = gameState.player.ship
+  ship.blueprints ??= {}
+  storage.blueprints ??= {}
+
+  if (direction === 'toStation') {
+    const available = ship.blueprints[blueprintId] ?? 0
+    const moved = Math.min(qty, available)
+    if (moved <= 0) return { moved: 0, requested: qty, capacityLimited: false }
+    ship.blueprints[blueprintId] = available - moved
+    if (ship.blueprints[blueprintId] <= 0) delete ship.blueprints[blueprintId]
+    storage.blueprints[blueprintId] = (storage.blueprints[blueprintId] ?? 0) + moved
+    return { moved, requested: qty, capacityLimited: false }
+  }
+
+  const available = storage.blueprints[blueprintId] ?? 0
+  const moved = Math.min(qty, available)
+  if (moved <= 0) return { moved: 0, requested: qty, capacityLimited: false }
+  storage.blueprints[blueprintId] = available - moved
+  if (storage.blueprints[blueprintId] <= 0) delete storage.blueprints[blueprintId]
+  ship.blueprints[blueprintId] = (ship.blueprints[blueprintId] ?? 0) + moved
+  return { moved, requested: qty, capacityLimited: false }
 }
 
 function hasOre(hold, cost) {
@@ -143,6 +180,10 @@ function deliverProduct(gameState, job) {
     storage.weapons[parsed.itemId] = (storage.weapons[parsed.itemId] ?? 0) + 1
     return
   }
+  if (parsed.kind === 'accessory') {
+    storage.accessories[parsed.itemId] = (storage.accessories[parsed.itemId] ?? 0) + 1
+    return
+  }
   // Ship — same shape as purchaseShip storage entry.
   const shipClass = getShipClass(parsed.itemId)
   storage.ships.push({
@@ -155,6 +196,7 @@ function deliverProduct(gameState, job) {
     miningHold: {},
     shipParts: 0,
     equippedWeapons: defaultLoadoutFor(shipClass),
+    equippedAccessories: defaultAccessoriesFor(shipClass),
     spareWeapons: {},
     blueprints: {}
   })

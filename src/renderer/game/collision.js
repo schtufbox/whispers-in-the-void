@@ -41,9 +41,14 @@ export function exteriorRadiusFor(body) {
   return collisionRadiusFor(body)
 }
 
-/** Effective sphere radius for a rock mesh (icosahedron + Y squash/stretch). */
+/** Effective sphere radius for a rock mesh (lumpy icosa + non-uniform scale). */
 export function rockCollisionRadius(rock) {
-  // scaleY stretches the icosahedron; take the larger axis so the shell covers mesh.
+  if (rock.collisionRadius != null) return rock.collisionRadius
+  const s = rock.scale
+  if (Array.isArray(s) && s.length >= 3) {
+    return rock.radius * Math.max(s[0], s[1], s[2], 1)
+  }
+  // Legacy scaleY-only rocks.
   return rock.radius * Math.max(1, rock.scaleY ?? 1)
 }
 

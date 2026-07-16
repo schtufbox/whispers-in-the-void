@@ -78,7 +78,13 @@ const STATION_ROLE = {
   floor: { prefix: 'darkmetal', repeatU: 3.2, repeatV: 3.2 },
   beam: { prefix: 'darkmetal', repeatU: 1.6, repeatV: 1.6 },
   solar: { prefix: 'solar', repeatU: 1.6, repeatV: 1.0 },
-  radiator: { prefix: 'darkmetal', repeatU: 1.25, repeatV: 1.25 }
+  radiator: { prefix: 'darkmetal', repeatU: 1.25, repeatV: 1.25 },
+  // Ship-specific CC0 maps (ambientCG PaintedMetal001 / Metal021 / MetalPlates013 / Metal009).
+  // Tint with MeshStandardMaterial.color — painted hull takes class color best.
+  shipHull: { prefix: 'painted', repeatU: 2.4, repeatV: 1.6 },
+  shipStructure: { prefix: 'shipmetal', repeatU: 2.0, repeatV: 1.4 },
+  shipArmor: { prefix: 'armor', repeatU: 1.8, repeatV: 1.3 },
+  shipTrim: { prefix: 'trim', repeatU: 2.2, repeatV: 1.5 }
 }
 
 export function getStationTextures(role) {

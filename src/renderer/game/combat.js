@@ -1,12 +1,16 @@
 import * as THREE from 'three'
 import { getShipClass } from '../data/shipClasses.js'
 import { getSystem } from '../procgen/galaxy.js'
-import { mineRock, isRockAlive } from './mining.js'
+import { mineRock, isRockAlive, mineYieldForWeapon } from './mining.js'
 import { spawnWreck } from './wrecks.js'
 import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
+import { rockCollisionRadius } from './collision.js'
 import { getWeapon, BASE_WEAPON_ID } from '../data/weapons.js'
 
 const HIT_RADIUS = 1.5
+// Mining lasers need a generous pad — pure geometric rock shells are easy to miss
+// at speed / with wing parallax, and felt "broken" when reticle sat on a rock.
+const MINE_HIT_PAD = 14
 const SHIELD_REGEN_DELAY_S = 4
 // NPC combat regen (points per second after idle delay).
 const SHIELD_REGEN_RATE = 10
@@ -75,8 +79,8 @@ export function regenShields(entity, shipClass, simTime, dt, { player = false, i
 }
 
 // weaponTypeFilter (optional) restricts firing to hardpoints of that type —
-// used by main.js so left-click fires only lasers and right-click only
-// missiles/rockets; NPCs omit it and fire every hardpoint as before.
+// main.js: LMB = lasers, RMB = missiles (both may fire in the same frame).
+// NPCs omit it and fire every hardpoint as before.
 // targetRef (optional) is who this shot is actually aimed at — { kind:
 // 'player' } or { kind: 'npc', id }. Only NPC shooters set it (see
 // updateNpcAI/opponentsFor below); the player's own shots omit it and keep
@@ -159,6 +163,8 @@ export function fireProjectile(
       localZ = Math.max(localZ, 8)
     }
     const worldPos = new THREE.Vector3(localX, localY, localZ).applyQuaternion(quat).add(shooterPos)
+    // Player lasers always fly pure ship +Z (Tab-lock does not bend the beam).
+    // Missiles / NPCs still aim at aimWorld when provided.
     if (ownerId === 'player' && mountType === 'laser') {
       _projDir.copy(forward)
     } else {
@@ -277,7 +283,9 @@ export function updateProjectiles(gameState, dt, onHit) {
           destroyed: !!target.destroyed,
           hitPlayer: isPlayer,
           // Incoming shot direction (world) for directional damage vignette.
-          inboundDir: prevPos.clone().sub(newPos).toArray()
+          inboundDir: prevPos.clone().sub(newPos).toArray(),
+          // NPC id when a ship is killed (for ship-death FX, avoid double-play).
+          targetNpcId: !isPlayer && target.id ? target.id : null
         })
         hit = true
         break
@@ -295,16 +303,21 @@ export function updateProjectiles(gameState, dt, onHit) {
           if (!isRockAlive(gameState, body.id, i)) continue
           const rock = rocks[i]
           const rockPos = new THREE.Vector3(body.position[0] + rock.position[0], body.position[1] + rock.position[1], body.position[2] + rock.position[2])
-          if (closestDistanceToSegment(rockPos, prevPos, newPos) < rock.radius + HIT_RADIUS) {
+          const hitR = rockCollisionRadius(rock) + MINE_HIT_PAD
+          if (closestDistanceToSegment(rockPos, prevPos, newPos) < hitR) {
             const shipClass = getShipClass(gameState.player.ship.classId)
-            const mined = mineRock(gameState, shipClass, currentSystem, body.id, i)
+            // Stronger guns chip more ore (pulse laser 1, rocket pod 2, …).
+            const yieldAmt = mineYieldForWeapon(proj.weaponId ?? proj.weaponType)
+            const mined = mineRock(gameState, shipClass, currentSystem, body.id, i, yieldAmt)
             onHit?.({
               position: newPos.toArray(),
               rockPosition: rockPos.toArray(),
               weaponType: proj.weaponType,
               weaponId: proj.weaponId,
               destroyed: !!mined.destroyed,
-              mined
+              mined,
+              fieldId: body.id,
+              rockIndex: i
             })
             hit = true
             break fieldLoop

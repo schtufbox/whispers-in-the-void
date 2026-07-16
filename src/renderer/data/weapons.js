@@ -11,9 +11,10 @@ export const WEAPONS = [
   { id: 'beam_laser', name: 'Beam Laser', category: 'laser', damage: 14, speed: 700, cooldownS: 0.35, ttl: 1.4, price: 13500, color: '#ff6ad1' },
   { id: 'plasma_cannon', name: 'Plasma Cannon', category: 'laser', damage: 22, speed: 480, cooldownS: 0.5, ttl: 1.6, price: 24000, color: '#7cff6a' },
 
-  { id: 'rocket_pod', name: 'Rocket Pod', category: 'missile', damage: 30, speed: 220, cooldownS: 1.4, ttl: 4, price: 0, color: '#ff8a3d' },
-  { id: 'seeker_missile', name: 'Seeker Missile', category: 'missile', damage: 42, speed: 250, cooldownS: 1.6, ttl: 4.5, price: 9500, color: '#ff5a5a' },
-  { id: 'torpedo', name: 'Torpedo', category: 'missile', damage: 65, speed: 170, cooldownS: 2.4, ttl: 6, price: 19500, color: '#b35aff' }
+  // Missile cooldowns /1.5 → +50% rate of fire.
+  { id: 'rocket_pod', name: 'Rocket Pod', category: 'missile', damage: 30, speed: 220, cooldownS: 0.933, ttl: 4, price: 0, color: '#ff8a3d' },
+  { id: 'seeker_missile', name: 'Seeker Missile', category: 'missile', damage: 42, speed: 250, cooldownS: 1.067, ttl: 4.5, price: 9500, color: '#ff5a5a' },
+  { id: 'torpedo', name: 'Torpedo', category: 'missile', damage: 65, speed: 170, cooldownS: 1.6, ttl: 6, price: 19500, color: '#b35aff' }
 ]
 
 export const BASE_WEAPON_ID = { laser: 'pulse_laser', missile: 'rocket_pod' }

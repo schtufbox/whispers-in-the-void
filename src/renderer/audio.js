@@ -176,55 +176,66 @@ function noiseBurst({ duration, filterFreq = 800, peak = 0.4, drive = 0, delay =
 }
 
 // One sample (plus small rate jitter) per weapon id in data/weapons.js.
+// Lasers: lower rate = beefier / lower-pitched. Missiles: rumble launch.
 // Synth fallbacks keep fire audible if samples haven't decoded yet.
 const WEAPON_SAMPLES = {
-  pulse_laser: { file: 'laser_pulse.ogg', volume: 0.5, rate: 1 },
-  rapid_laser: { file: 'laser_rapid.ogg', volume: 0.42, rate: 1.12 },
-  burst_laser: { file: 'laser_burst.ogg', volume: 0.5, rate: 0.95 },
-  beam_laser: { file: 'laser_beam.ogg', volume: 0.55, rate: 1 },
-  plasma_cannon: { file: 'laser_plasma.ogg', volume: 0.6, rate: 0.88 },
-  rocket_pod: { file: 'rocket.ogg', volume: 0.55, rate: 1 },
-  seeker_missile: { file: 'missile.ogg', volume: 0.58, rate: 1.05 },
-  torpedo: { file: 'torpedo.ogg', volume: 0.65, rate: 0.9 }
+  pulse_laser: { file: 'laser_pulse.ogg', volume: 0.6, rate: 0.58 },
+  rapid_laser: { file: 'laser_rapid.ogg', volume: 0.52, rate: 0.62 },
+  burst_laser: { file: 'laser_burst.ogg', volume: 0.6, rate: 0.54 },
+  beam_laser: { file: 'laser_beam.ogg', volume: 0.64, rate: 0.56 },
+  plasma_cannon: { file: 'laser_plasma.ogg', volume: 0.72, rate: 0.5 },
+  rocket_pod: { file: 'rocket.ogg', volume: 0.74, rate: 0.72 },
+  seeker_missile: { file: 'missile.ogg', volume: 0.78, rate: 0.68 },
+  torpedo: { file: 'torpedo.ogg', volume: 0.84, rate: 0.62 }
 }
 
 const WEAPON_SYNTH_FALLBACK = {
   pulse_laser: () => {
-    tone({ type: 'sawtooth', freq: 1300, freqEnd: 350, duration: 0.15, peak: 0.22 })
-    tone({ type: 'square', freq: 650, freqEnd: 175, duration: 0.12, peak: 0.12 })
-    tone({ type: 'sine', freq: 150, freqEnd: 60, duration: 0.12, peak: 0.2 })
+    tone({ type: 'sawtooth', freq: 300, freqEnd: 70, duration: 0.22, peak: 0.34 })
+    tone({ type: 'square', freq: 130, freqEnd: 42, duration: 0.2, peak: 0.24 })
+    tone({ type: 'sine', freq: 55, freqEnd: 26, duration: 0.24, peak: 0.32 })
+    noiseBurst({ duration: 0.14, filterFreq: 500, peak: 0.2, drive: 1.5 })
   },
   rapid_laser: () => {
-    tone({ type: 'sawtooth', freq: 1700, freqEnd: 550, duration: 0.09, peak: 0.18 })
-    tone({ type: 'square', freq: 850, freqEnd: 300, duration: 0.07, peak: 0.1 })
+    tone({ type: 'sawtooth', freq: 380, freqEnd: 95, duration: 0.11, peak: 0.28 })
+    tone({ type: 'square', freq: 160, freqEnd: 55, duration: 0.1, peak: 0.18 })
+    tone({ type: 'sine', freq: 65, freqEnd: 32, duration: 0.11, peak: 0.22 })
   },
   burst_laser: () => {
-    tone({ type: 'square', freq: 1100, freqEnd: 320, duration: 0.13, peak: 0.2 })
-    tone({ type: 'sawtooth', freq: 1100, freqEnd: 320, duration: 0.13, peak: 0.16, delay: 0.05 })
-    tone({ type: 'sine', freq: 140, freqEnd: 55, duration: 0.14, peak: 0.18 })
+    tone({ type: 'square', freq: 260, freqEnd: 72, duration: 0.18, peak: 0.3 })
+    tone({ type: 'sawtooth', freq: 220, freqEnd: 55, duration: 0.18, peak: 0.24, delay: 0.05 })
+    tone({ type: 'sine', freq: 52, freqEnd: 22, duration: 0.22, peak: 0.3 })
+    noiseBurst({ duration: 0.16, filterFreq: 420, peak: 0.22, drive: 2 })
   },
   beam_laser: () => {
-    tone({ type: 'sine', freq: 2000, freqEnd: 900, duration: 0.3, peak: 0.22 })
-    tone({ type: 'sawtooth', freq: 900, freqEnd: 400, duration: 0.3, peak: 0.16 })
-    noiseBurst({ duration: 0.28, filterFreq: 4200, peak: 0.12 })
+    tone({ type: 'sawtooth', freq: 400, freqEnd: 110, duration: 0.38, peak: 0.3 })
+    tone({ type: 'sine', freq: 72, freqEnd: 32, duration: 0.42, peak: 0.34 })
+    noiseBurst({ duration: 0.36, filterFreq: 700, peak: 0.2, drive: 1.8 })
   },
   plasma_cannon: () => {
-    tone({ type: 'sine', freq: 220, freqEnd: 70, duration: 0.42, peak: 0.34 })
-    noiseBurst({ duration: 0.38, filterFreq: 700, peak: 0.32, drive: 2.2 })
-    tone({ type: 'square', freq: 110, freqEnd: 45, duration: 0.32, peak: 0.18 })
+    tone({ type: 'sine', freq: 110, freqEnd: 32, duration: 0.55, peak: 0.45 })
+    noiseBurst({ duration: 0.5, filterFreq: 360, peak: 0.42, drive: 2.8 })
+    tone({ type: 'square', freq: 55, freqEnd: 22, duration: 0.45, peak: 0.3 })
   },
+  // Missile launch: low whoosh + crackle, not a laser zap.
   rocket_pod: () => {
-    tone({ type: 'sine', freq: 90, freqEnd: 45, duration: 0.5, peak: 0.3 })
-    noiseBurst({ duration: 0.45, filterFreq: 350, peak: 0.28, drive: 2.5 })
+    noiseBurst({ duration: 0.14, filterFreq: 1100, peak: 0.36, drive: 2 })
+    noiseBurst({ duration: 0.62, filterFreq: 220, peak: 0.45, drive: 3.2, delay: 0.03 })
+    noiseBurst({ duration: 0.8, filterFreq: 550, peak: 0.2, delay: 0.1 })
+    tone({ type: 'sine', freq: 40, freqEnd: 18, duration: 0.8, peak: 0.48 })
   },
   seeker_missile: () => {
-    tone({ type: 'sine', freq: 130, freqEnd: 55, duration: 0.55, peak: 0.32 })
-    tone({ type: 'triangle', freq: 900, freqEnd: 1400, duration: 0.18, peak: 0.12 })
-    noiseBurst({ duration: 0.5, filterFreq: 300, peak: 0.3, drive: 2.5 })
+    noiseBurst({ duration: 0.12, filterFreq: 1300, peak: 0.4, drive: 2.2 })
+    noiseBurst({ duration: 0.7, filterFreq: 260, peak: 0.48, drive: 3.5, delay: 0.04 })
+    noiseBurst({ duration: 0.95, filterFreq: 700, peak: 0.18, delay: 0.12 })
+    tone({ type: 'sine', freq: 45, freqEnd: 20, duration: 0.85, peak: 0.5 })
+    tone({ type: 'triangle', freq: 140, freqEnd: 48, duration: 0.4, peak: 0.12, delay: 0.05 })
   },
   torpedo: () => {
-    tone({ type: 'sine', freq: 70, freqEnd: 30, duration: 0.7, peak: 0.4 })
-    noiseBurst({ duration: 0.6, filterFreq: 220, peak: 0.36, drive: 3 })
+    noiseBurst({ duration: 0.16, filterFreq: 750, peak: 0.44, drive: 2.5 })
+    noiseBurst({ duration: 0.85, filterFreq: 160, peak: 0.52, drive: 4, delay: 0.05 })
+    noiseBurst({ duration: 1.15, filterFreq: 400, peak: 0.22, delay: 0.14 })
+    tone({ type: 'sine', freq: 32, freqEnd: 15, duration: 1.05, peak: 0.58 })
   }
 }
 
@@ -232,7 +243,7 @@ export function playWeaponFire(weaponId) {
   ensureSfx()
   const sample = WEAPON_SAMPLES[weaponId] ?? WEAPON_SAMPLES.pulse_laser
   // Slight rate jitter so rapid fire doesn't sound like a stuck sample.
-  const rate = sample.rate * (0.96 + Math.random() * 0.08)
+  const rate = sample.rate * (0.97 + Math.random() * 0.06)
   if (playSample(sample.file, { volume: sample.volume, rate })) return
   const fallback = WEAPON_SYNTH_FALLBACK[weaponId] ?? WEAPON_SYNTH_FALLBACK.pulse_laser
   fallback()
@@ -279,6 +290,19 @@ export function playSaveChime() {
   tone({ type: 'sine', freq: 880, duration: 0.14, peak: 0.14, delay: 0.08 })
   tone({ type: 'triangle', freq: 1320, duration: 0.22, peak: 0.1, delay: 0.18 })
   tone({ type: 'sine', freq: 1760, duration: 0.28, peak: 0.06, delay: 0.28 })
+}
+
+/** Nav waypoint set — short two-tone ping (clear / distinct from save). */
+export function playWaypointSet() {
+  tone({ type: 'sine', freq: 880, duration: 0.08, peak: 0.12 })
+  tone({ type: 'triangle', freq: 1175, duration: 0.14, peak: 0.14, delay: 0.07 })
+  tone({ type: 'sine', freq: 1480, duration: 0.18, peak: 0.08, delay: 0.16 })
+}
+
+/** Nav waypoint cleared — softer descending tone. */
+export function playWaypointClear() {
+  tone({ type: 'sine', freq: 740, duration: 0.08, peak: 0.1 })
+  tone({ type: 'triangle', freq: 554, duration: 0.14, peak: 0.09, delay: 0.08 })
 }
 
 // Shared noise buffer fillers (hyperdrive static + supercruise thunder beds).
@@ -679,6 +703,34 @@ export function setProbeScanActive(active) {
 
 export function playMiningPing() {
   tone({ type: 'triangle', freq: 900, freqEnd: 1400, duration: 0.12, peak: 0.14 })
+}
+
+/**
+ * Asteroid rock destroyed — slow deep rumble + ice/stone fracture
+ * (distinct from ship combat explosions).
+ */
+export function playRockExplosion() {
+  ensureSfx()
+  // Ice-like crystalline cracks (brittle high shards, staggered).
+  noiseBurst({ duration: 0.08, filterFreq: 5200, peak: 0.38, drive: 1.6 })
+  noiseBurst({ duration: 0.12, filterFreq: 3800, peak: 0.32, drive: 2, delay: 0.05 })
+  noiseBurst({ duration: 0.16, filterFreq: 2400, peak: 0.28, drive: 2.2, delay: 0.12 })
+  tone({ type: 'triangle', freq: 2400, freqEnd: 400, duration: 0.22, peak: 0.14, delay: 0.02 })
+  tone({ type: 'sine', freq: 1800, freqEnd: 220, duration: 0.28, peak: 0.1, delay: 0.08 })
+  tone({ type: 'triangle', freq: 1100, freqEnd: 180, duration: 0.35, peak: 0.12, delay: 0.16 })
+  // Stone fracture mid-layer (slower than before).
+  noiseBurst({ duration: 0.35, filterFreq: 1100, peak: 0.4, drive: 2.6, delay: 0.06 })
+  noiseBurst({ duration: 0.55, filterFreq: 700, peak: 0.32, drive: 2.4, delay: 0.18 })
+  // Deep rolling body — dragged out.
+  noiseBurst({ duration: 1.85, filterFreq: 220, peak: 0.78, drive: 4, delay: 0.04 })
+  noiseBurst({ duration: 2.2, filterFreq: 100, peak: 0.62, drive: 3.5, delay: 0.12 })
+  // Sub thump + long grit tail.
+  tone({ type: 'sine', freq: 42, freqEnd: 14, duration: 1.9, peak: 0.62 })
+  tone({ type: 'square', freq: 28, freqEnd: 12, duration: 1.5, peak: 0.32, delay: 0.05 })
+  tone({ type: 'triangle', freq: 70, freqEnd: 22, duration: 1.1, peak: 0.2, delay: 0.1 })
+  // Secondary gravel / ice scatter after the main boom.
+  noiseBurst({ duration: 0.9, filterFreq: 1400, peak: 0.2, drive: 1.6, delay: 0.35 })
+  noiseBurst({ duration: 1.1, filterFreq: 600, peak: 0.18, drive: 1.4, delay: 0.55 })
 }
 
 // Speech-synthesized voice callouts ("Hyperdrive engaged", "Supercruise

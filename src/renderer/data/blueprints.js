@@ -1,9 +1,25 @@
 import { SHIP_CLASSES, getShipClass } from './shipClasses.js'
 import { WEAPONS, getWeapon } from './weapons.js'
-import { MINED_ORE_GOOD_IDS } from './goods.js'
+import { ACCESSORIES, getAccessory } from './accessories.js'
+import { MINED_ORE_GOOD_IDS, getGood } from './goods.js'
 
-// Blueprint ids: "ship:<classId>" | "weapon:<weaponId>"
+// Blueprint ids: "ship:<classId>" | "weapon:<weaponId>" | "accessory:<id>"
 // Crafted from raw mined ore at station Industry (game/crafting.js).
+
+/**
+ * Full manufacture cost (ore market value + bay fees) ≈ this fraction of shop
+ * list price — always cheaper to build than buy if you pay for everything.
+ *
+ * Of that budget:
+ *   - MANUFACTURE_ORE_SHARE (65%) is the ore materials (valued at base price).
+ *     Mine the ore yourself → you skip this and only pay the bay fee.
+ *   - Remainder (35%) is the station industry bay fee in credits.
+ */
+export const MANUFACTURE_COST_FRACTION = 0.75
+/** Share of the manufacture budget represented by ore materials (base-price value). */
+export const MANUFACTURE_ORE_SHARE = 0.65
+/** Share of the manufacture budget paid as station bay credits (1 − ore share). */
+export const MANUFACTURE_CREDIT_SHARE = 1 - MANUFACTURE_ORE_SHARE
 
 export function blueprintIdForShip(classId) {
   return `ship:${classId}`
@@ -13,13 +29,17 @@ export function blueprintIdForWeapon(weaponId) {
   return `weapon:${weaponId}`
 }
 
+export function blueprintIdForAccessory(accessoryId) {
+  return `accessory:${accessoryId}`
+}
+
 export function parseBlueprintId(blueprintId) {
   if (!blueprintId || typeof blueprintId !== 'string') return null
   const i = blueprintId.indexOf(':')
   if (i < 1) return null
   const kind = blueprintId.slice(0, i)
   const itemId = blueprintId.slice(i + 1)
-  if ((kind !== 'ship' && kind !== 'weapon') || !itemId) return null
+  if ((kind !== 'ship' && kind !== 'weapon' && kind !== 'accessory') || !itemId) return null
   return { kind, itemId }
 }
 
@@ -37,6 +57,17 @@ export function getBlueprint(blueprintId) {
       listPrice: shipClass.price
     }
   }
+  if (parsed.kind === 'accessory') {
+    const acc = getAccessory(parsed.itemId)
+    return {
+      id: blueprintId,
+      kind: 'accessory',
+      itemId: acc.id,
+      name: `${acc.name} Blueprint`,
+      itemName: acc.name,
+      listPrice: acc.price
+    }
+  }
   const weapon = getWeapon(parsed.itemId)
   return {
     id: blueprintId,
@@ -48,7 +79,7 @@ export function getBlueprint(blueprintId) {
   }
 }
 
-/** All craftable blueprints (ships + buyable weapons). Free base weapons excluded. */
+/** All craftable blueprints (ships + paid weapons + accessories). Free base weapons excluded. */
 export function allBlueprints() {
   const list = []
   for (const shipClass of SHIP_CLASSES) {
@@ -58,12 +89,16 @@ export function allBlueprints() {
     if (weapon.price <= 0) continue
     list.push(getBlueprint(blueprintIdForWeapon(weapon.id)))
   }
+  for (const acc of ACCESSORIES) {
+    if (acc.price <= 0) continue
+    list.push(getBlueprint(blueprintIdForAccessory(acc.id)))
+  }
   return list
 }
 
-// Craft bands: weapons stay cheap/fast in the low band; ships occupy the upper
-// duration/cost range so a hull is always a bigger commitment than a hardpoint.
+// Craft duration bands: weapons/accessories low; ships upper band.
 export const WEAPON_COMPLEXITY_MAX = 0.2
+export const ACCESSORY_COMPLEXITY_MAX = 0.25
 export const SHIP_COMPLEXITY_MIN = 0.62
 
 function relativePriceWithinKind(kind, listPrice) {
@@ -81,13 +116,13 @@ function relativePriceWithinKind(kind, listPrice) {
 }
 
 /**
- * 0–1 craft complexity. Weapons map into 0…WEAPON_COMPLEXITY_MAX; ships into
- * SHIP_COMPLEXITY_MIN…1 (log-scaled by list price within each kind).
+ * 0–1 craft complexity. Weapons/accessories in the low band; ships high.
  */
 export function blueprintComplexity(blueprintId) {
   const bp = getBlueprint(blueprintId)
   const r = relativePriceWithinKind(bp.kind, bp.listPrice)
   if (bp.kind === 'weapon') return r * WEAPON_COMPLEXITY_MAX
+  if (bp.kind === 'accessory') return r * ACCESSORY_COMPLEXITY_MAX
   return SHIP_COMPLEXITY_MIN + r * (1 - SHIP_COMPLEXITY_MIN)
 }
 
@@ -101,68 +136,108 @@ export function craftDurationS(blueprintId) {
 }
 
 // Ship relative price (0–1 within ship roster) thresholds for rim ores.
-// Below these, recipes use only common raw/rich ore (core/mid-galaxy mining).
-export const SHIP_EXOTIC_ORE_FROM_R = 0.55   // upper half of hull prices
-export const SHIP_QUANTUM_ORE_FROM_R = 0.78  // top ~quintile / capital hulls
+export const SHIP_EXOTIC_ORE_FROM_R = 0.55
+export const SHIP_QUANTUM_ORE_FROM_R = 0.78
 
-/**
- * Ore recipe in mined-ore units (raw/rich/exotic/quantum).
- * Weapons and cheap/mid ships: raw + rich only.
- * Expensive / large ships only: exotic, then quantum (outer-rim ores).
- */
-export function oreCostForBlueprint(blueprintId) {
-  const bp = getBlueprint(blueprintId)
-  // r is 0–1 within kind by list price (log scale).
-  const r = relativePriceWithinKind(bp.kind, bp.listPrice)
+/** Total manufacture budget (credits + ore value at base prices). */
+export function manufactureBudget(listPrice) {
+  return Math.max(0, Math.round(Math.max(0, listPrice) * MANUFACTURE_COST_FRACTION))
+}
 
-  if (bp.kind === 'weapon') {
-    // Hardpoints never need rim ore — small raw/rich stacks only.
-    const total = Math.round(5 + r * 40)
-    const rich = Math.floor(total * (0.1 + r * 0.28))
-    let raw = total - rich
-    if (raw < 2) raw = 2
-    const cost = { raw_ore: raw }
-    if (rich > 0) cost.rich_ore = rich
-    return cost
-  }
-
-  // Ships: total mass scales with price tier.
-  const total = Math.round(70 + r * 160) // ~70 cheapest → ~230 capital
-  let quantum = 0
-  let exotic = 0
-  if (r >= SHIP_EXOTIC_ORE_FROM_R) {
-    // 0 at threshold → peaks at top price.
-    const e = (r - SHIP_EXOTIC_ORE_FROM_R) / (1 - SHIP_EXOTIC_ORE_FROM_R)
-    exotic = Math.floor(total * e * e * 0.32)
-  }
-  if (r >= SHIP_QUANTUM_ORE_FROM_R) {
-    const q = (r - SHIP_QUANTUM_ORE_FROM_R) / (1 - SHIP_QUANTUM_ORE_FROM_R)
-    quantum = Math.floor(total * q * q * 0.38)
-  }
-  const rich = Math.floor(total * (0.14 + r * 0.32))
-  let raw = total - quantum - exotic - rich
-  if (raw < 4) raw = 4
-  const cost = {}
-  if (raw > 0) cost.raw_ore = raw
-  if (rich > 0) cost.rich_ore = rich
-  if (exotic > 0) cost.exotic_ore = exotic
-  if (quantum > 0) cost.quantum_ore = quantum
-  return cost
+/** Ore materials target (base-price value): 65% of the 75% manufacture budget. */
+export function oreBudgetForBlueprint(listPrice) {
+  return Math.max(0, Math.round(manufactureBudget(listPrice) * MANUFACTURE_ORE_SHARE))
 }
 
 /**
- * Modest station bay fee (credits). Far below shop list price — ore is the
- * real material cost; this is industry-slot overhead.
- * Weapons ~80–500cr; ships ~600–2500cr.
+ * Station bay fee: 35% of the 75% manufacture budget (~26.25% of list price).
+ * This is the only cash cost if you mined the ore yourself.
  */
 export function creditCostForBlueprint(blueprintId) {
   const bp = getBlueprint(blueprintId)
-  const t = blueprintComplexity(blueprintId)
-  if (bp.kind === 'weapon') {
-    return Math.round(80 + (t / Math.max(1e-9, WEAPON_COMPLEXITY_MAX)) * 420)
+  if (bp.listPrice <= 0) return 0
+  const budget = manufactureBudget(bp.listPrice)
+  return Math.max(1, Math.round(budget * MANUFACTURE_CREDIT_SHARE))
+}
+
+/**
+ * Ore recipe valued (at base prices) so that:
+ *   oreValue ≈ 65% of manufacture budget (≈ 48.75% of list price)
+ *   creditCost ≈ 35% of manufacture budget (≈ 26.25% of list price)
+ *   total ≈ 75% of list price if you buy the ore; ~bay fee only if you mined it.
+ * Mix: weapons/accessories use raw+rich; high-tier ships add exotic/quantum.
+ */
+export function oreCostForBlueprint(blueprintId) {
+  const bp = getBlueprint(blueprintId)
+  if (bp.listPrice <= 0) return {}
+  const oreBudget = oreBudgetForBlueprint(bp.listPrice)
+  const r = relativePriceWithinKind(bp.kind, bp.listPrice)
+
+  // Weighted mix of ore types (value allocation before converting to units).
+  const mix = []
+  if (bp.kind === 'weapon' || bp.kind === 'accessory') {
+    mix.push({ id: 'raw_ore', w: 0.72 - r * 0.22 })
+    mix.push({ id: 'rich_ore', w: 0.28 + r * 0.22 })
+  } else {
+    // Ships
+    let rawW = 0.48 - r * 0.12
+    let richW = 0.32 + r * 0.08
+    let exoticW = 0
+    let quantumW = 0
+    if (r >= SHIP_EXOTIC_ORE_FROM_R) {
+      const e = (r - SHIP_EXOTIC_ORE_FROM_R) / (1 - SHIP_EXOTIC_ORE_FROM_R)
+      exoticW = e * e * 0.28
+    }
+    if (r >= SHIP_QUANTUM_ORE_FROM_R) {
+      const q = (r - SHIP_QUANTUM_ORE_FROM_R) / (1 - SHIP_QUANTUM_ORE_FROM_R)
+      quantumW = q * q * 0.32
+    }
+    const premium = exoticW + quantumW
+    rawW = Math.max(0.12, rawW - premium * 0.55)
+    richW = Math.max(0.12, richW - premium * 0.45)
+    mix.push({ id: 'raw_ore', w: rawW })
+    mix.push({ id: 'rich_ore', w: richW })
+    if (exoticW > 0) mix.push({ id: 'exotic_ore', w: exoticW })
+    if (quantumW > 0) mix.push({ id: 'quantum_ore', w: quantumW })
   }
-  const shipT = (t - SHIP_COMPLEXITY_MIN) / Math.max(1e-9, 1 - SHIP_COMPLEXITY_MIN)
-  return Math.round(600 + Math.min(1, Math.max(0, shipT)) * 1900)
+
+  const totalW = mix.reduce((a, m) => a + m.w, 0) || 1
+  const cost = {}
+  let spent = 0
+  for (const m of mix) {
+    const share = oreBudget * (m.w / totalW)
+    const unitPrice = getGood(m.id).basePrice
+    let qty = Math.round(share / unitPrice)
+    if (m.id === 'raw_ore') qty = Math.max(1, qty)
+    if (qty > 0) {
+      cost[m.id] = qty
+      spent += qty * unitPrice
+    }
+  }
+
+  // Nudge raw ore so total ore value lands near oreBudget.
+  const rawPrice = getGood('raw_ore').basePrice
+  const gap = oreBudget - spent
+  if (Math.abs(gap) >= rawPrice * 0.5) {
+    const adj = Math.round(gap / rawPrice)
+    cost.raw_ore = Math.max(1, (cost.raw_ore ?? 0) + adj)
+  }
+
+  return cost
+}
+
+/** Base-price value of an ore cost map (for tests / UI). */
+export function oreCostValue(cost) {
+  let v = 0
+  for (const [id, qty] of Object.entries(cost ?? {})) {
+    if (qty > 0) v += getGood(id).basePrice * qty
+  }
+  return v
+}
+
+/** creditCost + ore base value for a blueprint. */
+export function totalManufactureCost(blueprintId) {
+  return creditCostForBlueprint(blueprintId) + oreCostValue(oreCostForBlueprint(blueprintId))
 }
 
 export function formatDuration(seconds) {
@@ -183,7 +258,6 @@ export function formatOreCost(cost) {
 /** Weighted random blueprint for rare loot (slight bias toward mid-price). */
 export function rollRandomBlueprintId(rng = Math.random) {
   const list = allBlueprints()
-  // Weight ∝ 1/sqrt(price) so ultra-expensive BPs are rarer drops.
   const weights = list.map((bp) => 1 / Math.sqrt(Math.max(1, bp.listPrice)))
   const sum = weights.reduce((a, b) => a + b, 0)
   let r = rng() * sum

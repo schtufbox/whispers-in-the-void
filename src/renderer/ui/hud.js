@@ -161,10 +161,6 @@ const STYLE = `
   border-radius: 2px;
   box-shadow: inset 0 0 18px rgba(79,195,217,0.18);
 }
-#radar .radar-label {
-  margin-top: 6px; font-size: 11px; letter-spacing: 2px; opacity: 0.85; color: #7fe6ff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(79,195,217,0.8);
-}
 #hud .velocity-panel .row-label,
 #hud .velocity-panel .speed {
   text-shadow: 0 1px 2px rgba(0,0,0,0.75);
@@ -451,7 +447,6 @@ export function createHud(container) {
     <div class="radar-frame">
       <canvas width="164" height="164"></canvas>
     </div>
-    <div class="radar-label">RADAR</div>
   `
   // Nested inside hud (position:fixed makes placement independent of parent)
   // so removing hud.element also cleans up the radar — no separate tracking.
