@@ -167,7 +167,9 @@ export function acceptMission(gameState, missionId, rng) {
     )
   }
 
-  // Body already surveyed before accept — complete probe objectives immediately.
+  // Exploration can complete if the site was already visited; probe contracts
+  // must be re-probed while active (see updateMissionProgress — no prior-probe
+  // auto-complete on accept).
   updateMissionProgress(gameState)
 }
 
@@ -458,8 +460,9 @@ export function updateMissionProgress(gameState) {
       const npc = gameState.npcs.find((n) => n.id === mission.target.npcId)
       if (npc?.destroyed) justDone = true
     } else if (mission.type === 'probe') {
-      const bodyId = mission.target?.bodyId
-      if (bodyId != null && probed.includes(String(bodyId))) justDone = true
+      // Do NOT complete from historical probedBodyIds alone — that made accepting
+      // a contract on an already-scanned body finish instantly. Completion is only
+      // via markBodyProbed() when a probe scan finishes while the mission is active.
     } else if (mission.type === 'exploration') {
       const bodyId = mission.target?.bodyId
       if (bodyId != null && (visited.includes(String(bodyId)) || probed.includes(String(bodyId)))) {

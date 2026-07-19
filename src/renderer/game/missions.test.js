@@ -89,6 +89,21 @@ test('probe mission completes when target body is marked probed', () => {
   assert.ok(gs.probedBodyIds.map(String).includes(String(mission.target.bodyId)))
 })
 
+test('accepting a probe mission on an already-scanned body does not auto-complete', () => {
+  const gs = freshState(21)
+  const mission = gs.missions.available.find((m) => m.type === 'probe')
+  assert.ok(mission, 'need a probe mission in seed')
+  // Prior survey of the target (before the contract exists).
+  markBodyProbed(gs, mission.target.bodyId)
+  acceptMission(gs, mission.id, Math.random)
+  assert.equal(mission.status, 'active', 'prior probe must not finish a freshly accepted contract')
+  assert.ok(gs.missions.active.some((m) => m.id === mission.id))
+  // Must re-probe while the mission is active.
+  markBodyProbed(gs, mission.target.bodyId)
+  assert.equal(mission.status, 'complete')
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
+})
+
 test('exploration survey completes when the target body is probed', () => {
   const gs = freshState(21)
   const mission = gs.missions.available.find((m) => m.type === 'exploration')
