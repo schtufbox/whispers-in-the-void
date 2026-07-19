@@ -91,10 +91,11 @@ function describeTarget(mission, gameState) {
     const bought = tr.purchased ?? 0
     const sold = tr.sold ?? 0
     const body = findBody(gameState.galaxy, t.bodyId)
-    if (bought < need) {
-      return `Buy ${bought}/${need} at ${body?.name ?? 'origin'} · ${systemName}`
+    const goDest = sold < need && bought > sold
+    if (goDest || (bought >= need && sold < need)) {
+      return `Sell ${sold}/${need} at ${body?.name ?? 'destination'} · ${systemName} (bought ${bought}/${need})`
     }
-    return `Sell ${sold}/${need} at ${body?.name ?? 'destination'} · ${systemName}`
+    return `Buy ${bought}/${need} at ${body?.name ?? 'origin'} · ${systemName} (sold ${sold}/${need})`
   }
   if (t.bodyId) {
     const body = findBody(gameState.galaxy, t.bodyId)
@@ -157,9 +158,12 @@ export function createMissionsUI(container, gameState, hooks = {}) {
           : ''
         const progress =
           m.type === 'trade' && m.trade
-            ? ((m.trade.purchased ?? 0) < (m.trade.quantity ?? 0)
-              ? `Buy cargo (${m.trade.purchased ?? 0}/${m.trade.quantity ?? 0})`
-              : `Sell cargo (${m.trade.sold ?? 0}/${m.trade.quantity ?? 0})`)
+            ? (() => {
+                const need = m.trade.quantity ?? 0
+                const bought = m.trade.purchased ?? 0
+                const sold = m.trade.sold ?? 0
+                return `Trade progress · bought ${bought}/${need} · sold ${sold}/${need} (multi-trip OK)`
+              })()
             : 'In progress'
         return `
           <div class="mission">

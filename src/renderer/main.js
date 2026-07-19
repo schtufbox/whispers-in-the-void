@@ -11,7 +11,11 @@ import { buildPlanetMesh } from './render/planetMesh.js'
 import { buildStarMesh, updateStarMesh } from './render/starMesh.js'
 import { buildAsteroidFieldMesh, getAsteroidRocks } from './render/asteroidFieldMesh.js'
 import { buildProjectileMesh, buildImpactFlash, preloadProjectileMeshes } from './render/projectileMesh.js'
-import { buildStationInteriorMesh, updateStationInterior } from './render/stationInterior.js'
+import {
+  buildStationInteriorMesh,
+  updateStationInterior,
+  INTERIOR_WORLD_SCALE
+} from './render/stationInterior.js'
 import { preloadInteriorModels } from './render/interiorModels.js'
 import { buildWreckMesh, updateWreckMesh } from './render/wreckMesh.js'
 import { buildProbeMesh, updateProbeMesh } from './render/probeMesh.js'
@@ -342,8 +346,9 @@ const SUPERCRUISE_DOCK_INNER_SLACK = 120
 // from any system-local coordinates (which top out around 2200) that it can
 // never overlap real flight space.
 const DOCKING_BAY_ORIGIN = new THREE.Vector3(2_000_000, 0, 0)
-const BAY_ENTRY_OFFSET = new THREE.Vector3(0, 0, -55)
-const BAY_PARK_OFFSET = new THREE.Vector3(0, 0, 20)
+// Match stationInterior INTERIOR_WORLD_SCALE so park/entry stay inside the bay.
+const BAY_ENTRY_OFFSET = new THREE.Vector3(0, 0, -55 * INTERIOR_WORLD_SCALE)
+const BAY_PARK_OFFSET = new THREE.Vector3(0, 0, 20 * INTERIOR_WORLD_SCALE)
 // Probe flight: fly out → scan 10s → return → yield results.
 const PROBE_OUTBOUND_S = 2.6
 const PROBE_SCAN_S = 10
@@ -741,19 +746,77 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') tryRestoreFlightMode()
 })
 
-// Click the game view (canvas) while free-mousing → back into flight mode.
+// Click the game view (canvas): docked → orbit hangar cam; free-mouse flight → re-lock.
 // HUD chrome uses pointer-events:none so those clicks land here; interactive
 // overlays (system overview, menus) sit above the canvas and keep the mouse free.
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return
-  if (!gameState || !canUseFlightMode()) return
+  if (!gameState) return
+  // Docked hangar: drag to orbit the parked ship.
+  if (docked && !dockEffect && !paused && !navMapOpen && !inventoryOpen && !missionsOpen && !characterOpen) {
+    dockOrbit.dragging = true
+    dockOrbit.lastX = e.clientX
+    dockOrbit.lastY = e.clientY
+    dockOrbit.pointerId = e.pointerId
+    try {
+      renderer.domElement.setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    e.preventDefault()
+    return
+  }
+  if (!canUseFlightMode()) return
   if (flightMode && document.pointerLockElement === renderer.domElement) return
   reenterFlightMode()
 })
 
+function endDockOrbitDrag(e) {
+  if (!dockOrbit.dragging) return
+  if (e?.pointerId != null && dockOrbit.pointerId != null && e.pointerId !== dockOrbit.pointerId) return
+  dockOrbit.dragging = false
+  if (dockOrbit.pointerId != null) {
+    try {
+      renderer.domElement.releasePointerCapture(dockOrbit.pointerId)
+    } catch {
+      /* ignore */
+    }
+  }
+  dockOrbit.pointerId = null
+}
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!dockOrbit.dragging || !docked) return
+  const dx = e.clientX - dockOrbit.lastX
+  const dy = e.clientY - dockOrbit.lastY
+  dockOrbit.lastX = e.clientX
+  dockOrbit.lastY = e.clientY
+  dockOrbit.yaw -= dx * DOCK_ORBIT_SENS
+  dockOrbit.pitch = Math.max(
+    DOCK_ORBIT_PITCH_MIN,
+    Math.min(DOCK_ORBIT_PITCH_MAX, dockOrbit.pitch + dy * DOCK_ORBIT_SENS)
+  )
+})
+renderer.domElement.addEventListener('pointerup', endDockOrbitDrag)
+renderer.domElement.addEventListener('pointercancel', endDockOrbitDrag)
+renderer.domElement.addEventListener('lostpointercapture', () => {
+  dockOrbit.dragging = false
+  dockOrbit.pointerId = null
+})
+
 // Chase-camera zoom (works with or without pointer lock). Scroll up = closer.
+// Docked: zoom hangar orbit distance.
 window.addEventListener('wheel', (e) => {
-  if (!gameState || docked || dockEffect || jumpEffect || paused || navMapOpen || inventoryOpen || missionsOpen || characterOpen) return
+  if (!gameState || dockEffect || jumpEffect || paused || navMapOpen || inventoryOpen || missionsOpen || characterOpen) return
+  if (docked) {
+    e.preventDefault()
+    const step = Math.sign(e.deltaY) * Math.min(4, Math.abs(e.deltaY) * 0.04)
+    dockOrbit.dist = Math.max(
+      DOCK_ORBIT_DIST_MIN,
+      Math.min(DOCK_ORBIT_DIST_MAX, dockOrbit.dist + step)
+    )
+    return
+  }
   e.preventDefault()
   adjustChaseZoom(e.deltaY)
 }, { passive: false })
@@ -936,9 +999,14 @@ function resolveInteriorTheme(body) {
   return 'mid'
 }
 
-/** Rebuild bay mesh when theme changes (station vs settlement vs rim band). */
+/** Rebuild bay mesh when theme or interior layout revision changes. */
+const INTERIOR_MESH_REV = 5 // bump when hangar geometry changes mid-session
 function ensureInteriorMesh(theme = 'mid') {
-  if (!interiorMesh || interiorMesh.userData.theme !== theme) {
+  if (
+    !interiorMesh ||
+    interiorMesh.userData.theme !== theme ||
+    interiorMesh.userData.meshRev !== INTERIOR_MESH_REV
+  ) {
     if (interiorMesh) {
       scene.remove(interiorMesh)
       interiorMesh.traverse((obj) => {
@@ -946,6 +1014,7 @@ function ensureInteriorMesh(theme = 'mid') {
       })
     }
     interiorMesh = buildStationInteriorMesh({ theme })
+    interiorMesh.userData.meshRev = INTERIOR_MESH_REV
     interiorMesh.position.copy(DOCKING_BAY_ORIGIN)
   }
   return interiorMesh
@@ -980,6 +1049,48 @@ function quatFacing(fromPos, towardPos) {
 }
 
 let docked = false
+/** Hangar camera orbit around the parked ship (click-drag on the view). */
+const dockOrbit = {
+  yaw: 0.55,
+  pitch: 0.32,
+  dist: 30,
+  dragging: false,
+  lastX: 0,
+  lastY: 0,
+  pointerId: null
+}
+const DOCK_ORBIT_PITCH_MIN = 0.08
+const DOCK_ORBIT_PITCH_MAX = 1.25
+const DOCK_ORBIT_DIST_MIN = 14
+const DOCK_ORBIT_DIST_MAX = 70
+const DOCK_ORBIT_SENS = 0.005
+
+function resetDockOrbit() {
+  dockOrbit.yaw = 0.55
+  dockOrbit.pitch = 0.32
+  dockOrbit.dist = 30
+  dockOrbit.dragging = false
+  dockOrbit.pointerId = null
+}
+
+function applyDockOrbitCamera() {
+  if (!interiorMesh?.parent) return
+  const park = DOCKING_BAY_ORIGIN.clone().add(BAY_PARK_OFFSET)
+  const s = INTERIOR_WORLD_SCALE
+  const dist = dockOrbit.dist * s
+  const cp = Math.cos(dockOrbit.pitch)
+  const sp = Math.sin(dockOrbit.pitch)
+  const sy = Math.sin(dockOrbit.yaw)
+  const cy = Math.cos(dockOrbit.yaw)
+  // Spherical orbit: yaw around Y, pitch above the deck.
+  camera.position.set(
+    park.x + dist * cp * sy,
+    park.y + Math.max(2 * s, dist * sp + 1.5 * s),
+    park.z + dist * cp * cy
+  )
+  camera.lookAt(park.x, park.y + 1.2 * s, park.z)
+}
+
 let paused = false
 let navMapOpen = false
 let inventoryOpen = false
@@ -2129,7 +2240,9 @@ function flashToast(text, durationS = MINING_TOAST_DURATION_S) {
 
 // Missions pay out on objective complete (no station turn-in).
 setMissionCompletedHandler((info) => {
-  audio.playMissionComplete()
+  // Probe contracts chime when floating probe results show (finishProbeResults),
+  // so the sound lands with the "Mission complete" line — not mid-scan.
+  if (info?.type !== 'probe') audio.playMissionComplete()
   const title = info?.title || 'Contract'
   const where = info?.giverBodyName
     ? `${info.giverBodyName}${info.giverSystemName ? ` · ${info.giverSystemName}` : ''}`
@@ -2488,36 +2601,59 @@ function finishProbeResults(body, attemptNumber = null, missionTargetAtLaunch = 
 
   // Floating center HUD: mission beat (first hit only) + loot / exhausted.
   const messages = []
+  let missionCompleteLine = null
   if (missionFirstProbe) {
     if (investigation?.kind === 'intel') {
-      const giver = findBody(gameState.galaxy, investigation.mission.giverStationId)
-      messages.push('Investigation data recovered — contract complete.')
+      missionCompleteLine = 'Mission complete: Investigation data recovered.'
     } else if (investigation?.kind === 'hostile') {
       messages.push('Probe stirred a hostile contact! Eliminate them to finish the investigation.')
     } else if (investigation?.kind === 'lead') {
-      messages.push(`The signal traces further — new fix on ${investigation.bodyName} in ${investigation.systemName}.`)
+      messages.push(
+        `The signal traces further — new fix on ${investigation.bodyName} in ${investigation.systemName}.`
+      )
+    } else {
+      // Probe (and exploration) contracts finish on survey; toast already fired at scan end.
+      missionCompleteLine = 'Mission complete'
     }
-    // Probe / exploration auto-complete (toast handled by setMissionCompletedHandler).
   }
 
-  // Standard loot lines (any attempt, including 2nd/3rd after mission is done).
+  if (missionCompleteLine) {
+    messages.push(missionCompleteLine)
+    // Probe contracts skip the scan-end chime; play it with this floating line.
+    // Investigation intel already chimed via finishMission → handler.
+    if (investigation?.kind !== 'intel') audio.playMissionComplete()
+  }
+
+  // Loot lines below mission complete when both apply.
+  const lootLines = []
   if (result.found && result.stored) {
-    messages.push(
+    lootLines.push(
       `Probe found Survey Data at ${body.name}! Added to cargo — transfer to station storage (Storage tab) to sell.`
     )
   } else if (result.found) {
-    messages.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
-  } else if (!result.blueprint) {
-    messages.push('No Data Found')
+    lootLines.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
   }
   if (result.blueprint) {
-    messages.push(`Rare find: ${result.blueprint.name}! Stored in ship blueprints — craft at a station Industry bay.`)
+    lootLines.push(
+      `Rare find: ${result.blueprint.name}! Stored in ship blueprints — craft at a station Industry bay.`
+    )
   }
   if (result.skillbook) {
-    messages.push(
+    lootLines.push(
       `Skillbook found: ${result.skillbook.name}! Read it under Inventory → Skillbooks.`
     )
   }
+  for (const line of lootLines) messages.push(line)
+
+  // "No Data Found" only when this wasn't a mission-complete return and nothing was found.
+  if (!missionCompleteLine && lootLines.length === 0 && investigation?.kind !== 'hostile' && investigation?.kind !== 'lead') {
+    messages.push('No Data Found')
+  }
+
+  if (lootLines.length > 0) {
+    audio.playProbeFind()
+  }
+
   if (attempt >= MAX_PROBE_ATTEMPTS) {
     messages.push(probeExhaustedMessage(body.name))
   }
@@ -2995,6 +3131,7 @@ function dock(body) {
   }
   cancelRouteAutopilot(routeAutopilot ? 'Autopilot cancelled — docked' : null)
   docked = true
+  resetDockOrbit()
   audio.setThrustState(null)
   markBodyVisited(gameState, body.id)
   // Catch up mission flags (e.g. probe already in probedBodyIds) before the
@@ -4525,6 +4662,7 @@ function animate() {
     if (docked && interiorMesh?.parent) {
       // Hangar still ticks visually under the pause overlay.
       updateStationInterior(interiorMesh, dt)
+      applyDockOrbitCamera()
     }
     renderer.render(scene, camera)
     return
@@ -4540,14 +4678,7 @@ function animate() {
     // Keep the hangar alive behind station services (loaders, drones, lights).
     if (interiorMesh?.parent) {
       updateStationInterior(interiorMesh, dt)
-      const park = DOCKING_BAY_ORIGIN.clone().add(BAY_PARK_OFFSET)
-      const t = performance.now() * 0.00015
-      camera.position.set(
-        park.x + Math.sin(t) * 4,
-        park.y + 10 + Math.sin(t * 0.7) * 1.2,
-        park.z - 28 + Math.cos(t * 0.5) * 2
-      )
-      camera.lookAt(park.x, park.y + 1, park.z + 4)
+      applyDockOrbitCamera()
     }
     // Clock already advanced above; no flight / combat while parked.
     renderer.render(scene, camera)

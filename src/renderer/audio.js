@@ -400,6 +400,14 @@ export function playMissionComplete() {
   tone({ type: 'sine', freq: 1245, duration: 0.35, peak: 0.08, delay: 0.42 })
 }
 
+/** Probe recovered survey data / blueprint / skillbook — short discovery ping. */
+export function playProbeFind() {
+  tone({ type: 'sine', freq: 880, duration: 0.07, peak: 0.12 })
+  tone({ type: 'triangle', freq: 1175, duration: 0.1, peak: 0.14, delay: 0.06 })
+  tone({ type: 'sine', freq: 1568, duration: 0.16, peak: 0.11, delay: 0.14 })
+  tone({ type: 'sine', freq: 2093, duration: 0.22, peak: 0.07, delay: 0.24 })
+}
+
 /** Nav waypoint set — short two-tone ping (clear / distinct from save). */
 export function playWaypointSet() {
   tone({ type: 'sine', freq: 880, duration: 0.08, peak: 0.12 })

@@ -21,6 +21,18 @@ import {
 
 export const INTERIOR_THEMES = ['core', 'mid', 'outer', 'palace', 'settlement']
 
+/**
+ * World scale for station/settlement docking bays (structure + décor).
+ * Ship park/entry offsets in main.js use the same factor.
+ */
+export const INTERIOR_WORLD_SCALE = 3
+/**
+ * Local scale for landed ships / vehicles / workers / drones.
+ * Counteracts INTERIOR_WORLD_SCALE so they stay ~player-ship sized
+ * (the player mesh is not parented under the bay group).
+ */
+const ACTOR_SCALE = 1 / INTERIOR_WORLD_SCALE
+
 const BAY_WIDTH = 72
 const BAY_HEIGHT = 48
 const BAY_LENGTH = 150
@@ -165,6 +177,22 @@ function glassMat(theme) {
   })
 }
 
+/** Thin emissive edge strip for sci-fi viewport framing (not a full-pane glow). */
+function makeEdgeLight(w, h, d, color, x, y, z, group, anim, phase = 0) {
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.75
+    })
+  )
+  m.position.set(x, y, z)
+  group.add(m)
+  anim.lights.push({ mesh: m, phase, base: 0.55 })
+  return m
+}
+
 function makeBox(w, h, d, material, x, y, z, group) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material)
   m.position.set(x, y, z)
@@ -189,14 +217,14 @@ function placeProp(group, name, x, y, z, opts = {}, tint = null) {
 function activityCounts(level) {
   switch (level) {
     case 'party':
-      return { workers: 8, drones: 6, ships: 4, mechs: 2, rovers: 1, carts: 2 }
+      return { workers: 8, drones: 6, ships: 7, mechs: 2, rovers: 2, carts: 2 }
     case 'busy':
-      return { workers: 6, drones: 5, ships: 3, mechs: 1, rovers: 1, carts: 1 }
+      return { workers: 6, drones: 5, ships: 6, mechs: 2, rovers: 2, carts: 2 }
     case 'modest':
-      return { workers: 3, drones: 2, ships: 2, mechs: 1, rovers: 0, carts: 1 }
+      return { workers: 3, drones: 2, ships: 4, mechs: 1, rovers: 1, carts: 1 }
     case 'sparse':
     default:
-      return { workers: 2, drones: 1, ships: 1, mechs: 0, rovers: 1, carts: 1 }
+      return { workers: 2, drones: 1, ships: 3, mechs: 0, rovers: 1, carts: 1 }
   }
 }
 
@@ -333,8 +361,8 @@ export function buildStationInteriorMesh(options = {}) {
   makeBox(BAY_WIDTH, 2, BAY_LENGTH, floor, 0, BAY_HEIGHT / 2, 0, group)
   makeBox(2.5, BAY_HEIGHT, BAY_LENGTH, wall, -BAY_WIDTH / 2, 0, 0, group)
   makeBox(2.5, BAY_HEIGHT, BAY_LENGTH, wall, BAY_WIDTH / 2, 0, 0, group)
-  makeBox(BAY_WIDTH, BAY_HEIGHT, 2.5, wall, 0, 0, BAY_LENGTH / 2, group)
-  makeBox(BAY_WIDTH * 0.55, 10, 0.4, glassMat(theme), 0, 8, BAY_LENGTH / 2 - 1.6, group)
+  // Far end (+Z): open observation window — no solid bulkhead (starfield shows through).
+  // Near end (−Z): docking bay doors (built below).
 
   // Side catwalks
   for (const side of [-1, 1]) {
@@ -364,36 +392,171 @@ export function buildStationInteriorMesh(options = {}) {
     }
   }
 
-  // Hangar mouth
-  const doorZ = -BAY_LENGTH / 2 + 3
-  makeBox(BAY_WIDTH, 4, 3, beam, 0, BAY_HEIGHT / 2 - 2, doorZ, group)
-  makeBox(4, BAY_HEIGHT, 3, beam, -BAY_WIDTH / 2 + 2, 0, doorZ, group)
-  makeBox(4, BAY_HEIGHT, 3, beam, BAY_WIDTH / 2 - 2, 0, doorZ, group)
-  const entryRing = new THREE.Mesh(new THREE.TorusGeometry(22, 1.2, 8, 32), accent)
-  entryRing.position.set(0, 0, doorZ)
+  // —— Far end (+Z): sci-fi observation viewport (starfield through clear glass) ——
+  const windowZ = BAY_LENGTH / 2 - 0.8
+  const winFrame = 3.6
+  const edgeCol = theme.luxury ? 0xff88ee : theme.grit > 0.5 ? 0xffb060 : 0x6ee0ff
+  // Deep multi-layer bulkhead frame
+  makeBox(BAY_WIDTH, winFrame, 3.4, beam, 0, BAY_HEIGHT / 2 - winFrame / 2, windowZ, group)
+  makeBox(BAY_WIDTH, winFrame * 0.7, 2.2, panel, 0, BAY_HEIGHT / 2 - winFrame * 0.9, windowZ - 0.8, group)
+  makeBox(BAY_WIDTH, winFrame, 3.4, beam, 0, -BAY_HEIGHT / 2 + winFrame / 2, windowZ, group)
+  makeBox(BAY_WIDTH, winFrame * 0.7, 2.2, panel, 0, -BAY_HEIGHT / 2 + winFrame * 0.9, windowZ - 0.8, group)
+  makeBox(winFrame, BAY_HEIGHT, 3.4, beam, -BAY_WIDTH / 2 + winFrame / 2, 0, windowZ, group)
+  makeBox(winFrame * 0.7, BAY_HEIGHT, 2.2, panel, -BAY_WIDTH / 2 + winFrame * 0.9, 0, windowZ - 0.8, group)
+  makeBox(winFrame, BAY_HEIGHT, 3.4, beam, BAY_WIDTH / 2 - winFrame / 2, 0, windowZ, group)
+  makeBox(winFrame * 0.7, BAY_HEIGHT, 2.2, panel, BAY_WIDTH / 2 - winFrame * 0.9, 0, windowZ - 0.8, group)
+  // Corner armor braces
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      makeBox(
+        4.5,
+        4.5,
+        1.6,
+        beam,
+        sx * (BAY_WIDTH / 2 - 5.5),
+        sy * (BAY_HEIGHT / 2 - 5.5),
+        windowZ - 0.4,
+        group
+      )
+      // Corner status nodes
+      makeEdgeLight(
+        0.7,
+        0.7,
+        0.9,
+        edgeCol,
+        sx * (BAY_WIDTH / 2 - 5.5),
+        sy * (BAY_HEIGHT / 2 - 5.5),
+        windowZ - 1.5,
+        group,
+        anim,
+        sx + sy
+      )
+    }
+  }
+  // Lattice mullions — grid of thin beams (sci-fi canopy / pressure lattice)
+  const latticeInset = winFrame + 0.6
+  const gridXs = [-0.33, 0, 0.33].map((f) => f * (BAY_WIDTH - latticeInset * 2))
+  const gridYs = [-0.28, 0.05, 0.32].map((f) => f * (BAY_HEIGHT - latticeInset * 2))
+  for (const x of gridXs) {
+    makeBox(0.35, BAY_HEIGHT - latticeInset * 2, 0.9, beam, x, 0, windowZ - 0.2, group)
+  }
+  for (const y of gridYs) {
+    makeBox(BAY_WIDTH - latticeInset * 2, 0.35, 0.9, beam, 0, y, windowZ - 0.2, group)
+  }
+  // Diagonal tension braces (outer corners only — doesn't fill the glass)
+  for (const sx of [-1, 1]) {
+    const brace = makeBox(0.28, BAY_HEIGHT * 0.38, 0.55, panel, 0, 0, windowZ - 0.15, group)
+    brace.position.set(sx * BAY_WIDTH * 0.28, BAY_HEIGHT * 0.12, windowZ - 0.15)
+    brace.rotation.z = sx * 0.55
+  }
+  // Open aperture only — no glass panes / filled glow (those read as a blue slab).
+  // Starfield is visible straight through the lattice.
+  const openW = BAY_WIDTH - latticeInset * 2
+  const openH = BAY_HEIGHT - latticeInset * 2
+  // Tiny corner LEDs only (not full-length strips that merge into a rectangle).
+  const led = 0.55
+  const trimZ = windowZ - 1.2
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      makeEdgeLight(
+        led,
+        led,
+        0.35,
+        edgeCol,
+        sx * (openW / 2 - 0.4),
+        sy * (openH / 2 - 0.4),
+        trimZ,
+        group,
+        anim,
+        sx * 0.5 + sy
+      )
+    }
+  }
+
+  // —— Near end (−Z): closed docking-bay doors (entry from space) ——
+  const doorZ = -BAY_LENGTH / 2 + 2.5
+  // Heavy outer frame / bulkhead
+  makeBox(BAY_WIDTH, 5, 4, beam, 0, BAY_HEIGHT / 2 - 2.5, doorZ, group)
+  makeBox(BAY_WIDTH, 4, 4, beam, 0, -BAY_HEIGHT / 2 + 2, doorZ, group)
+  makeBox(5, BAY_HEIGHT, 4, beam, -BAY_WIDTH / 2 + 2.5, 0, doorZ, group)
+  makeBox(5, BAY_HEIGHT, 4, beam, BAY_WIDTH / 2 - 2.5, 0, doorZ, group)
+  // Door aperture ring
+  const entryRing = new THREE.Mesh(new THREE.TorusGeometry(24, 1.4, 8, 40), accent)
+  entryRing.position.set(0, 0, doorZ + 0.5)
   group.add(entryRing)
 
+  // Twin sliding leaves (closed, center seam)
+  const leafW = BAY_WIDTH * 0.42
+  const leafH = BAY_HEIGHT * 0.78
+  const leafDepth = 1.8
+  for (const side of [-1, 1]) {
+    const leaf = makeBox(
+      leafW,
+      leafH,
+      leafDepth,
+      panel,
+      side * (leafW * 0.5 + 0.4),
+      0.5,
+      doorZ + 1.2,
+      group
+    )
+    // Horizontal plating ribs on each leaf
+    for (let r = 0; r < 6; r++) {
+      const y = -leafH * 0.35 + r * (leafH * 0.12)
+      makeBox(leafW * 0.92, 0.35, 0.25, beam, side * (leafW * 0.5 + 0.4), y, doorZ + 1.2 + leafDepth * 0.45, group)
+    }
+    // Vertical guide rails
+    makeBox(0.5, leafH * 0.95, 0.4, hazard, side * (leafW * 0.95 + 0.5), 0.5, doorZ + 2.2, group)
+    // Hazard chevron on each leaf
+    for (let c = 0; c < 4; c++) {
+      const chev = new THREE.Mesh(
+        new THREE.BoxGeometry(leafW * 0.35, 0.55, 0.2),
+        new THREE.MeshBasicMaterial({
+          color: theme.luxury ? 0xff88ee : theme.grit > 0.5 ? 0xffaa44 : 0x4fc3d9,
+          transparent: true,
+          opacity: 0.55
+        })
+      )
+      chev.position.set(
+        side * (leafW * 0.35),
+        leafH * 0.15 - c * 2.2,
+        doorZ + 1.2 + leafDepth * 0.55
+      )
+      chev.rotation.z = side * 0.35
+      group.add(chev)
+    }
+  }
+  // Center seal / parting line
+  makeBox(1.1, leafH * 0.98, 0.5, hazard, 0, 0.5, doorZ + 2.1, group)
+  // Soft energy seal glow in the seam (reads as pressurized door)
   const doorField = new THREE.Mesh(
-    new THREE.PlaneGeometry(40, 36),
+    new THREE.PlaneGeometry(2.2, leafH * 0.9),
     new THREE.MeshBasicMaterial({
       color: theme.luxury ? 0xff66cc : theme.grit > 0.5 ? 0xff8844 : 0x4fc3d9,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.22,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide
     })
   )
-  doorField.position.set(0, 0, doorZ + 1)
+  doorField.position.set(0, 0.5, doorZ + 2.4)
   group.add(doorField)
   anim.doorField = doorField
-
-  const spacePlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(80, 60),
-    new THREE.MeshBasicMaterial({ color: 0x02040a })
-  )
-  spacePlane.position.set(0, 0, doorZ - 8)
-  group.add(spacePlane)
+  // Status lights on the lintel
+  for (const x of [-16, -8, 8, 16]) {
+    const lamp = new THREE.Mesh(
+      new THREE.BoxGeometry(2.2, 0.6, 0.8),
+      new THREE.MeshBasicMaterial({
+        color: theme.luxury ? 0xff88cc : 0xff6040,
+        transparent: true,
+        opacity: 0.85
+      })
+    )
+    lamp.position.set(x, BAY_HEIGHT / 2 - 4.2, doorZ + 2.5)
+    group.add(lamp)
+    anim.lights.push({ mesh: lamp, phase: x * 0.08, base: 0.5, warn: true })
+  }
 
   // Landing pad
   const padY = FLOOR_Y + 1.15
@@ -518,12 +681,21 @@ export function buildStationInteriorMesh(options = {}) {
         emissive: theme.accent,
         emissiveIntensity: 0.4
       })
+      // Keep the far +Z wall clear for the space window — put displays on the side.
       if (hasInteriorModule('display-wall-wide')) {
-        placeProp(group, 'display-wall-wide', 0, FLOOR_Y + 8, BAY_LENGTH / 2 - 3.5, { scale: 6 }, {
-          ...tint,
-          emissive: theme.accent,
-          emissiveIntensity: 0.25
-        })
+        placeProp(
+          group,
+          'display-wall-wide',
+          BAY_WIDTH / 2 - 4,
+          FLOOR_Y + 8,
+          35,
+          { scale: 5, rotY: -Math.PI / 2 },
+          {
+            ...tint,
+            emissive: theme.accent,
+            emissiveIntensity: 0.25
+          }
+        )
       }
     }
     if (hasInteriorModule('chair') && (theme.neon || theme.luxury)) {
@@ -614,14 +786,15 @@ export function buildStationInteriorMesh(options = {}) {
     }
   }
 
-  // Cargo cart(s)
+  // Cargo cart(s) — actor-sized (not full hangar scale)
   for (let c = 0; c < counts.carts; c++) {
     const loader = new THREE.Group()
     makeBox(4, 1.2, 6, beam, 0, 0, 0, loader)
     makeBox(5, 0.4, 0.4, hazard, 0, 1.2, 0, loader)
     makeBox(0.5, 5, 0.5, panel, -1.2, 3, 0, loader)
     const fork = makeBox(2.5, 0.25, 1.5, hazard, 0.5, 1.8, 0, loader)
-    loader.position.set(-BAY_WIDTH / 2 + 12 + c * 4, FLOOR_Y + 2, 10 - c * 15)
+    loader.scale.setScalar(ACTOR_SCALE)
+    loader.position.set(-BAY_WIDTH / 2 + 12 + c * 4, FLOOR_Y + 1.15, 10 - c * 15)
     group.add(loader)
     anim.loaders.push({
       kind: 'cart',
@@ -688,20 +861,24 @@ export function buildStationInteriorMesh(options = {}) {
     group.add(holo)
     anim.holograms.push({ mesh: holo, phase: i * 1.7 })
   }
-  const board = new THREE.Mesh(
-    new THREE.PlaneGeometry(14, 6),
-    new THREE.MeshBasicMaterial({
-      color: theme.luxury ? 0xaa44cc : 0x2a8aaa,
-      transparent: true,
-      opacity: 0.35,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide
-    })
-  )
-  board.position.set(0, 10, BAY_LENGTH / 2 - 2)
-  group.add(board)
-  anim.holograms.push({ mesh: board, phase: 0.5, isBoard: true })
+  // Status holoboards on the side walls — never on the +Z space window.
+  for (const side of [-1, 1]) {
+    const board = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 5),
+      new THREE.MeshBasicMaterial({
+        color: theme.luxury ? 0xaa44cc : 0x2a8aaa,
+        transparent: true,
+        opacity: 0.32,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    )
+    board.position.set(side * (BAY_WIDTH / 2 - 3.2), 10, 22)
+    board.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2
+    group.add(board)
+    anim.holograms.push({ mesh: board, phase: side * 0.5, isBoard: true })
+  }
 
   // Warning beacons
   for (const pos of [
@@ -735,17 +912,24 @@ export function buildStationInteriorMesh(options = {}) {
     anim.lights.push({ mesh: beacon, halo, phase: pos[2] * 0.08, base: 0.7, warn: true })
   }
 
-  // --- Parked ships --------------------------------------------------------
+  // --- Parked ships on the deck (player-scale; hangar is 3× so actors are compensated) ---
   const shipSlots = [
-    { x: -22, z: 48, y: FLOOR_Y + 3.5, rot: 0.4 },
-    { x: 24, z: 42, y: FLOOR_Y + 3.2, rot: -0.5 },
-    { x: -20, z: -15, y: FLOOR_Y + 3.5, rot: 0.2 },
-    { x: 22, z: 10, y: FLOOR_Y + 3.3, rot: -0.3 }
+    { x: -26, z: 52, y: FLOOR_Y + 1.15, rot: 0.4 },
+    { x: 28, z: 46, y: FLOOR_Y + 1.15, rot: -0.5 },
+    { x: -24, z: -18, y: FLOOR_Y + 1.15, rot: 0.2 },
+    { x: 26, z: 12, y: FLOOR_Y + 1.15, rot: -0.3 },
+    // Extra ground pads along the flanks / mid-bay
+    { x: -20, z: 28, y: FLOOR_Y + 1.15, rot: 0.55 },
+    { x: 22, z: 30, y: FLOOR_Y + 1.15, rot: -0.45 },
+    { x: 0, z: 58, y: FLOOR_Y + 1.15, rot: 0.08 },
+    { x: -28, z: 5, y: FLOOR_Y + 1.15, rot: 0.9 }
   ].slice(0, counts.ships)
   const shipNames = ['q:spaceship_a', 'q:spaceship_b', 'q:spaceship_c', 'q:spaceship_d']
   for (let i = 0; i < shipSlots.length; i++) {
     const slot = shipSlots[i]
     const sName = shipNames[i % shipNames.length]
+    // ~player hull size after INTERIOR_WORLD_SCALE (was 2.8 before hangar enlarge).
+    const shipLocal = 2.8 * theme.shipScale * ACTOR_SCALE
     let ship = null
     if (useModels && hasInteriorModule(sName)) {
       const placed = placeProp(
@@ -754,7 +938,7 @@ export function buildStationInteriorMesh(options = {}) {
         slot.x,
         slot.y,
         slot.z,
-        { rotY: slot.rot, scale: 2.8 * theme.shipScale, anchor: 'bottom' },
+        { rotY: slot.rot, scale: shipLocal, anchor: 'bottom' },
         tint
       )
       ship = placed?.obj
@@ -765,13 +949,20 @@ export function buildStationInteriorMesh(options = {}) {
         : theme.grit > 0.5
           ? [0x6a5a48, 0x5a4a38, 0x7a6a50]
           : [0x7a8a9a, 0x6a7a70, 0x8a7a60]
-      ship = makeParkedShip(colors[i % colors.length], theme.shipScale * (1 + i * 0.15))
+      ship = makeParkedShip(colors[i % colors.length], theme.shipScale * (1 + i * 0.15) * ACTOR_SCALE)
       ship.position.set(slot.x, slot.y, slot.z)
       ship.rotation.y = slot.rot
       group.add(ship)
     }
     if (ship) anim.parkedShips.push(ship)
   }
+
+  // Footprints for ground traffic (rovers) — keep clear of parked hulls + player pad.
+  // Radii are local bay units (before INTERIOR_WORLD_SCALE).
+  const shipPads = shipSlots.map((s) => ({ x: s.x, z: s.z, r: 10 }))
+  // Player park sits near bay local (0, 20) — leave room so rovers don't clip the hull.
+  shipPads.push({ x: 0, z: 20, r: 12 })
+  anim.shipPads = shipPads
 
   // --- Service drones / flying units ---------------------------------------
   for (let i = 0; i < counts.drones; i++) {
@@ -783,22 +974,23 @@ export function buildStationInteriorMesh(options = {}) {
         0,
         0,
         0,
-        { scale: 1.4, anchor: 'center' },
+        { scale: 1.4 * ACTOR_SCALE, anchor: 'center' },
         tint
       )
       drone = placed?.obj
     }
     if (!drone) {
       drone = makeDrone()
+      drone.scale.setScalar(ACTOR_SCALE)
       group.add(drone)
     }
     anim.drones.push({
       mesh: drone,
-      radius: 12 + i * 4,
-      height: -4 + i * 3,
+      radius: 18 + i * 6,
+      height: -2 + i * 2.5,
       speed: 0.32 + i * 0.07,
       phase: i * 1.6,
-      zCenter: 8 + i * 7
+      zCenter: 10 + i * 8
     })
   }
 
@@ -814,13 +1006,14 @@ export function buildStationInteriorMesh(options = {}) {
         0,
         0,
         0,
-        { scale: 2.2, anchor: 'bottom' },
+        { scale: 2.2 * ACTOR_SCALE, anchor: 'bottom' },
         tint
       )
       worker = placed?.obj
     }
     if (!worker) {
       worker = makeWorker(theme)
+      worker.scale.setScalar(ACTOR_SCALE)
       group.add(worker)
     }
     const onFloor = i >= counts.workers - 2 && theme.activity !== 'sparse'
@@ -850,43 +1043,59 @@ export function buildStationInteriorMesh(options = {}) {
       0,
       FLOOR_Y + 1.1,
       0,
-      { scale: 2.0, anchor: 'bottom' },
+      { scale: 2.0 * ACTOR_SCALE, anchor: 'bottom' },
       tint
     )
     if (!placed) continue
     anim.mechs.push({
       mesh: placed.obj,
       baseY: placed.obj.position.y,
-      x0: -18 + i * 8,
-      x1: 18 - i * 6,
-      z: 28 + i * 10,
+      x0: -22 + i * 10,
+      x1: 22 - i * 8,
+      z: 32 + i * 12,
       speed: 0.12 + i * 0.04,
       phase: i * 2.5
     })
   }
 
-  // --- Rovers --------------------------------------------------------------
+  // --- Rovers (side aisles only — avoid ship pad columns) --------------------
+  const roverClear = 4 // extra margin past ship pad radius
+  const roverLaneCandidates = [
+    -BAY_WIDTH / 2 + 12,
+    -BAY_WIDTH / 2 + 16,
+    BAY_WIDTH / 2 - 12,
+    BAY_WIDTH / 2 - 16,
+    -10,
+    10
+  ]
+  const roverLanes = roverLaneCandidates.filter((lx) =>
+    shipPads.every((p) => Math.abs(lx - p.x) >= p.r + roverClear)
+  )
+  const lanePool = roverLanes.length ? roverLanes : [-BAY_WIDTH / 2 + 11, BAY_WIDTH / 2 - 11]
+
   for (let i = 0; i < counts.rovers; i++) {
     const name = i % 2 ? 'q:round_rover' : 'q:rover'
     if (!useModels || !hasInteriorModule(name)) continue
+    const laneX = lanePool[i % lanePool.length]
     const placed = placeProp(
       group,
       name,
-      0,
+      laneX,
       FLOOR_Y + 1.1,
       0,
-      { scale: 2.2, anchor: 'bottom' },
+      { scale: 2.2 * ACTOR_SCALE, anchor: 'bottom' },
       tint
     )
     if (!placed) continue
     anim.rovers.push({
       mesh: placed.obj,
       baseY: placed.obj.position.y,
-      z0: -30,
-      z1: 40,
-      x: -BAY_WIDTH / 2 + 16 + i * 6,
+      z0: -38,
+      z1: 50,
+      x: laneX,
       speed: 0.09,
-      phase: i * 3
+      phase: i * 3,
+      clear: roverClear
     })
   }
 
@@ -978,18 +1187,7 @@ export function buildStationInteriorMesh(options = {}) {
       group.add(vein)
       anim.neonStrips.push({ mesh: vein, phase: x * 0.05, base: 0.3, amp: 0.2 })
     }
-    for (const [y, z, op] of [
-      [2, 18, 0.06],
-      [4, doorZ + 16, 0.08]
-    ]) {
-      const haze = new THREE.Mesh(
-        new THREE.PlaneGeometry(48, 28),
-        neonMat(theme.luxury ? 0xff88cc : 0x6fd8f2, op)
-      )
-      haze.position.set(0, y, z)
-      group.add(haze)
-      anim.glowPlanes.push({ mesh: haze, phase: z * 0.02, base: op, amp: op * 0.7 })
-    }
+    // No large additive haze planes mid-bay — they read as a semi-opaque blue slab.
     for (let z = -40; z <= 50; z += 22) {
       for (const x of [-12, 12]) {
         const bulb = new THREE.Mesh(
@@ -1022,25 +1220,18 @@ export function buildStationInteriorMesh(options = {}) {
     }
   }
 
-  // Dusty/gritty volumetric haze for outer & settlement
-  if (theme.grit > 0.4) {
-    const dust = new THREE.Mesh(
-      new THREE.PlaneGeometry(60, 30),
-      new THREE.MeshBasicMaterial({
-        color: 0x8a7050,
-        transparent: true,
-        opacity: 0.05 + theme.grit * 0.04,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide
-      })
-    )
-    dust.position.set(0, 4, 15)
-    group.add(dust)
-    anim.glowPlanes.push({ mesh: dust, phase: 1, base: dust.material.opacity, amp: 0.02 })
-  }
-
   group.userData.anim = anim
+  // Enlarge hangar vs player ship so bays feel vast (stations + settlements).
+  group.scale.setScalar(INTERIOR_WORLD_SCALE)
+  // Light `distance` is world-space and does not inherit parent scale.
+  group.traverse((obj) => {
+    if (obj.isPointLight || obj.isSpotLight) {
+      if (Number.isFinite(obj.distance) && obj.distance > 0) {
+        obj.distance *= INTERIOR_WORLD_SCALE
+      }
+    }
+  })
+  group.userData.interiorScale = INTERIOR_WORLD_SCALE
   return group
 }
 
@@ -1140,11 +1331,37 @@ export function updateStationInterior(mesh, dt) {
 
   for (const r of anim.rovers ?? []) {
     const u = (Math.sin(t * r.speed + r.phase) + 1) / 2
-    const z = r.z0 + (r.z1 - r.z0) * u
+    let z = r.z0 + (r.z1 - r.z0) * u
+    let x = r.x
+    // Soft collision: push clear of parked ships / player pad (never drive through hulls).
+    const pads = anim.shipPads ?? []
+    const clear = r.clear ?? 4
+    for (let iter = 0; iter < 3; iter++) {
+      for (const p of pads) {
+        const dx = x - p.x
+        const dz = z - p.z
+        const d = Math.hypot(dx, dz)
+        const minD = (p.r ?? 8) + clear
+        if (d < minD) {
+          if (d < 1e-4) {
+            x += minD * (r.x >= 0 ? 1 : -1)
+          } else {
+            // Prefer lateral dodge so forward patrol continues.
+            const push = (minD - d) / d
+            x += dx * push * 1.35
+            z += dz * push * 0.25
+          }
+        }
+      }
+    }
+    const halfW = BAY_WIDTH / 2 - 8
+    x = Math.max(-halfW, Math.min(halfW, x))
+    z = Math.max(r.z0 - 2, Math.min(r.z1 + 2, z))
     const prevZ = r.mesh.position.z
-    r.mesh.position.set(r.x, r.baseY ?? FLOOR_Y + 2, z)
-    if (Math.abs(z - prevZ) > 0.001) {
-      r.mesh.rotation.y = z > prevZ ? 0 : Math.PI
+    const prevX = r.mesh.position.x
+    r.mesh.position.set(x, r.baseY ?? FLOOR_Y + 2, z)
+    if (Math.abs(z - prevZ) > 0.02 || Math.abs(x - prevX) > 0.02) {
+      r.mesh.rotation.y = Math.atan2(x - prevX, z - prevZ)
     }
   }
 

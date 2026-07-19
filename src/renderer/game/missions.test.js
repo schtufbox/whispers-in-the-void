@@ -241,3 +241,41 @@ test('trade mission turns in at destination after buy+sell progress', () => {
   assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
   assert.ok(gs.player.credits > creditsBefore, 'reward paid on auto-complete')
 })
+
+test('trade mission can complete over multiple partial buy/sell trips', () => {
+  const gs = freshState(99)
+  let mission = gs.missions.available.find((m) => m.type === 'trade')
+  if (!mission) {
+    const board = gs.missions.available[0]
+    mission = generateTradeMission(Math.random, gs.galaxy, board.giverSystemId, board.giverStationId)
+    gs.missions.available.push(mission)
+  }
+  acceptMission(gs, mission.id, Math.random)
+  const need = mission.trade.quantity
+  const chunk = Math.max(1, Math.floor(need / 3))
+  assert.ok(chunk < need, 'need a multi-leg haul')
+
+  // Trip 1: buy a partial load, sell it at dest.
+  noteTradePurchase(gs, mission.trade.originBodyId, mission.trade.goodId, chunk)
+  assert.equal(mission.status, 'active')
+  let nav = missionNavTarget(mission, gs)
+  assert.equal(nav.bodyId, mission.trade.destBodyId, 'after partial buy, nav should point to dest')
+  noteTradeSale(gs, mission.trade.destBodyId, mission.trade.goodId, chunk)
+  assert.equal(mission.status, 'active')
+  assert.equal(mission.trade.sold, chunk)
+  nav = missionNavTarget(mission, gs)
+  assert.equal(nav.bodyId, mission.trade.originBodyId, 'after selling the load, nav returns to origin')
+
+  // Remaining legs until quota is filled.
+  let left = need - chunk
+  while (left > 0) {
+    const n = Math.min(chunk, left)
+    noteTradePurchase(gs, mission.trade.originBodyId, mission.trade.goodId, n)
+    noteTradeSale(gs, mission.trade.destBodyId, mission.trade.goodId, n)
+    left -= n
+  }
+  assert.equal(mission.status, 'complete')
+  assert.equal(mission.trade.purchased >= need, true)
+  assert.equal(mission.trade.sold >= need, true)
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
+})

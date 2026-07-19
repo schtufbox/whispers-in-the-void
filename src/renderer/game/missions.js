@@ -163,7 +163,7 @@ export function acceptMission(gameState, missionId, rng) {
       mission,
       gameState,
       'intel',
-      `Buy ${q}× ${goodName} here with your credits, haul to the destination bay, then sell the cargo to complete the contract.`
+      `Buy ${q}× ${goodName} at origin (with your credits), haul to the destination bay and sell. Multiple trips are fine — the contract completes when bought and sold totals reach ${q}.`
     )
   }
 
@@ -186,6 +186,27 @@ function refreshTradeMissionComplete(mission, gameState) {
 /**
  * Call after the player buys cargo at a bay — advances active trade missions.
  */
+/** Sync trade mission nav target for multi-trip buy → haul → sell loops. */
+function syncTradeMissionTarget(mission, gameState) {
+  if (!mission?.trade) return
+  const tr = mission.trade
+  const need = Math.max(0, Math.floor(Number(tr.quantity) || 0))
+  const purchased = Math.floor(Number(tr.purchased) || 0)
+  const sold = Math.floor(Number(tr.sold) || 0)
+  // Prefer destination while there is still bought cargo to deliver/sell;
+  // otherwise return to origin until the buy quota is filled.
+  const goDest = sold < need && purchased > sold
+  const next = goDest
+    ? { kind: 'body', systemId: tr.destSystemId, bodyId: tr.destBodyId }
+    : { kind: 'body', systemId: tr.originSystemId, bodyId: tr.originBodyId }
+  mission.target = next
+  advanceMissionWaypoint(gameState, mission)
+}
+
+/**
+ * Call after the player buys cargo at a bay — advances active trade missions.
+ * Partial buys count; multi-trip hauls are supported.
+ */
 export function noteTradePurchase(gameState, bodyId, goodId, quantity) {
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   if (!gameState || !bodyId || !goodId || qty < 1) return
@@ -200,24 +221,17 @@ export function noteTradePurchase(gameState, bodyId, goodId, quantity) {
       mission,
       gameState,
       'intel',
-      `Purchased ${qty} at origin (${Math.min(have, need)}/${need})`
+      `Purchased ${qty} at origin (${Math.min(have, need)}/${need}) — multi-trip hauls OK`
     )
-    if (have >= need) {
-      // Point nav at destination sell bay.
-      mission.target = {
-        kind: 'body',
-        systemId: mission.trade.destSystemId,
-        bodyId: mission.trade.destBodyId
-      }
-      advanceMissionWaypoint(gameState, mission)
-    }
+    syncTradeMissionTarget(mission, gameState)
     refreshTradeMissionComplete(mission, gameState)
   }
 }
 
 /**
  * Call after the player sells cargo at a bay — completes trade missions when
- * enough has been bought at origin and sold at destination.
+ * cumulative bought (at origin) and sold (at dest) reach the quota.
+ * Partial sales count toward multi-trip deliveries.
  */
 export function noteTradeSale(gameState, bodyId, goodId, quantity) {
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
@@ -235,6 +249,7 @@ export function noteTradeSale(gameState, bodyId, goodId, quantity) {
       'intel',
       `Sold ${qty} at destination (${Math.min(have, need)}/${need})`
     )
+    syncTradeMissionTarget(mission, gameState)
     refreshTradeMissionComplete(mission, gameState)
   }
 }
@@ -526,18 +541,21 @@ export function missionNavTarget(mission, gameState) {
     const tr = mission.trade
     const need = Math.max(0, Math.floor(Number(tr.quantity) || 0))
     const purchased = Math.floor(Number(tr.purchased) || 0)
-    if (purchased < need) {
+    const sold = Math.floor(Number(tr.sold) || 0)
+    // Multi-trip: go sell whenever bought > sold; otherwise buy more at origin.
+    const goDest = sold < need && purchased > sold
+    if (goDest || (purchased >= need && sold < need)) {
       return {
         phase: 'objective',
-        systemId: tr.originSystemId,
-        bodyId: tr.originBodyId,
+        systemId: tr.destSystemId,
+        bodyId: tr.destBodyId,
         position: null
       }
     }
     return {
       phase: 'objective',
-      systemId: tr.destSystemId,
-      bodyId: tr.destBodyId,
+      systemId: tr.originSystemId,
+      bodyId: tr.originBodyId,
       position: null
     }
   }

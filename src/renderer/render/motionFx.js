@@ -4,6 +4,7 @@ import {
   createLightningMaterial,
   rewriteSpiralLightningBolt
 } from './lightningBolt.js'
+import { updateStarfieldCruiseBlur } from './starfield.js'
 
 // Screen-space motion wash (CSS) + 3D speed streaks. Intensity 0–1; supercruise
 // should pass ~0.85–1 so the effect reads as a different flight mode.
@@ -575,18 +576,13 @@ export function createMotionEffects(container) {
   }
 }
 
-// Leave the real skybox alone during cruise — the full-screen tunnel overlay
-// (createMotionEffects) handles streaking instead of warping the starfield.
-export function updateStarfieldMotion(starfield, _intensity, _cruising, _shipQuat = null) {
+/**
+ * Warp the real starfield during supercruise: radial motion-blur streaks
+ * aimed at the player (camera). Intensity comes from motionFx.update().
+ */
+export function updateStarfieldMotion(starfield, intensity, cruising, _shipQuat = null) {
   if (!starfield) return
   starfield.scale.set(1, 1, 1)
   starfield.quaternion.identity()
-  for (const child of starfield.children) {
-    if (!child.material) continue
-    child.userData.baseSize ??= child.material.size
-    child.material.size = child.userData.baseSize
-    if (!starfield.userData.twinkleLayers?.some((t) => t.layer === child)) {
-      child.material.opacity = 1
-    }
-  }
+  updateStarfieldCruiseBlur(starfield, intensity ?? 0, !!cruising, performance.now() / 1000)
 }
