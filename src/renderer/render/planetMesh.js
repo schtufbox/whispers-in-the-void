@@ -115,6 +115,88 @@ function buildGasGiant(radius, rng) {
   return geometry
 }
 
+/**
+ * Soft cloud shell for every gas giant. `stormy` adds darker, faster-swirling
+ * bands and higher opacity so the world reads as a stormy atmosphere.
+ */
+function buildGasGiantAtmosphere(radius, rng, stormy = false) {
+  const shellR = radius * (stormy ? 1.065 : 1.05)
+  // Slightly lower segment count than the surface — soft volume, not terrain.
+  const lat = Math.max(32, Math.min(64, Math.round(radius / 7)))
+  const geometry = new THREE.SphereGeometry(shellR, lat * 2, lat)
+
+  const hue = range(rng, 20, 55) / 360
+  const baseColor = stormy
+    ? new THREE.Color().setHSL(hue, 0.35, 0.55)
+    : new THREE.Color().setHSL(hue, 0.22, 0.78)
+  const stormColor = stormy
+    ? new THREE.Color().setHSL((hue + 0.08) % 1, 0.45, 0.28)
+    : new THREE.Color().setHSL(hue, 0.15, 0.9)
+
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+    uniforms: {
+      uTime: { value: 0 },
+      uStormy: { value: stormy ? 1.0 : 0.0 },
+      uBase: { value: baseColor },
+      uStorm: { value: stormColor },
+      uOpacity: { value: stormy ? 0.42 : 0.28 }
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vNormal;
+      varying vec3 vWorldPos;
+      varying vec3 vLocal;
+      void main() {
+        vNormal = normalize(normalMatrix * normal);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        vLocal = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uStormy;
+      uniform vec3 uBase;
+      uniform vec3 uStorm;
+      uniform float uOpacity;
+      varying vec3 vNormal;
+      varying vec3 vWorldPos;
+      varying vec3 vLocal;
+      void main() {
+        vec3 viewDir = normalize(cameraPosition - vWorldPos);
+        float fresnel = pow(1.0 - max(0.0, dot(normalize(vNormal), viewDir)), 2.2);
+        // Soft latitude bands + longitudinal drift (cloud flow).
+        float lat = vLocal.y;
+        float lon = atan(vLocal.z, vLocal.x);
+        float bands = 0.5 + 0.5 * sin(lat * 14.0 + uTime * (0.12 + uStormy * 0.35));
+        float swirl = 0.5 + 0.5 * sin(lon * 3.0 + lat * 6.0 - uTime * (0.25 + uStormy * 0.7));
+        // Stormy: darker blotches / oval storms
+        float oval = 0.0;
+        if (uStormy > 0.5) {
+          float d = length(vec2(lat * 1.4, fract(lon * 0.5 + uTime * 0.05) - 0.5));
+          oval = smoothstep(0.35, 0.08, d) * (0.6 + 0.4 * sin(uTime * 0.8));
+        }
+        float cloud = mix(bands, swirl, 0.45 + uStormy * 0.2) + oval * 0.55;
+        vec3 col = mix(uBase, uStorm, clamp(cloud * (0.55 + uStormy * 0.35), 0.0, 1.0));
+        // Stronger at limb so the atmosphere reads as a volume shell.
+        float alpha = uOpacity * (0.35 + fresnel * 0.75 + cloud * 0.2);
+        alpha = clamp(alpha * (0.55 + fresnel), 0.0, 0.85);
+        gl_FragColor = vec4(col, alpha);
+      }
+    `
+  })
+
+  const shell = new THREE.Mesh(geometry, material)
+  shell.userData.atmosphere = true
+  shell.userData.stormyAtmosphere = stormy
+  // Spin slightly faster/slower than the body for relative cloud drift.
+  shell.userData.atmosphereSpin = (stormy ? 0.018 : 0.008) * (rng() < 0.5 ? 1 : -1)
+  return shell
+}
+
 // Ice world — mostly smooth, pale base with brighter cracks and whiter poles.
 function buildIce(radius, rng) {
   const geometry = sphereGeometryForRadius(radius)
@@ -228,6 +310,14 @@ export function buildPlanetMesh(body) {
   })
   const mesh = new THREE.Mesh(geometry, material)
 
+  // Every gas giant gets a cloudy atmosphere shell; ~38% are stormy.
+  if (body.kind === 'planet' && archetypeName === 'gasGiant') {
+    const stormy = rng() < 0.38
+    mesh.add(buildGasGiantAtmosphere(radius, rng, stormy))
+    mesh.userData.hasAtmosphere = true
+    mesh.userData.stormyAtmosphere = stormy
+  }
+
   // ~3% of planets (never moons) get a ring — purely cosmetic, so it's
   // decided from the same per-body rng rather than a persisted field, same
   // convention as archetype/color selection above.
@@ -250,4 +340,18 @@ export function buildPlanetMesh(body) {
     : range(rng, 0.008, 0.024) * (rng() < 0.5 ? 1 : -1)
 
   return mesh
+}
+
+/** Animate gas-giant cloud shells (time + relative spin). */
+export function updatePlanetAtmosphere(mesh, elapsed, dt) {
+  if (!mesh?.userData?.hasAtmosphere) return
+  mesh.traverse((child) => {
+    if (!child.userData?.atmosphere) return
+    if (child.material?.uniforms?.uTime) {
+      child.material.uniforms.uTime.value = elapsed
+    }
+    if (child.userData.atmosphereSpin) {
+      child.rotation.y += child.userData.atmosphereSpin * dt
+    }
+  })
 }

@@ -25,6 +25,7 @@ export const SETTLEMENT_EXTERIOR_RADIUS = 200
  */
 export function collisionRadiusFor(body) {
   if (body.kind === 'planet' || body.kind === 'moon' || body.kind === 'asteroidField') return body.radius
+  if (body.kind === 'warpGate') return body.radius ?? 140
   if (body.kind === 'station') return STATION_COLLISION_RADIUS
   if (body.kind === 'settlement') return SETTLEMENT_COLLISION_RADIUS
   return null
@@ -49,6 +50,7 @@ export function exteriorRadiusFor(body) {
 export function npcExclusionRadiusFor(body) {
   if (!body) return null
   if (body.kind === 'asteroidField') return null
+  if (body.kind === 'warpGate') return null
   if (body.kind === 'station' || body.kind === 'settlement') return exteriorRadiusFor(body)
   if (body.kind === 'planet' || body.kind === 'moon') {
     const r = body.radius
@@ -129,6 +131,8 @@ export function resolveBodyCollisions(shipState, bodies, shipRadius, options = {
       resolveAsteroidFieldCollisions(shipState, shipPos, body, shipRadius, isRockAlive)
       continue
     }
+    // Warp gates are hollow portals — fly through, no solid bounce.
+    if (body.kind === 'warpGate') continue
 
     const bodyRadius = collisionRadiusFor(body)
     if (bodyRadius == null) continue
@@ -163,6 +167,7 @@ export function trySupercruiseTunnel(
     // Belts have no solid field shell — fly through; individual rocks are tiny
     // at cruise speed and are not worth tunnel VFX.
     if (body.kind === 'asteroidField') continue
+    if (body.kind === 'warpGate') continue
 
     const bodyRadius = collisionRadiusFor(body)
     if (bodyRadius == null) continue

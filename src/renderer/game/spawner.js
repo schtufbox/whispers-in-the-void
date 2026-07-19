@@ -280,32 +280,107 @@ export function spawnPolicePatrolNearStation(rng, station, allBodies = null) {
 }
 
 /**
- * Ensure Sec 3–6 systems have police ships on station duty.
- * Higher security → more patrols per station (up to 2).
+ * Warp-gate patrol — loiters outside the portal (Sec 4–6 only).
+ * Reuses station-patrol AI (patrolAnchor + radius ring).
+ */
+export function spawnPolicePatrolNearWarpGate(rng, gate, allBodies = null) {
+  const shell = exteriorRadiusFor(gate) ?? npcExclusionRadiusFor(gate) ?? gate.radius ?? 140
+  // Hollow portals: sit well outside the 2 km activation bubble edge so they
+  // don't block F-jumps — patrol a ring ~2.2–2.8 km from the gate centre.
+  const minDist = Math.max(shell + NPC_SPAWN_SHIP_RADIUS + 200, 2200)
+  const maxDist = minDist + 600
+  let position = null
+  for (let i = 0; i < 48; i++) {
+    const dist = range(rng, minDist, maxDist)
+    const theta = rng() * Math.PI * 2
+    const phi = Math.acos(2 * rng() - 1)
+    const candidate = [
+      gate.position[0] + dist * Math.sin(phi) * Math.cos(theta),
+      gate.position[1] + dist * Math.cos(phi) * 0.35,
+      gate.position[2] + dist * Math.sin(phi) * Math.sin(theta)
+    ]
+    if (!positionOverlapsBodies(candidate, allBodies ?? [gate])) {
+      position = candidate
+      break
+    }
+  }
+  if (!position) {
+    position = clearPositionOfBodies(
+      [gate.position[0] + minDist + 100, gate.position[1], gate.position[2]],
+      allBodies ?? [gate]
+    )
+  } else {
+    position = clearPositionOfBodies(position, allBodies ?? [gate])
+  }
+
+  const npc = spawnNpcWithClass(rng, {
+    shipClassId: POLICE_SHIP_CLASS_ID,
+    position,
+    faction: 'police',
+    bodies: allBodies
+  })
+  npc.stationPatrol = true
+  npc.warpGatePatrol = true
+  npc.patrolStationId = gate.id
+  npc.patrolWarpGateId = gate.id
+  npc.patrolAnchor = [...gate.position]
+  npc.patrolMinRadius = minDist
+  npc.patrolMaxRadius = maxDist
+  npc.patrolRadius = maxDist
+  return npc
+}
+
+/**
+ * Ensure higher-security systems have police on station duty (Sec 3–6) and at warp
+ * gates (Sec 4–6). Higher security → more patrols per fixture (up to 2).
  * @returns {object[]} newly spawned NPCs
  */
 export function ensureStationPolicePatrols(rng, gameState, system, securityRating) {
   if (!gameState || !system || securityRating < 3) return []
-  const stations = (system.bodies ?? []).filter((b) => b.kind === 'station')
-  if (!stations.length) return []
-
-  const perStation = securityRating >= 5 ? 2 : 1
+  const bodies = system.bodies ?? []
   const spawned = []
+
+  // Stations: Sec 3–6
+  const stations = bodies.filter((b) => b.kind === 'station')
+  const perStation = securityRating >= 5 ? 2 : 1
   for (const station of stations) {
     const live = (gameState.npcs ?? []).filter(
       (n) =>
         !n.destroyed &&
         n.faction === 'police' &&
         n.stationPatrol &&
+        !n.warpGatePatrol &&
         n.patrolStationId === station.id
     ).length
     const need = Math.max(0, perStation - live)
     for (let i = 0; i < need; i++) {
-      const npc = spawnPolicePatrolNearStation(rng, station, system.bodies)
+      const npc = spawnPolicePatrolNearStation(rng, station, bodies)
       gameState.npcs.push(npc)
       spawned.push(npc)
     }
   }
+
+  // Warp gates: Sec 4–6 only
+  if (securityRating >= 4) {
+    const gates = bodies.filter((b) => b.kind === 'warpGate')
+    const perGate = securityRating >= 6 ? 2 : 1
+    for (const gate of gates) {
+      const live = (gameState.npcs ?? []).filter(
+        (n) =>
+          !n.destroyed &&
+          n.faction === 'police' &&
+          n.warpGatePatrol &&
+          n.patrolWarpGateId === gate.id
+      ).length
+      const need = Math.max(0, perGate - live)
+      for (let i = 0; i < need; i++) {
+        const npc = spawnPolicePatrolNearWarpGate(rng, gate, bodies)
+        gameState.npcs.push(npc)
+        spawned.push(npc)
+      }
+    }
+  }
+
   return spawned
 }
 

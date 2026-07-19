@@ -1,13 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createGameState } from './state.js'
+import { TEST_GALAXY_OPTS } from '../procgen/galaxy.js'
 import { serializeGameState, deserializeGameState } from './save.js'
 import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { acceptMission } from './missions.js'
 
 test('serialize then deserialize round-trips player, galaxy, and missions, and drops ephemeral encounter state', () => {
   const gameState = createGameState({
-    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5
+    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5,
+    galaxyOpts: TEST_GALAXY_OPTS
   })
   gameState.player.credits = 4321
   gameState.player.ship.position = [10, 20, 30]
@@ -29,7 +31,8 @@ test('serialize then deserialize round-trips player, galaxy, and missions, and d
 
 test('docked pose fields round-trip through save', () => {
   const gameState = createGameState({
-    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5
+    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5,
+    galaxyOpts: TEST_GALAXY_OPTS
   })
   const station = gameState.galaxy.systems
     .flatMap((s) => s.bodies)
@@ -51,7 +54,8 @@ test('docked pose fields round-trip through save', () => {
 
 test('load clears hardpoint cooldowns so weapons work after a docked save', () => {
   const gameState = createGameState({
-    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5
+    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5,
+    galaxyOpts: TEST_GALAXY_OPTS
   })
   // Simulate a long session that fired recently: readyAt is far ahead of
   // the post-load simTime (always 0).
@@ -67,7 +71,8 @@ test('load clears hardpoint cooldowns so weapons work after a docked save', () =
 
 test('an active, incomplete bounty mission respawns its target npc on load', () => {
   const gameState = createGameState({
-    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5
+    characterName: 'Nova', shipInstanceName: 'Wanderer', shipClassId: STARTER_SHIP_CLASS_ID, seed: 5,
+    galaxyOpts: TEST_GALAXY_OPTS
   })
   const bounty = gameState.missions.available.find((m) => m.type === 'bounty')
   acceptMission(gameState, bounty.id, Math.random)

@@ -13,7 +13,7 @@ export const ACCESSORIES = [
     id: 'autopilot',
     name: 'Autopilot',
     description:
-      'When a multi-hop route is plotted, engages consecutive hyperspace jumps with a short pause between systems.',
+      'When a multi-hop route is plotted, supercruises to each warp gate, jumps, and continues the chain until you arrive.',
     price: 10000
   },
   {

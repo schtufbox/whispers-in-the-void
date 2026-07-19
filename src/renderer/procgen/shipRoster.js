@@ -1,6 +1,6 @@
 import { pick, range, intRange } from './prng.js'
 
-// Unique ship model names — no Mk / I / II / III. Avoid EVE Online / Elite names.
+// Unique ship model names — no Mk / I / II / III.
 const SHIP_NAME_POOL = [
   // Single-word
   'Draymon', 'Solace', 'Ember', 'Halcyon', 'Meridian', 'Vireo', 'Nomad', 'Ithaca',

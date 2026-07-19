@@ -1,15 +1,16 @@
 import { getSystem } from '../procgen/galaxy.js'
 import { missionMarkedBodyIds } from '../game/missions.js'
+import { overviewAnomalies } from '../game/systemScan.js'
 import { escapeHtml } from './escapeHtml.js'
 
 // Synthetic waypoint id for the system sun (must match main.js).
 export const SYSTEM_STAR_WAYPOINT_ID = 'system-star'
 
 const STYLE = `
-/* Stacked under #radar (right:16 top:16, 176px frame).
-   Right-column chrome: top-left cut + cyan accent on the right. */
+/* Right column: radar (top:16 h:176) → System Scan (top:198) → overview.
+   Button ends ~230px; 6px gap → top 236. */
 #system-overview {
-  position: fixed; top: 204px; right: 16px; width: 176px; max-height: calc(100vh - 224px);
+  position: fixed; top: 236px; right: 16px; width: 176px; max-height: calc(100vh - 252px);
   z-index: 8; font-family: monospace; color: #cfe3ff; pointer-events: none;
   display: none;
   background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.82));
@@ -55,6 +56,8 @@ const STYLE = `
   text-shadow: 0 0 6px rgba(127,224,160,0.4);
 }
 #system-overview .ov-row.mission { color: #ffb07a; }
+#system-overview .ov-row.warp { color: #c9a0ff; }
+#system-overview .ov-row.anomaly { color: #d4a0ff; }
 #system-overview .ov-name {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
@@ -74,11 +77,15 @@ function dist3(a, b) {
 
 function kindLabel(kind) {
   if (kind === 'asteroidField') return 'belt'
+  if (kind === 'warpGate') return 'warp gate'
+  if (kind === 'anomaly') return 'anomaly'
+  if (kind === 'alien_incursion') return 'incursion'
+  if (kind === 'datacore') return 'datacore'
   return kind
 }
 
 /**
- * EVE-style system overview HUD: list of bodies in the current system.
+ * System overview HUD: list of bodies in the current system.
  * Click (when interactive / not flight-mode) toggles a navigation waypoint.
  *
  * @param {HTMLElement} container
@@ -121,6 +128,13 @@ export function createSystemOverview(container, gameState, hooks = {}) {
     if (!system || !gameState?.player) return null
     const playerPos = gameState.player.ship.position
     const missionBodies = missionMarkedBodyIds(gameState, system.id)
+    const anomalyRows = overviewAnomalies(system, gameState.galaxy).map((a) => ({
+      id: a.id,
+      name: a.displayName || 'Spatial Anomaly',
+      kind: a.type === 'alien_incursion' ? 'alien_incursion' : a.type === 'datacore' ? 'datacore' : 'anomaly',
+      position: a.position,
+      anomaly: true
+    }))
     const rows = [
       {
         id: SYSTEM_STAR_WAYPOINT_ID,
@@ -133,7 +147,8 @@ export function createSystemOverview(container, gameState, hooks = {}) {
         name: b.name,
         kind: b.kind,
         position: b.position
-      }))
+      })),
+      ...anomalyRows
     ]
       .map((r) => ({ ...r, d: dist3(playerPos, r.position) }))
       .sort((a, b) => a.d - b.d)
@@ -162,10 +177,14 @@ export function createSystemOverview(container, gameState, hooks = {}) {
       .map((r) => {
         const isWp = gameState.player.waypointBodyId === r.id
         const isMission = missionBodies.has(r.id)
+        const isWarp = r.kind === 'warpGate'
+        const isAnomaly = !!r.anomaly
         const classes = [
           'ov-row',
           isWp ? 'waypoint' : '',
-          isMission ? 'mission' : ''
+          isMission ? 'mission' : '',
+          isWarp ? 'warp' : '',
+          isAnomaly ? 'anomaly' : ''
         ]
           .filter(Boolean)
           .join(' ')

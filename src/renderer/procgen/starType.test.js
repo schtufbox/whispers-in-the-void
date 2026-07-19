@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createGameState } from '../game/state.js'
+import { TEST_GALAXY_OPTS } from '../procgen/galaxy.js'
 import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { generateGalaxy, WHISPERS_SYSTEM_NAME } from './galaxy.js'
 import { starTypeForSystem, isExoticStarType } from './starType.js'
@@ -8,11 +9,12 @@ import { starTypeForSystem, isExoticStarType } from './starType.js'
 test('new games never start in a binary star system (unless forced to Whispers trinary for dev)', () => {
   for (let seed = 0; seed < 25; seed++) {
     const gs = createGameState({
-      characterName: 'Pilot',
+    characterName: 'Pilot',
       shipInstanceName: 'Ship',
       shipClassId: STARTER_SHIP_CLASS_ID,
-      seed
-    })
+      seed,
+    galaxyOpts: TEST_GALAXY_OPTS
+  })
     const system = gs.galaxy.systems.find((s) => s.id === gs.player.startingSystemId)
     assert.ok(system, `missing starting system for seed ${seed}`)
     const type = starTypeForSystem(system)
@@ -23,7 +25,7 @@ test('new games never start in a binary star system (unless forced to Whispers t
 
 test('trinary is exclusive to Whispers and never rolled for other systems', () => {
   for (const seed of [1, 42, 99]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     let trinaryCount = 0
     for (const system of galaxy.systems) {
       const type = starTypeForSystem(system)

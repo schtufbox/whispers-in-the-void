@@ -18,7 +18,7 @@ import {
 } from './probe.js'
 import { PROBE_BLUEPRINT_DROP_CHANCE } from './crafting.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID, SHIP_CLASSES } from '../data/shipClasses.js'
-import { generateGalaxy } from '../procgen/galaxy.js'
+import { generateGalaxy, TEST_GALAXY_OPTS } from '../procgen/galaxy.js'
 
 function freshShip() {
   return { cargo: {} }
@@ -172,7 +172,7 @@ test('mission re-probe is blocked once the probe contract is complete', () => {
 })
 
 test('probeSurveyReport classifies planets, moons, stars, and asteroid fields', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const system = galaxy.systems.find((s) => s.bodies.some((b) => b.kind === 'planet')) ?? galaxy.systems[0]
   const planet = system.bodies.find((b) => b.kind === 'planet')
   const moon = system.bodies.find((b) => b.kind === 'moon')

@@ -1,32 +1,5 @@
 import { SETTINGS_VIEW_CSS, settingsViewHTML, bindSettingsView } from './settingsView.js'
-
-const CONTROLS = [
-  ['Space', 'Enter / exit mouse-aim flight mode'],
-  ['Mouse', 'Aim (pitch & yaw) while in flight mode'],
-  ['Alt + Mouse', 'Free-look — orbit chase camera around ship'],
-  ['Alt + Enter', 'Toggle fullscreen'],
-  ['W / S', 'Throttle forward / reverse'],
-  ['A / D', 'Strafe left / right'],
-  ['X / Z', 'Strafe up / down'],
-  ['Q / E', 'Roll left / right'],
-  ['LMB', 'Fire lasers'],
-  ['RMB', 'Fire missiles'],
-  ['Tab', 'Acquire / cycle target under crosshair'],
-  ['Shift+Tab', 'Clear target lock'],
-  ['Ctrl+Tab', 'Set waypoint on body under crosshair'],
-  ['C', 'Toggle supercruise (requires a waypoint)'],
-  ['M', 'Galaxy map / hyperspace jump'],
-  ['F', 'Dock at station/settlement or loot wreck'],
-  ['P', 'Launch survey probe (orbit / near target)'],
-  ['G', 'Launch drones (buy & equip from Shipyard Armoury)'],
-  ['H', 'Recall drones to bay'],
-  ['I', 'Inventory'],
-  ['J', 'Missions'],
-  ['F1', 'Character sheet'],
-  ['Esc', 'Pause / resume'],
-  ['F5', 'Quick save'],
-  ['Free mouse', 'Click system overview (left) to set waypoints']
-]
+import { controlsListHTML } from './controlsList.js'
 
 const STYLE = `
 /* Above docking chrome (z 50–55) so pause works while docked. */
@@ -38,8 +11,8 @@ const STYLE = `
   box-shadow: 0 0 30px rgba(79,195,217,0.25), inset 0 0 26px rgba(79,195,217,0.05);
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
 }
-#pause-menu .panel.controls-view { width: min(440px, 92vw); max-height: min(80vh, 640px); }
-#pause-menu .panel.settings-view { width: min(340px, 92vw); }
+#pause-menu .panel.controls-view { width: min(460px, 92vw); max-height: min(80vh, 640px); }
+#pause-menu .panel.settings-view { width: min(360px, 92vw); }
 #pause-menu h2 { margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 10px rgba(79,195,217,0.7); }
 #pause-menu button {
   background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
@@ -66,7 +39,7 @@ ${SETTINGS_VIEW_CSS}
   margin: 0 0 4px 0; padding-right: 4px;
 }
 #pause-menu .controls-list .row {
-  display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: baseline;
+  display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: baseline;
   font-size: 12px; line-height: 1.35;
 }
 #pause-menu .controls-list .key {
@@ -97,9 +70,7 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
     <div class="panel controls-view" style="display:none;">
       <h2>Controls</h2>
       <div class="controls-list">
-        ${CONTROLS.map(([key, label]) => `
-          <div class="row"><span class="key">${key}</span><span class="label">${label}</span></div>
-        `).join('')}
+        ${controlsListHTML()}
       </div>
       <button class="controls-back">Back</button>
     </div>
@@ -137,7 +108,10 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
     showMain()
   }
 
-  const settingsApi = bindSettingsView(settingsView, { onBack: showMain })
+  const settingsApi = bindSettingsView(settingsView, {
+    onBack: showMain,
+    onShowControls: showControls
+  })
 
   root.querySelector('.resume').addEventListener('click', () => {
     hide()

@@ -52,6 +52,11 @@ export function settingsViewHTML() {
       </div>
       <p class="settings-note">Title, ambient, and death tracks. Saved as defaults.</p>
     </div>
+    <div class="settings-section">
+      <div class="settings-label">Help</div>
+      <button type="button" class="settings-controls">Controls</button>
+      <p class="settings-note">Keyboard and mouse bindings.</p>
+    </div>
     <button type="button" class="settings-back">Back</button>
   `
 }
@@ -59,14 +64,15 @@ export function settingsViewHTML() {
 /**
  * Wire SFX + music controls inside a settings view root.
  * @param {HTMLElement} rootEl
- * @param {{ onBack: () => void }} opts
+ * @param {{ onBack: () => void, onShowControls?: () => void }} opts
  * @returns {{ refresh: () => Promise<void> }}
  */
-export function bindSettingsView(rootEl, { onBack }) {
+export function bindSettingsView(rootEl, { onBack, onShowControls } = {}) {
   const btnSfxOn = rootEl.querySelector('.sfx-on')
   const btnSfxOff = rootEl.querySelector('.sfx-off')
   const btnMusicOn = rootEl.querySelector('.music-on')
   const btnMusicOff = rootEl.querySelector('.music-off')
+  const btnControls = rootEl.querySelector('.settings-controls')
 
   function refreshButtons() {
     const sfx = audio.isSfxEnabled()
@@ -97,6 +103,9 @@ export function bindSettingsView(rootEl, { onBack }) {
   btnMusicOff.addEventListener('click', async () => {
     await persistMusicEnabled(false)
     refreshButtons()
+  })
+  btnControls?.addEventListener('click', () => {
+    if (onShowControls) onShowControls()
   })
   rootEl.querySelector('.settings-back').addEventListener('click', () => onBack())
 

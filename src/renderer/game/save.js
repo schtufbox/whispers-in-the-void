@@ -7,7 +7,8 @@ import { ensureBlueprintMaps, updateCraftingJobs } from './crafting.js'
 import { applyOfflineTime, reanchorGameClock } from './gameClock.js'
 import { ensureDrones } from './drones.js'
 import { ensureLawStanding } from './security.js'
-import { ensureSystemSecurity, getSystem } from '../procgen/galaxy.js'
+import { ensureSystemSecurity, ensureWarpGates, getSystem } from '../procgen/galaxy.js'
+import { tickGalaxyAnomalies } from './systemScan.js'
 import { ensureSkills } from './skills.js'
 
 /** Remap qty map keys through a resolver, merging collisions. */
@@ -214,6 +215,8 @@ export function deserializeGameState(data) {
   gameState.player.startingSystemId ??= null
   gameState.player.waypointPosition ??= null
   gameState.player.plottedRoute ??= null
+  // Fixed galaxy layout seed (layout is regenerated only on New Game).
+  gameState.galaxySeed ??= data.galaxySeed ?? data.seed ?? null
   // Pre-docking-save fields: null = was flying when saved.
   gameState.player.dockedBodyId ??= null
   gameState.player.dockedExteriorPosition ??= null
@@ -225,6 +228,8 @@ export function deserializeGameState(data) {
   for (const system of gameState.galaxy?.systems ?? []) {
     ensureSystemSecurity(system)
   }
+  // Warp gates (post-2.7.1): rebuild from neighbor lanes if missing/stale.
+  ensureWarpGates(gameState.galaxy)
   // Home system is always maximum security (core capital authority).
   if (gameState.player.startingSystemId) {
     const home = getSystem(gameState.galaxy, gameState.player.startingSystemId)
@@ -256,6 +261,15 @@ export function deserializeGameState(data) {
   const offlineS = applyOfflineTime(gameState, nowMs, data.savedAtWallMs ?? null)
   gameState._offlineSecondsApplied = offlineS
   reanchorGameClock(gameState, nowMs)
+
+  // Catch up anomaly epoch after offline time (4h galaxy-wide refresh).
+  if (gameState.galaxy) {
+    const { refreshed } = tickGalaxyAnomalies(gameState.galaxy, gameState.simTime)
+    gameState._anomaliesRefreshedOffline = refreshed
+    if (refreshed && gameState.player?.waypointBodyId && String(gameState.player.waypointBodyId).startsWith('anomaly-')) {
+      gameState.player.waypointBodyId = null
+    }
+  }
 
   // Resolve any crafts that finished while the save was offline (wall-clock).
   // Toasts for those completions are fired by main.js after load.

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mulberry32 } from '../procgen/prng.js'
 import { createGameState } from '../game/state.js'
+import { TEST_GALAXY_OPTS } from '../procgen/galaxy.js'
 import { acceptMission, dropMission, finishMission } from '../game/missions.js'
 import { STARTER_SHIP_CLASS_ID } from './shipClasses.js'
 import {
@@ -15,7 +16,8 @@ function freshState(seed = 42) {
     characterName: 'Pilot',
     shipInstanceName: 'Ship',
     shipClassId: STARTER_SHIP_CLASS_ID,
-    seed
+    seed,
+    galaxyOpts: TEST_GALAXY_OPTS
   })
 }
 

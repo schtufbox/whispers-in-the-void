@@ -1,10 +1,12 @@
-import { mulberry32, pick } from '../procgen/prng.js'
+import { mulberry32 } from '../procgen/prng.js'
 import {
   generateGalaxy,
   SYSTEM_ARRIVAL_POSITION,
   coreFraction,
   ensureStartingSystemFacilities,
-  WHISPERS_SYSTEM_NAME
+  applyStartingSystemName,
+  WHISPERS_SYSTEM_NAME,
+  CANONICAL_GALAXY_SEED
 } from '../procgen/galaxy.js'
 import { starTypeForSystem, isExoticStarType } from '../procgen/starType.js'
 import { getShipClass } from '../data/shipClasses.js'
@@ -15,36 +17,34 @@ import { emptySkills } from '../data/skills.js'
 import { quatFacingSun } from './hyperspace.js'
 
 // Dev convenience: start new games in the outer-rim Whispers system.
-// Flip to true only while testing Whispers; normal play starts near the core.
+// Flip to true only while testing Whispers; normal play starts at galactic centre.
 const START_IN_WHISPERS = false
 
-// Home system is always deep galactic core (max security 6, station police, etc.).
-// Picked from the innermost systems by distance from origin; binaries excluded
-// so a new game opens on a single sun (menu flyby still forces a binary).
-function pickStartingSystem(galaxy, rng) {
+/**
+ * Home system is always the same: the system closest to the galactic origin
+ * (fixed galaxy seed → fixed centre). Prefer a single-star system so New Game
+ * does not open on a binary. Security is forced to max (core authority).
+ * Independent of the player career `seed`.
+ */
+function pickStartingSystem(galaxy) {
   if (START_IN_WHISPERS) {
     const whispers = galaxy.systems.find((s) => s.name === WHISPERS_SYSTEM_NAME)
     if (whispers) {
-      // Dev path: still force top security when testing Whispers.
       whispers.securityRating = 6
       return whispers
     }
   }
-  const sorted = [...galaxy.systems].sort((a, b) => coreFraction(a) - coreFraction(b))
-  // Innermost ~2% of systems (min 3) = true core centre, not mid-core band.
-  const coreCount = Math.max(3, Math.floor(sorted.length * 0.02))
-  const coreCentre = sorted.slice(0, coreCount)
-  const nonExotic = coreCentre.filter((s) => !isExoticStarType(starTypeForSystem(s)))
-  let home
-  if (nonExotic.length) {
-    home = pick(rng, nonExotic)
-  } else {
-    // Extremely unlikely; fall back to nearest simple star system galaxy-wide.
-    const anySimple = sorted.filter((s) => !isExoticStarType(starTypeForSystem(s)))
-    home = pick(rng, anySimple.length ? anySimple : coreCentre)
-  }
-  // Starting system is always maximum security (core authority presence).
-  home.securityRating = 6
+  // Closest to centre first; stable id tie-break.
+  const ranked = [...galaxy.systems].sort((a, b) => {
+    const da = coreFraction(a)
+    const db = coreFraction(b)
+    if (da !== db) return da - db
+    return String(a.id).localeCompare(String(b.id))
+  })
+  const home =
+    ranked.find((s) => !isExoticStarType(starTypeForSystem(s))) ?? ranked[0]
+  // Named Terra Prime for every New Game (warp gates retagged in apply).
+  applyStartingSystemName(home, galaxy)
   return home
 }
 
@@ -53,23 +53,31 @@ export function createGameState({
   shipInstanceName,
   shipClassId,
   seed,
-  portraitDataUrl = null
+  portraitDataUrl = null,
+  /** Passed through to generateGalaxy (tests use a compact galaxy). */
+  galaxyOpts = undefined,
+  /** Override only for tests; production always uses CANONICAL_GALAXY_SEED. */
+  galaxySeed = CANONICAL_GALAXY_SEED
 }) {
-  const galaxy = generateGalaxy(seed)
+  // Shared galaxy layout (systems, names, lanes) — always the same seed in prod.
+  // Player `seed` only diversifies mission boards / career roll, not the map or home.
+  const galaxy = generateGalaxy(galaxySeed, galaxyOpts)
   const shipClass = getShipClass(shipClassId)
-  // Separate rng streams (seed+1, seed+2) keep mission generation and
-  // starting-system choice independent of galaxy layout generation, without
-  // needing to expose galaxy.js's internal rng.
-  const startingSystem = pickStartingSystem(galaxy, mulberry32(seed + 2))
-  // Home system always has a station and two settlements to dock at.
-  ensureStartingSystemFacilities(startingSystem, mulberry32(seed + 3), galaxy._nextBodyId ?? 0)
-  // Missions after facilities so starting-system boards get seeded too.
+  const startingSystem = pickStartingSystem(galaxy)
+  // Home facilities are also fixed from the galaxy seed (identical every New Game).
+  ensureStartingSystemFacilities(
+    startingSystem,
+    mulberry32((galaxySeed >>> 0) + 0x51aced),
+    galaxy._nextBodyId ?? 0
+  )
+  // Missions still use the career seed so each pilot gets a different board.
   const missionRng = mulberry32(seed + 1)
   const availableMissions = seedMissionsForGalaxy(missionRng, galaxy)
 
   const gameState = {
     version: 1,
     seed,
+    galaxySeed,
     createdAt: new Date().toISOString(),
     player: {
       name: characterName,

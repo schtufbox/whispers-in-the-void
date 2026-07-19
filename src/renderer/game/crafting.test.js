@@ -31,6 +31,7 @@ import {
   PROBE_BLUEPRINT_DROP_CHANCE
 } from './crafting.js'
 import { createGameState } from './state.js'
+import { TEST_GALAXY_OPTS } from '../procgen/galaxy.js'
 import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { WEAPONS } from '../data/weapons.js'
 import { ACCESSORIES } from '../data/accessories.js'
@@ -40,7 +41,8 @@ function freshState() {
     characterName: 'Crafter',
     shipInstanceName: 'Rig',
     shipClassId: STARTER_SHIP_CLASS_ID,
-    seed: 42
+    seed: 42,
+    galaxyOpts: TEST_GALAXY_OPTS
   })
 }
 

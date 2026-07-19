@@ -17,6 +17,7 @@ import {
 import { generateTradeMission } from '../data/missionTemplates.js'
 import { systemsWithinJumps } from '../procgen/galaxy.js'
 import { createGameState } from './state.js'
+import { TEST_GALAXY_OPTS } from '../procgen/galaxy.js'
 import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { findBody } from '../procgen/galaxy.js'
 
@@ -25,7 +26,8 @@ function freshState(seed = 7) {
     characterName: 'Pilot',
     shipInstanceName: 'Ship',
     shipClassId: STARTER_SHIP_CLASS_ID,
-    seed
+    seed,
+    galaxyOpts: TEST_GALAXY_OPTS
   })
 }
 

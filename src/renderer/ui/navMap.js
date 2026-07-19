@@ -6,42 +6,112 @@ import { shipHasAutopilot } from '../data/accessories.js'
 import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
-/* Above docking chrome (z 50) so Map/Missions work while docked. */
-#nav-map { position: fixed; inset: 0; background: rgba(4,6,12,0.94); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 55; }
-#nav-map .panel {
-  width: 1020px; max-height: 90vh; overflow-y: auto; padding: 18px 22px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
-  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
-  box-shadow: 0 0 26px rgba(79,195,217,0.22), inset 0 0 26px rgba(79,195,217,0.05);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+/* Match System Scan: dim scrim + ~60% centered panel (above docking z 50). */
+#nav-map {
+  position: fixed; inset: 0; z-index: 55; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(2, 6, 14, 0.55);
+  backdrop-filter: blur(2px);
+  font-family: monospace; color: #cfe3ff;
+  padding: 3vh 3vw;
+  box-sizing: border-box;
 }
-#nav-map h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
+#nav-map .panel {
+  width: min(60vw, 1100px);
+  height: min(60vh, 720px);
+  max-width: 100%;
+  max-height: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  padding: 12px 16px;
+  background: rgba(4,8,16,0.96);
+  border: 1px solid rgba(111,216,242,0.4);
+  border-right: 3px solid #6fd8f2;
+  box-shadow: 0 0 28px rgba(79,195,217,0.28), 0 12px 40px rgba(0,0,0,0.55);
+  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% 100%, 0 100%);
+  box-sizing: border-box;
+}
+#nav-map h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); margin: 0; font-size: 15px; }
 #nav-map h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 0 0 8px 0; }
-#nav-map .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+#nav-map .header {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  margin-bottom: 10px; flex-shrink: 0;
+  padding-bottom: 8px; border-bottom: 1px solid rgba(111,216,242,0.25);
+}
+#nav-map .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#nav-map .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#nav-map .sys-search {
+  width: min(200px, 28vw);
+  box-sizing: border-box;
+  font-family: monospace; font-size: 12px; letter-spacing: 0.4px;
+  padding: 6px 10px;
+  color: #eaffff;
+  background: rgba(8,14,24,0.9);
+  border: 1px solid rgba(111,216,242,0.4);
+  border-right: 2px solid #6fd8f2;
+  outline: none;
+}
+#nav-map .sys-search::placeholder { color: rgba(180,210,240,0.4); }
+#nav-map .sys-search:focus {
+  border-color: rgba(127,230,255,0.7);
+  box-shadow: 0 0 10px rgba(79,195,217,0.25);
+}
+#nav-map .sys-search.match {
+  border-color: rgba(127,224,160,0.65);
+  box-shadow: 0 0 10px rgba(127,224,160,0.2);
+}
+#nav-map .sys-search.nomatch:not(:placeholder-shown) {
+  border-color: rgba(224,90,90,0.55);
+}
 #nav-map button.close {
   background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
-  padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
+  padding: 6px 14px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 #nav-map button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
-#nav-map .galaxy-body { display: flex; gap: 16px; position: relative; }
-#nav-map canvas { background: #05070d; border: 1px solid rgba(111,216,242,0.3); cursor: crosshair; border-radius: 4px; box-shadow: 0 0 20px rgba(79,195,217,0.15); flex-shrink: 0; }
+#nav-map .tab-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#nav-map .galaxy-body {
+  flex: 1; display: flex; gap: 12px; min-height: 0; position: relative; align-items: stretch;
+}
+#nav-map .map-canvas-wrap {
+  flex: 1; min-width: 0; min-height: 0; position: relative;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, #0a1428 0%, #040810 70%);
+  border: 1px solid rgba(111,216,242,0.25);
+}
+#nav-map canvas {
+  background: #05070d; border: none; cursor: crosshair;
+  display: block; max-width: 100%; max-height: 100%;
+}
+#nav-map .map-hint {
+  position: absolute; left: 10px; bottom: 8px; font-size: 10px; letter-spacing: 0.4px;
+  color: rgba(180,210,240,0.65); pointer-events: none; font-family: monospace;
+}
 #nav-map .map-tooltip {
-  position: absolute; pointer-events: none; font-size: 12px; color: #eaffff;
+  position: absolute; pointer-events: none; font-size: 11px; color: #eaffff;
   background: rgba(10,14,24,0.92); border: 1px solid rgba(94,230,255,0.5); padding: 4px 9px;
   box-shadow: 0 0 10px rgba(79,195,217,0.3);
-  white-space: nowrap; display: none; transform: translate(-50%, -130%);
+  white-space: nowrap; display: none; transform: translate(-50%, -130%); z-index: 2;
 }
-#nav-map .info-panel { flex: 1; min-width: 240px; max-width: 280px; }
+#nav-map .info-panel {
+  width: 240px; flex-shrink: 0; overflow-y: auto; min-height: 0;
+  padding-left: 2px;
+}
 #nav-map .info-panel .stat { margin-bottom: 4px; font-size: 13px; opacity: 0.9; }
 #nav-map .info-panel .stat.route-hint { color: #ffe08a; opacity: 0.95; margin-top: 6px; font-size: 12px; }
-#nav-map button.jump {
+#nav-map button.engage-ap {
   background: rgba(127,224,160,0.12); border: 1px solid rgba(127,224,160,0.5); color: #bdf5cf;
   padding: 9px 16px; cursor: pointer; margin-top: 12px; width: 100%; font-family: monospace;
   letter-spacing: 1px; transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#nav-map button.jump:not(:disabled):hover { background: rgba(127,224,160,0.22); box-shadow: 0 0 14px rgba(127,224,160,0.35); }
-#nav-map button.jump:disabled { opacity: 0.35; cursor: not-allowed; }
+#nav-map button.engage-ap:not(:disabled):hover { background: rgba(127,224,160,0.22); box-shadow: 0 0 14px rgba(127,224,160,0.35); }
+#nav-map button.engage-ap:disabled { opacity: 0.35; cursor: not-allowed; }
+#nav-map button.engage-ap[data-mode="cancel"] {
+  background: rgba(224,90,90,0.12); border-color: rgba(224,90,90,0.55); color: #ffb3b3;
+}
+#nav-map button.engage-ap[data-mode="cancel"]:not(:disabled):hover {
+  background: rgba(224,90,90,0.22); box-shadow: 0 0 14px rgba(224,90,90,0.35);
+}
 #nav-map button.plot-route {
   background: rgba(255,210,70,0.12); border: 1px solid rgba(255,210,70,0.55); color: #ffe08a;
   padding: 9px 16px; cursor: pointer; margin-top: 8px; width: 100%; font-family: monospace;
@@ -61,7 +131,7 @@ const STYLE = `
 #nav-map .route-panel h3 { color: #ffe08a; text-shadow: 0 0 6px rgba(255,210,70,0.45); }
 #nav-map .route-panel .route-empty { font-size: 12px; opacity: 0.5; line-height: 1.4; }
 #nav-map .route-list {
-  list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto;
+  list-style: none; margin: 0; padding: 0; max-height: 140px; overflow-y: auto;
 }
 #nav-map .route-list li {
   display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; margin-bottom: 3px;
@@ -125,8 +195,13 @@ export function createNavMap(container, gameState) {
   root.innerHTML = `
     <div class="panel">
       <div class="header">
-        <h2>Galaxy Map</h2>
-        <button class="close">Close</button>
+        <div class="header-left">
+          <h2>Galaxy Map</h2>
+        </div>
+        <div class="header-right">
+          <input type="search" class="sys-search" placeholder="Search system…" autocomplete="off" spellcheck="false" />
+          <button type="button" class="close">Close</button>
+        </div>
       </div>
       <div class="tab-content"></div>
     </div>
@@ -134,50 +209,185 @@ export function createNavMap(container, gameState) {
   container.appendChild(root)
 
   const contentEl = root.querySelector('.tab-content')
+  const searchInput = root.querySelector('.sys-search')
   let selectedSystemId = null
   let hoveredSystemId = null
+  // Camera: center (galaxy XZ) + half-extent radius shown on canvas.
+  let mapView = { cx: 0, cz: 0, radius: 400 }
+  /** Systems visible at default zoom (local neighborhood). */
+  const DEFAULT_VIEW_SYSTEM_CAP = 50
+  const mapKeys = new Set()
+  let mapPanRaf = 0
+  /** Latest draw() from the open galaxy tab (for WASD pan redraws). */
+  let redrawMap = null
+  /** Latest updateInfoPanel from open galaxy tab (search select refresh). */
+  let refreshInfoPanel = null
+
+  /**
+   * Best name match for query: exact → prefix → substring (case-insensitive).
+   * @returns {object|null} system
+   */
+  function findSystemByNameQuery(query) {
+    const q = String(query ?? '').trim().toLowerCase()
+    if (!q) return null
+    const systems = gameState.galaxy?.systems ?? []
+    let exact = null
+    let prefix = null
+    let contains = null
+    for (const s of systems) {
+      const name = String(s.name ?? '').toLowerCase()
+      if (!name) continue
+      if (name === q) {
+        exact = s
+        break
+      }
+      if (!prefix && name.startsWith(q)) prefix = s
+      else if (!contains && name.includes(q)) contains = s
+    }
+    return exact ?? prefix ?? contains
+  }
+
+  /** Center camera on a system (keep current zoom). */
+  function centerMapOnSystem(system) {
+    if (!system?.galaxyPosition) return
+    mapView.cx = system.galaxyPosition[0]
+    mapView.cz = system.galaxyPosition[2]
+    selectedSystemId = system.id
+    redrawMap?.()
+    refreshInfoPanel?.()
+  }
+
+  function applySystemSearch() {
+    const q = searchInput.value
+    searchInput.classList.remove('match', 'nomatch')
+    if (!String(q).trim()) return
+    const hit = findSystemByNameQuery(q)
+    if (hit) {
+      searchInput.classList.add('match')
+      centerMapOnSystem(hit)
+    } else {
+      searchInput.classList.add('nomatch')
+    }
+  }
+
+  searchInput.addEventListener('input', () => applySystemSearch())
+  searchInput.addEventListener('keydown', (e) => {
+    // Keep typing keys out of game/WASD handlers.
+    e.stopPropagation()
+    if (e.code === 'Escape') {
+      e.preventDefault()
+      searchInput.value = ''
+      searchInput.classList.remove('match', 'nomatch')
+      searchInput.blur()
+      return
+    }
+    if (e.code === 'Enter') {
+      e.preventDefault()
+      applySystemSearch()
+    }
+  })
+  searchInput.addEventListener('keyup', (e) => e.stopPropagation())
 
   function renderGalaxyTab() {
     const systems = gameState.galaxy.systems
     const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-    const maxRadius = Math.max(...systems.map((s) => Math.hypot(s.galaxyPosition[0], s.galaxyPosition[2]))) * 1.1
+    const galaxyMaxRadius =
+      Math.max(...systems.map((s) => Math.hypot(s.galaxyPosition[0], s.galaxyPosition[2])), 1) * 1.1
     const byId = new Map(systems.map((s) => [s.id, s]))
+
+    // Default camera: centered on current system, zoomed so ~50 systems fit.
+    {
+      const cx = currentSystem.galaxyPosition[0]
+      const cz = currentSystem.galaxyPosition[2]
+      const dists = systems
+        .map((s) => Math.hypot(s.galaxyPosition[0] - cx, s.galaxyPosition[2] - cz))
+        .sort((a, b) => a - b)
+      const k = Math.min(DEFAULT_VIEW_SYSTEM_CAP, dists.length) - 1
+      const localR = Math.max(120, (dists[k] ?? 400) * 1.12)
+      mapView = { cx, cz, radius: localR }
+    }
+    const minViewRadius = Math.max(80, galaxyMaxRadius * 0.02)
+    const maxViewRadius = galaxyMaxRadius
 
     contentEl.innerHTML = `
       <div class="galaxy-body">
-        <canvas width="680" height="680"></canvas>
-        <div class="map-tooltip"></div>
+        <div class="map-canvas-wrap">
+          <canvas width="640" height="640"></canvas>
+          <div class="map-tooltip"></div>
+          <div class="map-hint">Scroll zoom · WASD pan · default ~${DEFAULT_VIEW_SYSTEM_CAP} systems</div>
+        </div>
         <div class="info-panel">
           <h3 class="sel-name">—</h3>
           <div class="stat sel-security"></div>
           <div class="stat sel-bodies"></div>
           <div class="stat sel-distance"></div>
           <div class="stat route-hint"></div>
-          <button class="jump" disabled>Hyperspace Jump</button>
+          <button class="engage-ap" disabled>Engage Autopilot</button>
           <button class="plot-route" disabled>Plot Route</button>
           <div class="route-panel">
             <h3>Plotted Route</h3>
             <div class="route-list-wrap"></div>
           </div>
-          <div class="map-legend" style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(111,216,242,0.2);font-size:11px;line-height:1.55;opacity:0.75;">
+          <div class="map-legend" style="margin-top:12px;padding-top:8px;border-top:1px solid rgba(111,216,242,0.2);font-size:10px;line-height:1.5;opacity:0.75;">
+            <div><span style="color:rgba(120,190,230,0.9);">—</span> Cyan — warp gate lanes</div>
+            <div><span style="color:#ffd246;">—</span> Yellow — plotted route</div>
             <div><span style="color:#ff8a3d;">○</span> Orange — mission objective</div>
             <div><span style="color:#50dc78;">○</span> Green — stored assets in another system</div>
           </div>
         </div>
       </div>
     `
+    const canvasWrap = contentEl.querySelector('.map-canvas-wrap')
     const canvas = contentEl.querySelector('canvas')
     const ctx = canvas.getContext('2d')
     const tooltipEl = contentEl.querySelector('.map-tooltip')
-    const size = canvas.width
+    const margin = 16
+    let size = canvas.width
+    let half = size / 2 - margin
+
+    /** Fit square canvas into the map wrap (panel is ~60% of viewport). */
+    function syncCanvasSize() {
+      const availW = Math.max(160, canvasWrap.clientWidth - 4)
+      const availH = Math.max(160, canvasWrap.clientHeight - 4)
+      const s = Math.max(160, Math.floor(Math.min(availW, availH)))
+      if (s === size && canvas.width === s) return false
+      size = s
+      half = size / 2 - margin
+      canvas.width = size
+      canvas.height = size
+      return true
+    }
+    syncCanvasSize()
     // Shared by draw() (rings/dots) and the hover tooltip — must live outside
     // draw so mousemove can see it (was ReferenceError: missionSystems).
     const missionSystems = missionMarkedSystemIds(gameState)
     // Remote systems with stored ships/cargo/etc. (not the current system).
     const assetSystems = playerAssetSystemIds(gameState)
 
+    function clampViewRadius(r) {
+      return Math.min(maxViewRadius, Math.max(minViewRadius, r))
+    }
+
+    /** Galaxy XZ → canvas pixels (camera-relative). */
     function toCanvas(pos) {
-      return [size / 2 + (pos[0] / maxRadius) * (size / 2 - 16), size / 2 + (pos[2] / maxRadius) * (size / 2 - 16)]
+      return [
+        size / 2 + ((pos[0] - mapView.cx) / mapView.radius) * half,
+        size / 2 + ((pos[2] - mapView.cz) / mapView.radius) * half
+      ]
+    }
+
+    function canvasPointFromEvent(e) {
+      const rect = canvas.getBoundingClientRect()
+      const sx = canvas.width / Math.max(1, rect.width)
+      const sy = canvas.height / Math.max(1, rect.height)
+      return [(e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy]
+    }
+
+    /** True if galaxy point is near the visible square (for culling). */
+    function inView(pos, pad = 1.15) {
+      const dx = Math.abs(pos[0] - mapView.cx) / mapView.radius
+      const dz = Math.abs(pos[2] - mapView.cz) / mapView.radius
+      return dx <= pad && dz <= pad
     }
 
     function remainingRoute() {
@@ -193,20 +403,6 @@ export function createNavMap(container, gameState) {
       return canJumpTo(currentSystem, hop) ? hop : null
     }
 
-    /** Jump target: next route hop if available, else in-range selection. */
-    function resolveJumpTargetId() {
-      const hop = nextRouteHopId()
-      if (hop) return hop
-      if (
-        selectedSystemId &&
-        selectedSystemId !== currentSystem.id &&
-        canJumpTo(currentSystem, selectedSystemId)
-      ) {
-        return selectedSystemId
-      }
-      return null
-    }
-
     /** Full path ids for drawing: current + remaining hops. */
     function plottedPathIds() {
       const rem = remainingRoute()
@@ -219,7 +415,7 @@ export function createNavMap(container, gameState) {
       return findHyperspaceRoute(gameState.galaxy, currentSystem.id, selectedSystemId)
     }
 
-    // With an active route, default selection to the next hop so Jump is armed.
+    // With an active route, default selection to the next hop on the path.
     {
       const hop = nextRouteHopId()
       if (hop) selectedSystemId = hop
@@ -251,67 +447,94 @@ export function createNavMap(container, gameState) {
     }
 
     function draw() {
+      syncCanvasSize()
       ctx.clearRect(0, 0, size, size)
 
-      // A soft, bright glow at the galactic core fading toward the rim —
-      // gives the map an actual "galaxy" read at a glance, on top of the
-      // already spiral-arm-shaped system distribution (see procgen/galaxy.js's
-      // spiralPosition) rather than just a flat scatter of dots.
-      const glow = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
-      glow.addColorStop(0, 'rgba(143,179,255,0.16)')
-      glow.addColorStop(0.35, 'rgba(94,150,230,0.07)')
-      glow.addColorStop(1, 'rgba(94,150,230,0)')
-      ctx.fillStyle = glow
-      ctx.fillRect(0, 0, size, size)
+      // Soft core glow — projected so it stays fixed in galaxy space.
+      const [coreX, coreY] = toCanvas([0, 0, 0])
+      const corePx = (galaxyMaxRadius * 0.35 / mapView.radius) * half
+      if (corePx > 4) {
+        const glow = ctx.createRadialGradient(coreX, coreY, 0, coreX, coreY, corePx)
+        glow.addColorStop(0, 'rgba(143,179,255,0.18)')
+        glow.addColorStop(0.45, 'rgba(94,150,230,0.07)')
+        glow.addColorStop(1, 'rgba(94,150,230,0)')
+        ctx.fillStyle = glow
+        ctx.fillRect(0, 0, size, size)
+      } else {
+        ctx.fillStyle = 'rgba(20,30,50,0.35)'
+        ctx.fillRect(0, 0, size, size)
+      }
 
-      // Jump lanes: thin lines from the current system to each system it can
-      // actually reach, drawn under the dots so the map reads as "here's
-      // where you can go from here", not just "here's every system".
-      ctx.strokeStyle = 'rgba(94,230,255,0.35)'
+      // Lanes: only if at least one endpoint is in the padded view.
+      ctx.save()
+      ctx.strokeStyle = 'rgba(100, 190, 230, 0.28)'
       ctx.lineWidth = 1
-      const [cx, cy] = toCanvas(currentSystem.galaxyPosition)
-      for (const neighborId of currentSystem.neighborIds) {
-        const neighbor = systems.find((s) => s.id === neighborId)
+      ctx.lineCap = 'round'
+      const drawnLanes = new Set()
+      const pad = 1.25
+      for (const system of systems) {
+        const aIn = inView(system.galaxyPosition, pad)
+        for (const neighborId of system.neighborIds ?? []) {
+          const a = String(system.id)
+          const b = String(neighborId)
+          const key = a < b ? `${a}|${b}` : `${b}|${a}`
+          if (drawnLanes.has(key)) continue
+          drawnLanes.add(key)
+          const neighbor = byId.get(neighborId)
+          if (!neighbor) continue
+          if (!aIn && !inView(neighbor.galaxyPosition, pad)) continue
+          const [x0, y0] = toCanvas(system.galaxyPosition)
+          const [x1, y1] = toCanvas(neighbor.galaxyPosition)
+          ctx.beginPath()
+          ctx.moveTo(x0, y0)
+          ctx.lineTo(x1, y1)
+          ctx.stroke()
+        }
+      }
+      // Highlight lanes from the current system (brighter cyan).
+      const [curCx, curCy] = toCanvas(currentSystem.galaxyPosition)
+      ctx.strokeStyle = 'rgba(120, 230, 255, 0.75)'
+      ctx.lineWidth = 1.6
+      ctx.shadowColor = 'rgba(94,230,255,0.5)'
+      ctx.shadowBlur = 6
+      for (const neighborId of currentSystem.neighborIds ?? []) {
+        const neighbor = byId.get(neighborId)
         if (!neighbor) continue
         const [nx, ny] = toCanvas(neighbor.galaxyPosition)
         ctx.beginPath()
-        ctx.moveTo(cx, cy)
+        ctx.moveTo(curCx, curCy)
         ctx.lineTo(nx, ny)
         ctx.stroke()
       }
+      ctx.shadowBlur = 0
+      ctx.restore()
 
-      // Plotted multi-hop route (solid yellow).
+      // Plotted multi-hop route — solid yellow through every system on the path.
       const plotted = plottedPathIds()
-      if (plotted) {
-        drawPath(plotted, { color: 'rgba(255, 210, 70, 0.95)', lineWidth: 2.75 })
+      if (plotted && plotted.length > 1) {
+        drawPath(plotted, { color: 'rgba(255, 210, 70, 0.98)', lineWidth: 3.25 })
       }
 
-      // Selecting an out-of-range system previews its shortest path in yellow
-      // (dashed when a different plotted route is already active).
+      // Selecting a system previews the shortest warp path (dashed if a different
+      // plotted route is already active; solid yellow when no route plotted).
       const preview = pathToSelected()
       if (preview && preview.length > 1) {
-        const inRange = canJumpTo(currentSystem, selectedSystemId)
-        if (!inRange) {
-          const sameAsPlotted =
-            plotted &&
-            plotted.length === preview.length &&
-            plotted.every((id, i) => id === preview[i])
-          if (!sameAsPlotted) {
-            drawPath(preview, {
-              color: 'rgba(255, 220, 90, 0.9)',
-              lineWidth: 2.25,
-              dashed: !!plotted
-            })
-          } else if (!plotted) {
-            drawPath(preview, { color: 'rgba(255, 210, 70, 0.95)', lineWidth: 2.75 })
-          }
+        const sameAsPlotted =
+          plotted &&
+          plotted.length === preview.length &&
+          plotted.every((id, i) => id === preview[i])
+        if (!sameAsPlotted) {
+          drawPath(preview, {
+            color: plotted ? 'rgba(255, 220, 90, 0.85)' : 'rgba(255, 210, 70, 0.95)',
+            lineWidth: plotted ? 2.25 : 2.75,
+            dashed: !!plotted
+          })
         }
       }
 
-      // Asset rings first (outer), then mission rings (inner) so both read when
-      // a system has stored gear and an active objective.
+      // Asset rings first (outer), then mission rings (inner).
       for (const system of systems) {
-        if (!assetSystems.has(system.id)) continue
+        if (!assetSystems.has(system.id) || !inView(system.galaxyPosition, 1.2)) continue
         const [px, py] = toCanvas(system.galaxyPosition)
         ctx.beginPath()
         ctx.arc(px, py, 12, 0, Math.PI * 2)
@@ -323,9 +546,8 @@ export function createNavMap(container, gameState) {
       }
       ctx.shadowBlur = 0
 
-      // Mission objective / turn-in systems get an orange ring under the dot.
       for (const system of systems) {
-        if (!missionSystems.has(system.id)) continue
+        if (!missionSystems.has(system.id) || !inView(system.galaxyPosition, 1.2)) continue
         const [px, py] = toCanvas(system.galaxyPosition)
         ctx.beginPath()
         ctx.arc(px, py, 9, 0, Math.PI * 2)
@@ -338,7 +560,10 @@ export function createNavMap(container, gameState) {
       ctx.shadowBlur = 0
 
       const routeSet = new Set(plotted ?? [])
+      // Scale dot size slightly with zoom so zoomed-out map stays readable.
+      const zoomDot = Math.max(0.65, Math.min(1.35, 280 / mapView.radius))
       for (const system of systems) {
+        if (!inView(system.galaxyPosition, 1.2)) continue
         const [px, py] = toCanvas(system.galaxyPosition)
         const isCurrent = system.id === currentSystem.id
         const isSelected = system.id === selectedSystemId
@@ -347,8 +572,10 @@ export function createNavMap(container, gameState) {
         const hasMission = missionSystems.has(system.id)
         const hasAssets = assetSystems.has(system.id)
         const onRoute = routeSet.has(system.id) && !isCurrent
+        const r =
+          (isCurrent ? 5 : isSelected || isHovered || onRoute ? 4.5 : 2.5) * zoomDot
         ctx.beginPath()
-        ctx.arc(px, py, isCurrent ? 5 : isSelected || isHovered || onRoute ? 4.5 : 2.5, 0, Math.PI * 2)
+        ctx.arc(px, py, r, 0, Math.PI * 2)
         ctx.fillStyle = isCurrent
           ? '#5ee6ff'
           : isSelected
@@ -379,7 +606,7 @@ export function createNavMap(container, gameState) {
       const wrap = contentEl.querySelector('.route-list-wrap')
       const rem = remainingRoute()
       if (!rem) {
-        wrap.innerHTML = `<div class="route-empty">Select a distant system and Plot Route to plan multi-hop jumps. Yellow path shows systems to pass through.</div>`
+        wrap.innerHTML = `<div class="route-empty">Select a distant system and Plot Route. Yellow path shows hops — SC + F manually, or Engage Autopilot if fitted.</div>`
         return
       }
       const hops = rem.length
@@ -413,45 +640,64 @@ export function createNavMap(container, gameState) {
       })
     }
 
+    /** Engage when fitted + route; Cancel while a sequence is running (route kept). */
+    function updateAutopilotButton() {
+      const apBtn = contentEl.querySelector('.engage-ap')
+      if (!apBtn) return
+      const routeHop = nextRouteHopId()
+      const routeRem = remainingRoute()
+      const hasAutopilot = shipHasAutopilot(gameState.player.ship)
+      const active = !!isAutopilotActive?.()
+
+      if (active) {
+        apBtn.disabled = false
+        apBtn.textContent = 'Cancel Autopilot'
+        apBtn.dataset.mode = 'cancel'
+        return
+      }
+      apBtn.dataset.mode = 'engage'
+
+      if (docked) {
+        apBtn.disabled = true
+        apBtn.textContent = 'Cannot Autopilot While Docked'
+      } else if (inCombat) {
+        apBtn.disabled = true
+        apBtn.textContent = 'Cannot Autopilot in Combat'
+      } else if (!hasAutopilot) {
+        apBtn.disabled = true
+        apBtn.textContent = 'Autopilot Not Fitted'
+      } else if (!routeRem?.length || !routeHop) {
+        apBtn.disabled = true
+        apBtn.textContent = 'Plot Route First'
+      } else {
+        apBtn.disabled = false
+        const hops = routeRem.length
+        const hopSys = byId.get(routeHop)
+        apBtn.textContent =
+          hops > 1
+            ? `Engage Autopilot (${hops} jumps)`
+            : hopSys
+              ? `Engage Autopilot · ${hopSys.name}`
+              : 'Engage Autopilot'
+      }
+    }
+
     function updateInfoPanel() {
-      const jumpBtn = contentEl.querySelector('.jump')
       const plotBtn = contentEl.querySelector('.plot-route')
       const hintEl = contentEl.querySelector('.route-hint')
+      const hasAutopilot = shipHasAutopilot(gameState.player.ship)
 
       if (!selectedSystemId) {
         contentEl.querySelector('.sel-name').textContent = '—'
         contentEl.querySelector('.sel-security').textContent = ''
         contentEl.querySelector('.sel-bodies').textContent = ''
         contentEl.querySelector('.sel-distance').textContent = ''
-        hintEl.textContent = ''
-        jumpBtn.disabled = true
-        jumpBtn.textContent = docked ? 'Cannot Jump While Docked' : 'Hyperspace Jump'
-        // Still allow Jump Route when a plotted hop is ready (selection optional).
-        const hop = nextRouteHopId()
-        const rem = remainingRoute()
-        if (
-          !docked &&
-          !inCombat &&
-          !supercruiseActive &&
-          hop &&
-          rem?.length &&
-          shipHasAutopilot(gameState.player.ship)
-        ) {
-          jumpBtn.disabled = false
-          jumpBtn.textContent =
-            rem.length > 1 ? `Jump Route (${rem.length} jumps)` : 'Jump Route'
-        } else if (
-          !docked &&
-          !inCombat &&
-          !supercruiseActive &&
-          hop
-        ) {
-          const hopSys = byId.get(hop)
-          jumpBtn.disabled = false
-          jumpBtn.textContent = hopSys ? `Jump: ${hopSys.name}` : 'Hyperspace Jump'
-        }
+        hintEl.textContent = hasAutopilot
+          ? 'Plot a route, then Engage Autopilot — or fly gates yourself (SC + F).'
+          : 'Select a system and Plot Route. Fly gates yourself (SC + F). Fit Autopilot to automate.'
         plotBtn.disabled = true
         plotBtn.textContent = 'Plot Route'
+        updateAutopilotButton()
         renderRouteList()
         return
       }
@@ -473,15 +719,19 @@ export function createNavMap(container, gameState) {
         `${counts.planet ?? 0} planets, ${counts.station ?? 0} stations, ${counts.settlement ?? 0} settlements`
       contentEl.querySelector('.sel-distance').textContent = isCurrent
         ? 'Current system'
-        : `${Math.round(distance)} ly away${inRange ? '' : ' — out of hyperspace range'}`
+        : `${Math.round(distance)} ly away${inRange ? ' — direct warp gate' : ' — multi-gate route'}`
 
       if (!isCurrent && path && jumps > 0) {
         hintEl.textContent =
           jumps === 1
-            ? '1 jump — in range (or plot to track).'
-            : `Route: ${jumps} jumps via ${jumps - 1} system${jumps - 1 === 1 ? '' : 's'} (yellow path).`
+            ? hasAutopilot
+              ? '1 warp gate — SC + F, or Plot Route and Engage Autopilot.'
+              : '1 warp gate — supercruise there and press F to jump.'
+            : hasAutopilot
+              ? `Route: ${jumps} gates. Plot Route, then Engage Autopilot — or SC + F at each gate.`
+              : `Route: ${jumps} gates via ${jumps - 1} system${jumps - 1 === 1 ? '' : 's'}. Plot Route, then SC + F at each gate.`
       } else if (!isCurrent && !path) {
-        hintEl.textContent = 'No hyperspace route found.'
+        hintEl.textContent = 'No warp-gate route found.'
       } else {
         hintEl.textContent = ''
       }
@@ -491,47 +741,17 @@ export function createNavMap(container, gameState) {
       plotBtn.textContent =
         canPlot && jumps > 1 ? `Plot Route (${jumps} jumps)` : canPlot ? 'Plot Route' : 'Plot Route'
 
-      const jumpTarget = resolveJumpTargetId()
-      const jumpSys = jumpTarget ? byId.get(jumpTarget) : null
-      const routeHop = nextRouteHopId()
-      const routeRem = remainingRoute()
-      const hasAutopilot = shipHasAutopilot(gameState.player.ship)
-      // Jump Route: autopilot fitted + a plotted multi-hop (or any remaining route).
-      const jumpRouteMode = hasAutopilot && !!routeRem?.length && !!routeHop
-
-      if (docked) {
-        jumpBtn.disabled = true
-        jumpBtn.textContent = 'Cannot Jump While Docked'
-      } else if (inCombat) {
-        jumpBtn.disabled = true
-        jumpBtn.textContent = 'Cannot Jump in Combat'
-      } else if (supercruiseActive) {
-        jumpBtn.disabled = true
-        jumpBtn.textContent = 'Drop Supercruise First'
-      } else if (jumpRouteMode && jumpSys) {
-        jumpBtn.disabled = false
-        const hops = routeRem.length
-        jumpBtn.textContent =
-          hops > 1 ? `Jump Route (${hops} jumps)` : `Jump Route · ${jumpSys.name}`
-      } else if (jumpTarget && jumpSys) {
-        jumpBtn.disabled = false
-        jumpBtn.textContent = routeHop
-          ? `Jump: ${jumpSys.name}`
-          : 'Hyperspace Jump'
-      } else {
-        jumpBtn.disabled = true
-        jumpBtn.textContent =
-          !isCurrent && !inRange && !routeHop
-            ? 'Out of Range — Plot Route'
-            : 'Hyperspace Jump'
-      }
+      updateAutopilotButton()
       renderRouteList()
     }
 
     function nearestSystemAt(mx, my) {
       let nearest = null
       let nearestDist = Infinity
+      // Hit radius grows slightly when zoomed out (smaller dots).
+      const hitR = Math.max(8, Math.min(16, 10 * (280 / mapView.radius)))
       for (const system of systems) {
+        if (!inView(system.galaxyPosition, 1.3)) continue
         const [px, py] = toCanvas(system.galaxyPosition)
         const d = Math.hypot(px - mx, py - my)
         if (d < nearestDist) {
@@ -539,12 +759,12 @@ export function createNavMap(container, gameState) {
           nearest = system
         }
       }
-      return nearestDist < 10 ? nearest : null
+      return nearestDist < hitR ? nearest : null
     }
 
     canvas.addEventListener('click', (e) => {
-      const rect = canvas.getBoundingClientRect()
-      const nearest = nearestSystemAt(e.clientX - rect.left, e.clientY - rect.top)
+      const [mx, my] = canvasPointFromEvent(e)
+      const nearest = nearestSystemAt(mx, my)
       if (nearest) {
         selectedSystemId = nearest.id
         updateInfoPanel()
@@ -552,12 +772,9 @@ export function createNavMap(container, gameState) {
       }
     })
 
-    // Hover shows the system's name as a floating tooltip near the cursor —
-    // the map otherwise has no labels at all until a system is clicked.
+    // Hover shows the system's name as a floating tooltip near the cursor.
     canvas.addEventListener('mousemove', (e) => {
-      const rect = canvas.getBoundingClientRect()
-      const mx = e.clientX - rect.left
-      const my = e.clientY - rect.top
+      const [mx, my] = canvasPointFromEvent(e)
       const nearest = nearestSystemAt(mx, my)
       if (nearest?.id !== hoveredSystemId) {
         hoveredSystemId = nearest?.id ?? null
@@ -570,8 +787,10 @@ export function createNavMap(container, gameState) {
         if (missionSystems.has(nearest.id)) tags.push('mission')
         if (assetSystems.has(nearest.id)) tags.push('assets')
         tooltipEl.textContent = `${nearest.name} · ${tags.join(' · ')}`
-        tooltipEl.style.left = `${mx}px`
-        tooltipEl.style.top = `${my}px`
+        // Position tooltip in map-canvas-wrap coords.
+        const bodyRect = canvasWrap.getBoundingClientRect()
+        tooltipEl.style.left = `${e.clientX - bodyRect.left}px`
+        tooltipEl.style.top = `${e.clientY - bodyRect.top}px`
         tooltipEl.style.display = 'block'
       } else {
         tooltipEl.style.display = 'none'
@@ -585,54 +804,151 @@ export function createNavMap(container, gameState) {
       }
     })
 
-    contentEl.querySelector('.jump').addEventListener('click', () => {
-      if (!onJumpCallback || supercruiseActive || inCombat || docked) return
-      const target = resolveJumpTargetId()
-      if (!target) return
+    // Scroll zoom (centered on current view; keep map under cursor roughly stable).
+    canvas.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const [mx, my] = canvasPointFromEvent(e)
+        // Galaxy point under cursor before zoom.
+        const gx = mapView.cx + ((mx - size / 2) / half) * mapView.radius
+        const gz = mapView.cz + ((my - size / 2) / half) * mapView.radius
+        const factor = e.deltaY > 0 ? 1.14 : 1 / 1.14
+        mapView.radius = clampViewRadius(mapView.radius * factor)
+        // Keep that galaxy point under the cursor after zoom.
+        mapView.cx = gx - ((mx - size / 2) / half) * mapView.radius
+        mapView.cz = gz - ((my - size / 2) / half) * mapView.radius
+        draw()
+      },
+      { passive: false }
+    )
+
+    contentEl.querySelector('.engage-ap').addEventListener('click', () => {
+      const apBtn = contentEl.querySelector('.engage-ap')
+      if (apBtn?.dataset.mode === 'cancel') {
+        onCancelAutopilot?.()
+        updateAutopilotButton()
+        return
+      }
+      if (!onEngageAutopilot || inCombat || docked) return
+      if (!shipHasAutopilot(gameState.player.ship)) return
+      const hop = nextRouteHopId()
       const routeRem = remainingRoute()
-      const routeAutopilot =
-        shipHasAutopilot(gameState.player.ship) && !!routeRem?.length && !!nextRouteHopId()
-      onJumpCallback(target, { routeAutopilot })
+      if (!hop || !routeRem?.length) return
+      onEngageAutopilot(hop)
     })
 
     contentEl.querySelector('.plot-route').addEventListener('click', () => {
       const path = pathToSelected()
       if (!path || path.length < 2) return
-      // Store remaining hops only (exclude current system).
+      // Store remaining hops only (exclude current system) — yellow path for manual travel.
       gameState.player.plottedRoute = path.slice(1)
-      // Arm Jump on the first hop immediately.
+      // Select next hop so the route panel reads clearly.
       selectedSystemId = path[1]
       updateInfoPanel()
       draw()
     })
 
+    redrawMap = draw
+    refreshInfoPanel = updateInfoPanel
     draw()
     updateInfoPanel()
   }
 
-  let onJumpCallback = null
+  function stopMapPanLoop() {
+    if (mapPanRaf) {
+      cancelAnimationFrame(mapPanRaf)
+      mapPanRaf = 0
+    }
+    mapKeys.clear()
+  }
+
+  function mapPanFrame() {
+    mapPanRaf = 0
+    if (root.style.display === 'none' || !mapKeys.size) return
+    // Pan in galaxy units (screen up = −Z because toCanvas maps +Z downward).
+    const step = mapView.radius * 0.028
+    let dx = 0
+    let dz = 0
+    if (mapKeys.has('KeyA')) dx -= step
+    if (mapKeys.has('KeyD')) dx += step
+    if (mapKeys.has('KeyW')) dz -= step
+    if (mapKeys.has('KeyS')) dz += step
+    if (dx !== 0 || dz !== 0) {
+      mapView.cx += dx
+      mapView.cz += dz
+      redrawMap?.()
+    }
+    mapPanRaf = requestAnimationFrame(mapPanFrame)
+  }
+
+  function onMapKeyDown(e) {
+    if (root.style.display === 'none') return
+    if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') {
+      // Don't steal typing from inputs.
+      const t = e.target
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      e.preventDefault()
+      mapKeys.add(e.code)
+      if (!mapPanRaf) mapPanRaf = requestAnimationFrame(mapPanFrame)
+    }
+  }
+  function onMapKeyUp(e) {
+    if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') {
+      mapKeys.delete(e.code)
+    }
+  }
+  window.addEventListener('keydown', onMapKeyDown)
+  window.addEventListener('keyup', onMapKeyUp)
+
+  let onEngageAutopilot = null
+  let onCancelAutopilot = null
+  let isAutopilotActive = null
   let onCloseCallback = null
-  // Set each time the map opens — hyperspace blocked in combat / supercruise / docked.
-  let supercruiseActive = false
   let inCombat = false
   let docked = false
   root.querySelector('.close').addEventListener('click', () => {
+    stopMapPanLoop()
+    redrawMap = null
+    refreshInfoPanel = null
+    searchInput.value = ''
+    searchInput.classList.remove('match', 'nomatch')
     root.style.display = 'none'
     onCloseCallback?.()
   })
 
   return {
-    show({ onJump, onClose, supercruiseActive: sc = false, inCombat: combat = false, docked: isDocked = false }) {
-      onJumpCallback = onJump
+    show({
+      onEngageAutopilot: onAp,
+      onCancelAutopilot: onCancel,
+      isAutopilotActive: isApActive,
+      onClose,
+      inCombat: combat = false,
+      docked: isDocked = false
+    } = {}) {
+      onEngageAutopilot = onAp
+      onCancelAutopilot = onCancel
+      isAutopilotActive = isApActive
       onCloseCallback = onClose
-      supercruiseActive = !!sc
       inCombat = !!combat
       docked = !!isDocked
       selectedSystemId = null
-      renderGalaxyTab()
+      searchInput.value = ''
+      searchInput.classList.remove('match', 'nomatch')
+      stopMapPanLoop()
+      // Show first so flex layout has real dimensions for canvas sizing.
       root.style.display = 'flex'
+      renderGalaxyTab()
+      // One more frame after layout settles (font/scrollbar).
+      requestAnimationFrame(() => redrawMap?.())
     },
     hide() {
+      stopMapPanLoop()
+      redrawMap = null
+      refreshInfoPanel = null
+      searchInput.value = ''
+      searchInput.classList.remove('match', 'nomatch')
       root.style.display = 'none'
     },
     element: root

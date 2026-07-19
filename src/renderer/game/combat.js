@@ -32,7 +32,7 @@ export function markPlayerCombatEngagement(gameState, proj, target, isPlayerTarg
   if (proj.ownerId === 'player' && !isPlayerTarget && target?.id) {
     const already = !!gameState.player.combatEngagedNpcIds[target.id]
     // Law penalty only in Sec 3–6, and only for non-hostiles who never shot first.
-    // Pirates/aliens are fair game; police attacks still cost standing in high-sec.
+    // Pirates/aliens are fair game; police attacks still cost standing in high security.
     if (!already && target.faction !== 'pirate' && target.faction !== 'alien') {
       const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
       if (system) ensureSystemSecurity(system)

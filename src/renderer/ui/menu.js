@@ -1,5 +1,6 @@
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
 import { SETTINGS_VIEW_CSS, settingsViewHTML, bindSettingsView } from './settingsView.js'
+import { controlsListHTML } from './controlsList.js'
 import { escapeHtml } from './escapeHtml.js'
 import { isPortraitImageFile, resizeImageToDataUrl } from './portrait.js'
 
@@ -119,24 +120,34 @@ const STYLE = `
   opacity: 1;
 }
 @keyframes titleShift { to { background-position: 300% center; } }
-/* Soft dark lift + bright colored halo only — keep the gradient readable. */
+/* Soft dark lift + red ↔ yellowish-orange halo — wide, low-opacity so it
+   dissolves into the starfield rather than sitting as a hard neon outline. */
 @keyframes titleGlow {
   0%   { filter:
-    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
-    drop-shadow(0 0 8px rgba(160,240,255,0.85))
-    drop-shadow(0 0 22px rgba(100,190,255,0.55)); }
-  33%  { filter:
-    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
-    drop-shadow(0 0 10px rgba(200,220,255,0.9))
-    drop-shadow(0 0 24px rgba(180,140,255,0.4)); }
-  66%  { filter:
-    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
-    drop-shadow(0 0 10px rgba(160,255,200,0.85))
-    drop-shadow(0 0 24px rgba(100,220,255,0.5)); }
+    drop-shadow(0 1px 2px rgba(0,0,0,0.55))
+    drop-shadow(0 0 14px rgba(255,70,40,0.35))
+    drop-shadow(0 0 42px rgba(200,40,10,0.18))
+    drop-shadow(0 0 72px rgba(160,30,5,0.1)); }
+  25%  { filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.55))
+    drop-shadow(0 0 16px rgba(255,120,30,0.38))
+    drop-shadow(0 0 48px rgba(255,80,15,0.16))
+    drop-shadow(0 0 80px rgba(200,50,5,0.09)); }
+  50%  { filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.55))
+    drop-shadow(0 0 18px rgba(255,190,70,0.4))
+    drop-shadow(0 0 52px rgba(255,140,30,0.18))
+    drop-shadow(0 0 88px rgba(220,100,20,0.1)); }
+  75%  { filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,0.55))
+    drop-shadow(0 0 16px rgba(255,130,40,0.36))
+    drop-shadow(0 0 48px rgba(255,90,20,0.15))
+    drop-shadow(0 0 80px rgba(200,60,10,0.09)); }
   100% { filter:
-    drop-shadow(0 1px 2px rgba(0,0,0,0.65))
-    drop-shadow(0 0 8px rgba(160,240,255,0.85))
-    drop-shadow(0 0 22px rgba(100,190,255,0.55)); }
+    drop-shadow(0 1px 2px rgba(0,0,0,0.55))
+    drop-shadow(0 0 14px rgba(255,70,40,0.35))
+    drop-shadow(0 0 42px rgba(200,40,10,0.18))
+    drop-shadow(0 0 72px rgba(160,30,5,0.1)); }
 }
 
 /* Brief chromatic-aberration glitch slices, sparse (~93-97% of the loop is
@@ -402,27 +413,47 @@ const STYLE = `
 #main-menu.reveal .panel > button:nth-of-type(4) { animation-delay: 0.24s; }
 #main-menu.reveal .panel > button:nth-of-type(5) { animation-delay: 0.32s; }
 /* Settings panel (same shell as Create Pilot). */
-#main-menu .settings-view {
+#main-menu .settings-view,
+#main-menu .controls-view {
   width: min(360px, 92vw);
   padding: 28px 32px;
   background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.88));
   border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
   box-shadow: 0 0 30px rgba(79,195,217,0.25), inset 0 0 26px rgba(79,195,217,0.05);
 }
-#main-menu .settings-view h2 {
+#main-menu .controls-view { width: min(460px, 92vw); max-height: min(80vh, 640px); overflow: hidden; }
+#main-menu .settings-view h2,
+#main-menu .controls-view h2 {
   margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px;
   text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 10px rgba(79,195,217,0.7);
 }
-#main-menu .settings-view button {
+#main-menu .settings-view button,
+#main-menu .controls-view button {
   background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
   padding: 11px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
   opacity: 1; transform: none;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#main-menu .settings-view button:hover:not(:disabled) {
+#main-menu .settings-view button:hover:not(:disabled),
+#main-menu .controls-view button:hover:not(:disabled) {
   background: rgba(111,216,242,0.22); box-shadow: 0 0 14px rgba(79,195,217,0.35);
   transform: none;
 }
+#main-menu .controls-list {
+  display: flex; flex-direction: column; gap: 6px;
+  overflow-y: auto; max-height: min(52vh, 420px);
+  margin: 0 0 12px 0; padding-right: 4px;
+}
+#main-menu .controls-list .row {
+  display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: baseline;
+  font-size: 12px; line-height: 1.35;
+}
+#main-menu .controls-list .key {
+  display: inline-block; padding: 2px 7px; border: 1px solid rgba(111,216,242,0.45);
+  border-radius: 3px; color: #a8d8ea; background: rgba(111,216,242,0.1);
+  font-size: 11px; letter-spacing: 0.5px; text-align: center; white-space: nowrap;
+}
+#main-menu .controls-list .label { opacity: 0.85; color: #cfe3ff; }
 ${SETTINGS_VIEW_CSS}
 @keyframes riseIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 `
@@ -482,12 +513,20 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     <div class="panel settings-view" style="display:none">
       ${settingsViewHTML()}
     </div>
+    <div class="panel controls-view" style="display:none">
+      <h2>Controls</h2>
+      <div class="controls-list">
+        ${controlsListHTML()}
+      </div>
+      <button type="button" class="controls-back">Back</button>
+    </div>
   `
   container.appendChild(root)
 
   const mainView = root.querySelector('.main-view')
   const newGameView = root.querySelector('.new-game-view')
   const settingsView = root.querySelector('.settings-view')
+  const controlsView = root.querySelector('.controls-view')
   const loadBtn = root.querySelector('.load-game')
   const portraitFrame = root.querySelector('.new-game-portrait')
   const portraitFile = root.querySelector('.portrait-file')
@@ -536,20 +575,31 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     mainView.style.display = 'flex'
     newGameView.style.display = 'none'
     settingsView.style.display = 'none'
+    if (controlsView) controlsView.style.display = 'none'
     replayEntrance()
   }
 
   function showSettings() {
     mainView.style.display = 'none'
     newGameView.style.display = 'none'
+    if (controlsView) controlsView.style.display = 'none'
     settingsView.style.display = 'flex'
     settingsApi.refresh()
+    replayEntrance()
+  }
+
+  function showControls() {
+    mainView.style.display = 'none'
+    newGameView.style.display = 'none'
+    settingsView.style.display = 'none'
+    if (controlsView) controlsView.style.display = 'flex'
     replayEntrance()
   }
 
   function showNewGame() {
     mainView.style.display = 'none'
     settingsView.style.display = 'none'
+    if (controlsView) controlsView.style.display = 'none'
     newGameView.style.display = 'flex'
     resetNewGameForm()
     replayEntrance()
@@ -595,8 +645,12 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
   })
   root.querySelector('.settings').addEventListener('click', () => showSettings())
   root.querySelector('.quit').addEventListener('click', () => window.electronAPI.quitApp())
+  root.querySelector('.controls-back')?.addEventListener('click', () => showSettings())
 
-  const settingsApi = bindSettingsView(settingsView, { onBack: showMain })
+  const settingsApi = bindSettingsView(settingsView, {
+    onBack: showMain,
+    onShowControls: showControls
+  })
 
   function hide() {
     root.style.display = 'none'
@@ -608,6 +662,7 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
       mainView.style.display = 'flex'
       newGameView.style.display = 'none'
       settingsView.style.display = 'none'
+      if (controlsView) controlsView.style.display = 'none'
       root.style.display = 'flex'
       replayEntrance()
     },

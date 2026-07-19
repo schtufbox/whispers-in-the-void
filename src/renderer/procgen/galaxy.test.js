@@ -6,10 +6,19 @@ import {
   findHyperspaceRoute,
   advancePlottedRoute,
   ensureStartingSystemFacilities,
+  ensureWarpGates,
+  findWarpGateTo,
+  isNearWarpGate,
+  findNearbyWarpGate,
+  WARP_GATE_ACTIVATION_RANGE,
   coreFraction,
   SYSTEM_ARRIVAL_POSITION,
   WHISPERS_SYSTEM_NAME,
-  WHISPERS_STATION_NAME
+  WHISPERS_STATION_NAME,
+  TEST_GALAXY_OPTS,
+  DEFAULT_TOTAL_PLANETS,
+  CORE_SYSTEM_FRACTION,
+  GALAXY_MAX_RADIUS
 } from './galaxy.js'
 import { mulberry32 } from './prng.js'
 
@@ -18,7 +27,7 @@ function allBodies(galaxy) {
 }
 
 test('moons appear on roughly 23% of planets and orbit close to their parent', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const bodies = allBodies(galaxy)
   const planets = bodies.filter((b) => b.kind === 'planet')
   const moons = bodies.filter((b) => b.kind === 'moon')
@@ -51,7 +60,7 @@ test('stations co-hosted with moons keep non-intersecting orbital radii', () => 
   const MARGIN = 6
   let checked = 0
   for (const seed of [1, 2, 3, 42, 1337, 9001]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     for (const system of galaxy.systems) {
       for (const station of system.bodies.filter((b) => b.kind === 'station' && b.parentId)) {
         const parent = system.bodies.find((b) => b.id === station.parentId)
@@ -94,7 +103,7 @@ test('stations never spawn inside planets, moons, or settlements', () => {
     return kind === 'planet' ? PLANET_GAP : MARGIN
   }
   for (const seed of [1, 2, 3, 42, 1337, 9001, 777, 99]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     for (const system of galaxy.systems) {
       for (const station of system.bodies.filter((b) => b.kind === 'station')) {
         for (const other of system.bodies) {
@@ -121,7 +130,7 @@ test('planet-hosted stations keep at least 2000m surface clearance', () => {
   const PLANET_GAP = 2000
   let checked = 0
   for (const seed of [1, 2, 3, 42, 1337, 9001]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     for (const system of galaxy.systems) {
       for (const station of system.bodies.filter((b) => b.kind === 'station' && b.parentId)) {
         const parent = system.bodies.find((b) => b.id === station.parentId)
@@ -148,7 +157,7 @@ test('moon-hosted stations keep their full orbit outside the grandparent planet'
   const PLANET_GAP = 2000
   let checked = 0
   for (const seed of [1, 2, 3, 42, 1337, 9001]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     for (const system of galaxy.systems) {
       for (const station of system.bodies.filter((b) => b.kind === 'station' && b.parentId)) {
         const moon = system.bodies.find((b) => b.id === station.parentId)
@@ -179,7 +188,7 @@ test('star-orbit stations keep non-intersecting solar radii with planets', () =>
   const PLANET_GAP = 2000
   let checked = 0
   for (const seed of [1, 2, 3, 42, 1337]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     for (const system of galaxy.systems) {
       for (const station of system.bodies.filter((b) => b.kind === 'station' && b.orbitsStar)) {
         const stR = Math.hypot(station.position[0], station.position[2])
@@ -204,7 +213,7 @@ test("a moon's orbit radius always clears its parent planet's collision shell", 
   // radius (see moonOrbits), so checking that radius against the physical
   // radii here also guarantees no collision at any point during the orbit.
   for (const seed of [1, 2, 3, 42, 1337]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     for (const system of galaxy.systems) {
       system.bodies.forEach((body, i) => {
         if (body.kind !== 'moon') return
@@ -220,14 +229,14 @@ test("a moon's orbit radius always clears its parent planet's collision shell", 
 })
 
 test('a handful of asteroid fields are scattered across the galaxy and are not mission givers', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const fields = allBodies(galaxy).filter((b) => b.kind === 'asteroidField')
-  assert.equal(fields.length, 150)
+  assert.equal(fields.length, TEST_GALAXY_OPTS.asteroidFieldCount)
   assert.ok(fields.every((f) => f.hasMissions === false && f.hasShipyard === false))
 })
 
 test('planets, moons, and asteroid fields have a physical radius sized for their kind; other kinds have none', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const bodies = allBodies(galaxy)
   const byKind = (kind) => bodies.filter((b) => b.kind === kind)
 
@@ -241,21 +250,145 @@ test('planets, moons, and asteroid fields have a physical radius sized for their
   for (const b of [...byKind('station'), ...byKind('settlement')]) assert.equal(b.radius, null)
 })
 
-test('every system has hyperspace neighbors, and the jump lanes are symmetric', () => {
-  const galaxy = generateGalaxy(42)
+test('production defaults keep ~3.3 planets per system with 40% core systems', () => {
+  assert.equal(DEFAULT_TOTAL_PLANETS, 11667)
+  assert.ok(Math.abs(DEFAULT_TOTAL_PLANETS / 3500 - 13500 / 4050) < 0.01)
+  assert.equal(CORE_SYSTEM_FRACTION, 0.4)
+})
+
+test('about 40% of systems and planets sit in the core disk', () => {
+  const galaxy = generateGalaxy(99, {
+    ...TEST_GALAXY_OPTS,
+    systemCount: 200,
+    totalPlanets: 600,
+    stationCount: 80,
+    settlementCount: 50,
+    asteroidFieldCount: 40
+  })
+  const coreR = GALAXY_MAX_RADIUS * 0.3
+  let coreSystems = 0
+  let corePlanets = 0
+  let totalPlanets = 0
+  for (const s of galaxy.systems) {
+    const r = Math.hypot(s.galaxyPosition[0], s.galaxyPosition[2])
+    const inCore = r <= coreR + 1e-6
+    if (inCore) coreSystems++
+    for (const b of s.bodies) {
+      if (b.kind !== 'planet') continue
+      totalPlanets++
+      if (inCore) corePlanets++
+    }
+  }
+  const sysFrac = coreSystems / galaxy.systems.length
+  const planetFrac = corePlanets / totalPlanets
+  assert.ok(sysFrac > 0.32 && sysFrac < 0.48, `core system fraction ${sysFrac}`)
+  assert.ok(planetFrac > 0.28 && planetFrac < 0.52, `core planet fraction ${planetFrac}`)
+  assert.ok(totalPlanets >= 550, `expected ~600 planets, got ${totalPlanets}`)
+})
+
+test('warp lanes are sparse, symmetric, and leave no isolated systems', () => {
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const byId = new Map(galaxy.systems.map((s) => [s.id, s]))
+  let degreeSum = 0
 
   for (const system of galaxy.systems) {
-    assert.ok(system.neighborIds.length >= 5, `${system.id} should have at least 5 hyperspace neighbors`)
+    assert.ok(
+      system.neighborIds.length >= 1,
+      `${system.id} should have at least one warp lane`
+    )
+    assert.ok(
+      system.neighborIds.length <= 6,
+      `${system.id} should not be a dense hub (got ${system.neighborIds.length})`
+    )
     assert.ok(!system.neighborIds.includes(system.id), 'a system is never its own neighbor')
+    degreeSum += system.neighborIds.length
     for (const neighborId of system.neighborIds) {
-      assert.ok(canJumpTo(byId.get(neighborId), system.id), `${neighborId} should list ${system.id} back (symmetric lanes)`)
+      assert.ok(
+        canJumpTo(byId.get(neighborId), system.id),
+        `${neighborId} should list ${system.id} back (symmetric lanes)`
+      )
+    }
+  }
+  // MST + few extras → average degree well under old k-nearest mesh (~8–10).
+  const avgDegree = degreeSum / galaxy.systems.length
+  assert.ok(avgDegree < 4.5, `warp graph should be sparse, avg degree=${avgDegree}`)
+  assert.ok(avgDegree >= 2, `warp graph should not be a pure path, avg degree=${avgDegree}`)
+})
+
+test('each neighbor lane has a warp gate named for the adjoining system', () => {
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
+  const byId = new Map(galaxy.systems.map((s) => [s.id, s]))
+  for (const system of galaxy.systems) {
+    const gates = system.bodies.filter((b) => b.kind === 'warpGate')
+    assert.equal(
+      gates.length,
+      system.neighborIds.length,
+      `${system.id} should have one warp gate per neighbor`
+    )
+    const dests = new Set(gates.map((g) => g.destinationSystemId))
+    for (const nId of system.neighborIds) {
+      assert.ok(dests.has(nId), `missing gate ${system.id} → ${nId}`)
+      const gate = gates.find((g) => g.destinationSystemId === nId)
+      const neighbor = byId.get(nId)
+      assert.equal(gate.name, `Warp Gate: ${neighbor.name}`)
+      assert.equal(gate.kind, 'warpGate')
+      assert.ok(Array.isArray(gate.position) && gate.position.length === 3)
     }
   }
 })
 
+test('galaxy graph is fully connected via neighbor lanes (all systems reachable)', () => {
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
+  const origin = galaxy.systems[0].id
+  const pathCounts = galaxy.systems.map((s) => findHyperspaceRoute(galaxy, origin, s.id))
+  for (let i = 0; i < pathCounts.length; i++) {
+    assert.ok(pathCounts[i], `system ${galaxy.systems[i].id} must be reachable from ${origin}`)
+  }
+})
+
+test('isNearWarpGate uses 2 km activation range; ensureWarpGates rebuilds missing gates', () => {
+  assert.equal(WARP_GATE_ACTIVATION_RANGE, 2000)
+  const galaxy = generateGalaxy(11, TEST_GALAXY_OPTS)
+  const system = galaxy.systems[0]
+  const gate = system.bodies.find((b) => b.kind === 'warpGate')
+  assert.ok(gate)
+  assert.equal(isNearWarpGate(gate.position, gate), true)
+  // 1.5 km offset still inside 2 km bubble.
+  assert.equal(
+    isNearWarpGate(
+      [gate.position[0] + 1500, gate.position[1], gate.position[2]],
+      gate
+    ),
+    true
+  )
+  // 2.5 km offset is outside.
+  assert.equal(
+    isNearWarpGate(
+      [gate.position[0] + 2500, gate.position[1], gate.position[2]],
+      gate
+    ),
+    false
+  )
+  assert.equal(isNearWarpGate([0, 0, 0], gate), false)
+  assert.equal(findWarpGateTo(system, gate.destinationSystemId)?.id, gate.id)
+  assert.equal(findNearbyWarpGate(system, gate.position)?.id, gate.id)
+  assert.equal(findNearbyWarpGate(system, [0, 0, 0]), null)
+
+  // Simulate a pre-warp-gate save: strip gates, then ensure rebuilds them.
+  for (const s of galaxy.systems) {
+    s.bodies = s.bodies.filter((b) => b.kind !== 'warpGate')
+  }
+  assert.equal(system.bodies.some((b) => b.kind === 'warpGate'), false)
+  ensureWarpGates(galaxy)
+  assert.ok(system.bodies.some((b) => b.kind === 'warpGate'))
+  assert.equal(
+    system.bodies.filter((b) => b.kind === 'warpGate').length,
+    system.neighborIds.length
+  )
+})
+
 test('findHyperspaceRoute returns a neighbor-connected path from A to B', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const byId = new Map(galaxy.systems.map((s) => [s.id, s]))
   const a = galaxy.systems[0]
   // Pick a system a few hops out when possible.
@@ -274,7 +407,7 @@ test('findHyperspaceRoute returns a neighbor-connected path from A to B', () => 
 })
 
 test('advancePlottedRoute drops hops as the player arrives', () => {
-  const galaxy = generateGalaxy(7)
+  const galaxy = generateGalaxy(7, TEST_GALAXY_OPTS)
   const from = galaxy.systems[0]
   const path = findHyperspaceRoute(galaxy, from.id, galaxy.systems[50]?.id ?? galaxy.systems[10].id)
   assert.ok(path && path.length >= 3, 'need a multi-hop route for this test')
@@ -297,7 +430,7 @@ test('advancePlottedRoute drops hops as the player arrives', () => {
 })
 
 test('stations orbit a host (planet/moon/star) except a rare free-drifter fraction', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const stations = allBodies(galaxy).filter((b) => b.kind === 'station')
   const free = stations.filter((s) => !s.parentId && !s.orbitsStar)
   const freeRate = free.length / stations.length
@@ -311,7 +444,7 @@ test('stations orbit a host (planet/moon/star) except a rare free-drifter fracti
 })
 
 test('every station has a functional shipyard; settlements do not', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   const stations = allBodies(galaxy).filter((b) => b.kind === 'station')
   const settlements = allBodies(galaxy).filter((b) => b.kind === 'settlement')
   assert.ok(stations.length > 0)
@@ -320,7 +453,7 @@ test('every station has a functional shipyard; settlements do not', () => {
 })
 
 test('settlements sit on a planet/moon surface (or rarely an asteroid field)', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   let surface = 0
   let belt = 0
   for (const system of galaxy.systems) {
@@ -351,7 +484,7 @@ test('settlements sit on a planet/moon surface (or rarely an asteroid field)', (
 })
 
 test('at most one settlement per planet family (planet or its moon, not both)', () => {
-  const galaxy = generateGalaxy(42)
+  const galaxy = generateGalaxy(42, TEST_GALAXY_OPTS)
   for (const system of galaxy.systems) {
     const familyCount = new Map()
     for (const s of system.bodies.filter((b) => b.kind === 'settlement' && !b.inAsteroidField)) {
@@ -367,7 +500,7 @@ test('at most one settlement per planet family (planet or its moon, not both)', 
 })
 
 test('ensureStartingSystemFacilities adds at least 1 station, 2 settlements, and 1 asteroid field', () => {
-  const galaxy = generateGalaxy(7)
+  const galaxy = generateGalaxy(7, TEST_GALAXY_OPTS)
   // Need ≥2 planet families so family-unique settlement rules can still place two.
   const system = galaxy.systems.find((s) => s.bodies.filter((b) => b.kind === 'planet').length >= 2) ?? galaxy.systems[0]
   // Strip facilities + belts
@@ -385,7 +518,7 @@ test('ensureStartingSystemFacilities adds at least 1 station, 2 settlements, and
 
 test('every system name is unique across the galaxy', () => {
   for (const seed of [1, 42, 99, 1337]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     const names = galaxy.systems.map((s) => s.name)
     assert.equal(new Set(names).size, names.length, `seed ${seed}: duplicate system names`)
     assert.equal(names.filter((n) => n === WHISPERS_SYSTEM_NAME).length, 1)
@@ -394,7 +527,7 @@ test('every system name is unique across the galaxy', () => {
 
 test('planets use System + Roman numeral, or a unique name when hosting facilities', () => {
   for (const seed of [1, 42, 1337]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     for (const system of galaxy.systems) {
       const planets = system.bodies.filter((b) => b.kind === 'planet')
       for (const planet of planets) {
@@ -441,7 +574,7 @@ function escapeRegExp(s) {
 
 test('Whispers is the outermost system, has SerNub station, and is ambient-hostile-free', () => {
   for (const seed of [1, 42, 99, 1337]) {
-    const galaxy = generateGalaxy(seed)
+    const galaxy = generateGalaxy(seed, TEST_GALAXY_OPTS)
     const whispers = galaxy.systems.filter((s) => s.name === WHISPERS_SYSTEM_NAME)
     assert.equal(whispers.length, 1, `seed ${seed}: exactly one Whispers`)
     const system = whispers[0]

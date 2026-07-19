@@ -153,7 +153,13 @@ export function probeSurveyReport(body, system) {
     )
 
     if (!isMoon && arch === 'gasGiant') {
-      lines.push('Atmosphere: Thick hydrogen–helium envelope with cloud bands')
+      // Match mesh: all gas giants have cloudy decks; ~38% stormy.
+      const stormy = flavor() < 0.38
+      lines.push(
+        stormy
+          ? 'Atmosphere: Stormy hydrogen–helium envelope — violent cloud decks, oval storms'
+          : 'Atmosphere: Thick cloudy hydrogen–helium envelope with layered cloud bands'
+      )
       lines.push('Surface: No solid crust (fluid/metallic interior)')
       const aerial = flavor() < 0.12
       lines.push(

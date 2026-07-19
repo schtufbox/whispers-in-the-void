@@ -1237,7 +1237,7 @@ for (const c of SHIP_CLASSES) {
 }
 
 /**
- * Old display-name renames (EVE/Elite scrub + freighter/hauler).
+ * Old display-name renames (legacy scrub + freighter/hauler).
  * Saves / blueprints / missions may still store the previous ids.
  */
 export const SHIP_CLASS_ID_ALIASES = {

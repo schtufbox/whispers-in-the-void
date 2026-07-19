@@ -15,13 +15,15 @@
 
 ---
 
-A desktop space sim with ~**1500** planets across ~**450** star systems, **100+** ship classes (including exclusive alien hulls), real-time mouse-aim flight and combat, station industry crafting, system security and law standing, and **permadeath**.
+A desktop space sim with ~**11,000+** planets across ~**3,500** star systems, **100+** ship classes (including exclusive alien hulls), real-time mouse-aim flight and combat, station industry crafting, system security and law standing, and **permadeath**.
 
-New Game starts you in a **Light Runner** near the galactic core (always **Security 6**) with a normal starter loadout.
+New Game starts you in a **Light Runner** at **Terra Prime** (galactic centre, always **Security 6**) with a normal starter loadout.
+
+> **Saves:** Old save games from earlier builds will **not** load or play correctly after major galaxy / systems changes. Start a **New Game** after updating.
 
 ## Features
 
-- **One seeded galaxy** — systems, planets, moons, stations, settlements, and asteroid fields from a single seed. Systems vary in scale; new games start near the core (never on a binary/trinary).
+- **One seeded galaxy** — systems, planets, moons, stations, settlements, asteroid fields, and **warp gates** from a fixed canonical seed. Every New Game uses the same map; home is always **Terra Prime** (never a binary/trinary).
 - **Whispers** — outer-rim landmark system with a unique trinary sun, a named station, and no ambient hostiles.
 - **Textured worlds** — CC0 photo textures under procedural surface detail; stars with coronas, flares, and binary/trinary energy rings.
 - **100+ ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**. **Mining** hulls (8 models) trade combat for ore holds **200–2000**, tiny cargo (≤40), few/no accessory slots, and low speed/defences.
@@ -43,10 +45,10 @@ New Game starts you in a **Light Runner** near the galactic core (always **Secur
 - **Mining** — fire weapons at individual asteroids for ore; finite yield per rock, rarer tiers toward the rim; depleted rocks explode and respawn on the campaign clock. In **Security 0–3**, mining has a **10%** chance per hit to attract pirates (with a cooldown so laser spam cannot stack fleets).
 - **Probing** — scan planets, moons, asteroid fields, and stars for survey data, classification reports, and rare **human** blueprints; probe auto-returns after scan.
 - **Wrecks & salvage** — loot trade goods, occasional ship parts, rare blueprints; salvaged weapons equip or sell at the armoury. Alien wrecks can drop alien weapons and (rarely) alien blueprints. **F** prefers wreck loot over dock when both are in range.
-- **Hyperspace & supercruise** — neighbor-only jumps; supercruise to a waypoint with standoff arrival. System overview under the radar for local bodies (clickable with free mouse).
+- **Warp gates & supercruise** — neighbor-linked warp gates; fly into the aperture to jump, emerge from the paired gate. Supercruise to waypoints with standoff arrival. **System Scan (B)** for probe scanning of Spatial Anomalies. System overview under the radar (clickable with free mouse).
 - **Chase camera** — centered behind the ship; **hold Alt + mouse** free-look (only arms when the mouse moves — bare Alt does not stick free-look), release to snap back.
-- **HUD** — status bars, radar, canopy braces, scanlines, tab-target panel; subtle starfield tint from the local sun. Galaxy map shows system security.
-- **Music & SFX** — title/ambient/death music; sample thrusters, weapons, dock, and synthesized combat layers. **Separate Sound Effects and Music** toggles in **Settings** (saved). Alien weapons use distinct synth fire sounds.
+- **HUD** — status bars, radar, System Scan button, canopy braces, scanlines, tab-target panel; subtle starfield tint from the local sun. Galaxy map with system search and security.
+- **Music & SFX** — title/ambient/death music; sample thrusters, weapons, dock, and synthesized combat layers. **Separate Sound Effects and Music** toggles in **Settings** (saved). **Controls** list in Settings (intro + pause). Alien weapons use distinct synth fire sounds.
 - **Windowed app + fullscreen** — default **windowed** with OS frame (**1600×900 outer** including title bar/borders; size/position remembered). **Alt + Enter** toggles native fullscreen. **Settings** on main menu and pause menu. Preferences persist in app `settings.json`.
 - **Permadeath** — no respawns; death screen shows killer and law consequence.
 
@@ -89,7 +91,7 @@ node --test src/renderer/game/combat.test.js
 
 ## Controls
 
-Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointer is locked for aim; open a menu or press Space again for a normal cursor. After alt-tab, click the canvas or press Space to re-lock. The pause menu **Show Controls** list matches these bindings.
+Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointer is locked for aim; open a menu or press Space again for a normal cursor. After alt-tab, click the canvas or press Space to re-lock. **Settings → Controls** (intro menu or pause) matches these bindings.
 
 | Input | Action |
 | --- | --- |
@@ -107,9 +109,10 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **Shift+Tab** | Clear target lock |
 | **Ctrl/Cmd + Tab** | Set waypoint on body under crosshair |
 | **C** | Toggle supercruise (requires a waypoint) |
-| **M** | Galaxy map / hyperspace |
-| **F** | Dock at station/settlement or loot wreck |
-| **P** | Launch survey probe (orbit / near target) |
+| **M** | Galaxy map (search systems, plot routes) |
+| **B** | System Scan (probes / Spatial Anomalies) |
+| **F** | Warp gate jump (within 2 km) · loot wreck · dock |
+| **P** | Hack datacore nodule · launch survey probe |
 | **G** | Launch drones (requires installed drones in bays) |
 | **H** | Recall drones to bay |
 | **I** | Inventory |
@@ -117,7 +120,7 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **F1** | Character sheet |
 | **Esc** | Pause / resume |
 | **F5** | Quick save |
-| **Free mouse** | Click system overview (left) to set waypoints |
+| **Free mouse** | Click system overview (right) to set waypoints |
 
 Main menu and pause menu both open **Settings** (sound effects + music). Preferences are saved for the next launch.
 

@@ -1,6 +1,7 @@
 // Temporary dev/test loadout. Flip DEV_TEST_SETUP to false for normal New Game.
 // When true, the intro menu still appears; starting a New Game applies cheats.
 import { createGameState } from './state.js'
+import { CANONICAL_GALAXY_SEED } from '../procgen/galaxy.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
 import { defaultAccessoriesFor } from '../data/accessories.js'
@@ -21,7 +22,8 @@ export function createDevTestGameState(opts = {}) {
     characterName: opts.characterName || 'Test Pilot',
     shipInstanceName: opts.shipInstanceName || 'Far Reach',
     shipClassId: DEV_SHIP_CLASS_ID,
-    seed: opts.seed ?? Math.floor(Math.random() * 1e9)
+    seed: opts.seed ?? Math.floor(Math.random() * 1e9),
+    galaxySeed: CANONICAL_GALAXY_SEED
   })
   applyDevTestLoadout(gameState, opts)
   return gameState

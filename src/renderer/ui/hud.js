@@ -110,11 +110,22 @@ const STYLE = `
 #hud .bar.velocity .fill { position: absolute; top: 0; background: linear-gradient(90deg, #3a8f5c, #7fe0a0); box-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #hud .bar.velocity .fill.reversing { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
 
-/* Current system — top center, clear of status (left) and radar (right). */
+/* Current system — top center, clear of status (left) and radar (right).
+   Same dual-top-corner cut + dual side accents as the velocity panel. */
 #hud .system-label {
   position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
   pointer-events: none; z-index: 6;
   text-align: center; padding: 6px 18px 7px;
+  border-left: 3px solid #6fd8f2;
+  border-right: 3px solid #6fd8f2;
+  clip-path: polygon(
+    14px 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    0 100%,
+    0 14px
+  );
 }
 /* Docked: strip flight chrome; location chip top-left. */
 #hud.docked .status-panel,
@@ -226,17 +237,48 @@ const STYLE = `
   50% { box-shadow: 0 0 16px 2px rgba(255,90,90,0.95); }
 }
 
-/* Radar — same chrome family as other HUD panels (top-right cut). */
+/* Right column stack: radar (top) → System Scan → overview (systemOverview.js).
+   Radar frame: top 16, h 176 → bottom 192.
+   Scan btn: top 198 (6px gap), ~32px tall → bottom ~230.
+   Overview: top 236 (see systemOverview.js). */
 #radar {
   position: fixed; right: 16px; top: 16px;
+  width: 176px; height: 176px;
   font-family: monospace; color: #cfe3ff; user-select: none; text-align: center;
   pointer-events: none;
+  z-index: 8;
 }
 #radar .radar-frame {
   width: 176px; height: 176px;
   padding: 6px;
   box-sizing: border-box;
 }
+/* Between radar and system overview on the right column.
+   Top-right corner cut to match other HUD chrome. */
+#hud .system-scan-btn {
+  position: fixed; right: 16px; top: 198px; z-index: 9;
+  width: 176px; box-sizing: border-box;
+  pointer-events: auto; cursor: pointer;
+  font-family: monospace; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
+  padding: 7px 8px;
+  color: #c9e8ff;
+  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.82));
+  border: 1px solid rgba(111,216,242,0.45);
+  border-left: 1px solid rgba(111,216,242,0.45);
+  border-right: 3px solid #6fd8f2;
+  box-shadow: 0 0 12px rgba(79,195,217,0.25),
+    0 2px 3px rgba(0,0,0,0.7),
+    0 4px 10px rgba(0,0,0,0.35);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  filter:
+    drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+    drop-shadow(0 4px 10px rgba(0,0,0,0.35));
+}
+#hud .system-scan-btn:hover {
+  background: rgba(111,216,242,0.14);
+  color: #eaffff;
+}
+#hud.docked .system-scan-btn { display: none; }
 #radar canvas {
   display: block;
   width: 100%; height: 100%;
@@ -550,12 +592,28 @@ export function createHud(container) {
   // Nested inside hud (position:fixed makes placement independent of parent)
   // so removing hud.element also cleans up the radar — no separate tracking.
   hud.appendChild(radar)
+  // Between radar (above) and system overview (below) on the right column.
+  const systemScanBtn = document.createElement('button')
+  systemScanBtn.type = 'button'
+  systemScanBtn.className = 'system-scan-btn'
+  systemScanBtn.textContent = 'System Scan (B)'
+  hud.appendChild(systemScanBtn)
   const radarCanvas = radar.querySelector('canvas')
   const radarCtx = radarCanvas.getContext('2d')
   const radarSize = radarCanvas.width
   const radarCenter = radarSize / 2
 
-  const CONTACT_COLORS = { hostile: '#e05a5a', neutral: '#5ee6ff', body: '#5a7a9a', waypoint: '#7fe0a0', mission: '#ff8a3d', wreck: '#c27a3a' }
+  const CONTACT_COLORS = {
+    hostile: '#e05a5a',
+    neutral: '#5ee6ff',
+    body: '#5a7a9a',
+    waypoint: '#7fe0a0',
+    mission: '#ff8a3d',
+    wreck: '#c27a3a',
+    anomaly: '#d080ff',
+    nodule: '#60f0ff',
+    alien_base: '#ff6040'
+  }
   // Below this fraction the hull bar pulses red as an urgent low-hull cue.
   const CRITICAL_HULL_FRACTION = 0.25
 
@@ -796,6 +854,12 @@ export function createHud(container) {
     /** Sparse chromatic glitch on all HUD chrome while supercruising. */
     setCruiseGlitch(active) {
       hud.classList.toggle('cruise-glitch', !!active)
+    },
+    /**
+     * @param {() => void} fn
+     */
+    onSystemScan(fn) {
+      systemScanBtn.onclick = () => fn?.()
     },
     /**
      * While docked: hide flight HUD (stats, velocity, radar, target).

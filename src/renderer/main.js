@@ -3,11 +3,16 @@ import { createScene } from './render/scene.js'
 import { createStarfield, updateStarfield, setStarfieldStarTint } from './render/starfield.js'
 import { createMotionEffects, updateStarfieldMotion } from './render/motionFx.js'
 import { createHyperspaceTunnel } from './render/hyperspaceTunnel.js'
+import {
+  buildWarpGateMesh,
+  updateWarpGateMesh,
+  orientWarpGateTowardOrigin
+} from './render/warpGateMesh.js'
 import { createNebula, updateNebula } from './render/nebula.js'
 import { buildShipMesh, updatePoliceLights } from './render/shipMesh.js'
 import { buildStationMeshForBody, updateStationMesh } from './render/stationMesh.js'
 import { preloadStationModels, stationModelsReady } from './render/stationModels.js'
-import { buildPlanetMesh } from './render/planetMesh.js'
+import { buildPlanetMesh, updatePlanetAtmosphere } from './render/planetMesh.js'
 import { buildStarMesh, updateStarMesh } from './render/starMesh.js'
 import { buildAsteroidFieldMesh, getAsteroidRocks } from './render/asteroidFieldMesh.js'
 import { buildProjectileMesh, buildImpactFlash, preloadProjectileMeshes } from './render/projectileMesh.js'
@@ -44,6 +49,8 @@ import {
 import { spawnHitImpact, updateHitImpact, disposeHitImpact, preloadHitImpactFx } from './render/hitImpactFx.js'
 import { createMissileTrailSystem } from './render/missileTrailFx.js'
 import { createGameState } from './game/state.js'
+import { CANONICAL_GALAXY_SEED } from './procgen/galaxy.js'
+import { DEV_TEST_SETUP, createDevTestGameState } from './game/devTestSetup.js'
 
 import { advanceGameClock, reanchorGameClock } from './game/gameClock.js'
 import { createInputState, createMouseAimState, updateFlight } from './game/flight.js'
@@ -95,7 +102,7 @@ import {
   formatRespawnTime,
   rollMiningPirateAmbush
 } from './game/mining.js'
-import { pruneWrecks, lootWreck } from './game/wrecks.js'
+import { pruneWrecks, lootWreck, spawnWreck } from './game/wrecks.js'
 import { updateCraftingJobs, ensureBlueprintMaps } from './game/crafting.js'
 import { getBlueprint } from './data/blueprints.js'
 import {
@@ -118,7 +125,12 @@ import {
   MAX_PROBE_ATTEMPTS
 } from './game/probe.js'
 import { saveGame as persistSaveGame, loadGame as persistLoadGame, hasSave } from './game/save.js'
-import { hyperspaceJump } from './game/hyperspace.js'
+import {
+  hyperspaceJump,
+  warpArrivalNearExitGate,
+  warpGateOutwardDir,
+  quatFacingSun as quatFacingFromTo
+} from './game/hyperspace.js'
 import {
   getSystem,
   findBody,
@@ -126,6 +138,11 @@ import {
   coreFraction,
   canJumpTo,
   ensureSystemSecurity,
+  ensureWarpGates,
+  findWarpGateTo,
+  findNearbyWarpGate,
+  isNearWarpGate,
+  WARP_GATE_ACTIVATION_RANGE,
   WHISPERS_STATION_NAME
 } from './procgen/galaxy.js'
 import { createHud } from './ui/hud.js'
@@ -134,10 +151,35 @@ import { createMenu } from './ui/menu.js'
 import { createPauseMenu } from './ui/pauseMenu.js'
 import { createNavMap } from './ui/navMap.js'
 import { createSystemOverview } from './ui/systemOverview.js'
+import { createSystemScanMap } from './ui/systemScanMap.js'
+import { createDatacoreMinigame } from './ui/datacoreMinigame.js'
 import { createInventoryUI } from './ui/inventoryUI.js'
 import { createMissionsUI } from './ui/missionsUI.js'
 import { createCharacterUI } from './ui/characterUI.js'
 import { createDeathScreen } from './ui/deathScreen.js'
+import {
+  ensureSystemAnomalies,
+  getAnomaly,
+  overviewAnomalies,
+  pruneAnomalies,
+  tickGalaxyAnomalies
+} from './game/systemScan.js'
+import {
+  SITE_ACTIVATION_RANGE,
+  NODULE_PROBE_RANGE,
+  spawnAlienIncursionWave,
+  applyAlienBaseKill,
+  applyDatacoreNoduleSuccess,
+  applyDatacoreNoduleFail,
+  grantLootToShip
+} from './game/anomalySites.js'
+import {
+  buildDatacoreSiteMesh,
+  updateDatacoreSiteMesh,
+  buildAlienBaseMesh,
+  updateAlienBaseMesh,
+  disposeAnomalySiteMesh
+} from './render/anomalySiteMesh.js'
 import { gameConfirm, gameNotice } from './ui/gameDialog.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from './data/shipClasses.js'
 import { getGood } from './data/goods.js'
@@ -312,17 +354,19 @@ const AMBIENT_NPC_CAP = 3
 // Ship/wreck/rock radar contacts (planets/waypoint may still paint farther).
 const RADAR_RANGE = 100000
 const IMPACT_FLASH_TTL = 0.25
-// Wind-up long enough for "Hyperdrive engaged" TTS + charge SFX, then tunnel.
-const JUMP_WINDUP_S = 2.35
-// Corridor phase (+8s vs prior 1.85) so the star tunnel has time to read.
-const JUMP_STREAK_S = 9.85
-const JUMP_DURATION_S = JUMP_WINDUP_S + JUMP_STREAK_S
-// Black screen fade around the mid-tunnel system swap (streak phase s = 0–1).
-// Fade in before the swap (s=0.4), hold, then fade out into the arrival system.
-const JUMP_BLACK_FADE_IN_START = 0.22
+// Warp-gate jump: fly into origin aperture → spool/tunnel → emerge from dest aperture.
+const JUMP_ENTER_GATE_S = 1.55
+const JUMP_WINDUP_S = 1.15
+const JUMP_STREAK_S = 3.6
+const JUMP_EXIT_GATE_S = 1.45
+const JUMP_TUNNEL_DURATION_S = JUMP_WINDUP_S + JUMP_STREAK_S
+// Black veil: fade in before the system swap (streak s = 0–1), then hold until
+// tunnel end — reveal during exit-gate flight, then arrival flash.
+const JUMP_BLACK_FADE_IN_START = 0.28
 const JUMP_BLACK_FADE_IN_END = 0.4
-const JUMP_BLACK_FADE_OUT_START = 0.48
-const JUMP_BLACK_FADE_OUT_END = 0.72
+// Arrival flash (white/cyan) after the ship clears the destination gate.
+const JUMP_ARRIVAL_FLASH_PEAK = 0.85
+const JUMP_ARRIVAL_FLASH_DECAY_S = 0.55
 const BASE_FOV = 60
 // Supercruise FOV (degrees) — wider than base for speed read.
 const CRUISE_FOV = 100
@@ -336,7 +380,7 @@ const DOCK_ANIM_DURATION_S = 4.4
 const DOCK_EXTERIOR_MARGIN = 28
 const UNDOCK_BACKOFF_MARGIN = 70
 const DOCK_FLASH_FADE_S = 0.65
-const HYPERSPACE_FLASH_COLOR = '#eaffff'
+const HYPERSPACE_FLASH_COLOR = '#c8f0ff'
 const DOCK_FLASH_COLOR = '#4fc3d9'
 // Min standoff past the collision shell when the dock bubble is large enough
 // (stations/settlements have +2000m). Avoids bouncing off the body on drop-out.
@@ -545,7 +589,7 @@ function exitFlightMode() {
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
   if (targetDirEl) targetDirEl.style.display = 'none'
-  // Free mouse → overview HUD accepts waypoint clicks (EVE-style).
+  // Free mouse → overview HUD accepts waypoint clicks.
   if (!docked && !navMapOpen && !inventoryOpen && !missionsOpen && !characterOpen && !paused) {
     systemOverview?.setInteractive(true)
   }
@@ -806,18 +850,10 @@ renderer.domElement.addEventListener('lostpointercapture', () => {
 })
 
 // Chase-camera zoom (works with or without pointer lock). Scroll up = closer.
-// Docked: zoom hangar orbit distance.
+// Docked: orbit look-around only (click-drag) — no zoom.
 window.addEventListener('wheel', (e) => {
   if (!gameState || dockEffect || jumpEffect || paused || navMapOpen || inventoryOpen || missionsOpen || characterOpen) return
-  if (docked) {
-    e.preventDefault()
-    const step = Math.sign(e.deltaY) * Math.min(4, Math.abs(e.deltaY) * 0.04)
-    dockOrbit.dist = Math.max(
-      DOCK_ORBIT_DIST_MIN,
-      Math.min(DOCK_ORBIT_DIST_MAX, dockOrbit.dist + step)
-    )
-    return
-  }
+  if (docked) return
   e.preventDefault()
   adjustChaseZoom(e.deltaY)
 }, { passive: false })
@@ -834,9 +870,15 @@ let dockingUI = null
 let pauseMenu = null
 let navMap = null
 let systemOverview = null
+let systemScanMap = null
+let datacoreMinigame = null
 let inventoryUI = null
 let missionsUI = null
 let characterUI = null
+/** Active alien-incursion site tracking: { anomalyId, position, hull, maxHull } */
+let alienSiteRuntime = null
+/** @type {Map<string, THREE.Object3D>} fully-scanned site world meshes (datacore / alien base) */
+const anomalySiteMeshes = new Map()
 /** Police backup timer: { systemId, fireAt } or null. */
 let policeResponse = null
 let dockPromptEl = null
@@ -875,9 +917,9 @@ let combatReticle3d = null
 let targetIndicatorEl = null
 // Small arrow near the ship on-screen, pointing toward the Tab target.
 let targetDirEl = null
-// The player's current combat/scan target — { kind: 'npc'|'body'|'asteroid', id
-// or (fieldId, index) } — set by the Tab key (see cycleTarget); never
-// persisted, ships/bodies are looked up fresh each frame (see resolveTarget).
+// The player's current combat/scan target — { kind: 'npc'|'body'|'asteroid'|
+// 'anomaly'|'nodule'|'alien_base'|…, id or (fieldId, index) } — set by Tab
+// (see cycleTarget); never persisted (see resolveTarget).
 let currentTarget = null
 let cruiseIndicatorEl = null
 let jumpFlashEl = null
@@ -903,6 +945,11 @@ function buildBodyMesh(body, system = null) {
   if (body.kind === 'planet' || body.kind === 'moon') return buildPlanetMesh(body)
   // Pass system so belt rocks tint by ore tier (coreFraction → raw/rich/exotic/quantum).
   if (body.kind === 'asteroidField') return buildAsteroidFieldMesh(body, system)
+  if (body.kind === 'warpGate') {
+    const mesh = buildWarpGateMesh(body)
+    orientWarpGateTowardOrigin(mesh, body.position)
+    return mesh
+  }
   const mesh = buildStationMeshForBody(body)
   // Settlements keep a modest pre-behemoth size; only orbital stations are huge.
   const baseScale = body.kind === 'settlement' ? SETTLEMENT_SCALE : STATION_SCALE
@@ -946,11 +993,11 @@ function loadBodiesForCurrentSystem() {
       orientSettlementOnSurface(mesh, body.surfaceOffset)
     }
   }
-  // Sec 3–6: System Patrol ships loiter at every station.
+  // Sec 3–6 station patrols; Sec 4–6 also cover warp gates.
   refreshStationPolicePatrols()
 }
 
-/** Spawn / top-up police patrols around stations in high-security systems. */
+/** Spawn / top-up police patrols (stations Sec 3–6, warp gates Sec 4–6). */
 function refreshStationPolicePatrols() {
   if (!gameState) return
   const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
@@ -1323,6 +1370,11 @@ function onProjectileHit({
     hitImpacts.push(hitFx)
   }
 
+  // Alien incursion base (after waves) — any hit near base applies damage.
+  if (position && alienSiteRuntime) {
+    tryDamageAlienBase(position, weaponType === 'missile' ? 90 : 35)
+  }
+
   if (mined) {
     if (mined.destroyed) {
       // Fracture burst + beefy rock rumble (not the ship combat boom).
@@ -1396,6 +1448,263 @@ function playShipDeathFx(position, radius = 12, { sound = true } = {}) {
   if (sound) audio.playExplosion()
 }
 
+/** Probe a sealed Datacore nodule with P (opens minigame). */
+function tryDatacoreNoduleProbe() {
+  if (!gameState || datacoreMinigame?.isOpen?.()) return false
+  const best = findNearbyDatacoreNodule()
+  if (!best) return false
+  exitFlightMode()
+  datacoreMinigame.show({
+    noduleName: 'Datacore nodule',
+    onComplete: ({ success, aborted }) => {
+      if (aborted) {
+        if (!docked) reenterFlightMode()
+        return
+      }
+      if (success) {
+        const loot = applyDatacoreNoduleSuccess(
+          gameState,
+          best.anomaly,
+          best.nodule,
+          Math.random
+        )
+        let msg = `Nodule unlocked — recovered ${formatLootSummary(loot)}`
+        if (best.anomaly.status === 'completed') {
+          removeAnomalySiteMesh(best.anomaly.id)
+          msg += ' · site complete'
+        }
+        flashToast(msg, 5.5)
+        try {
+          audio.playProbeFind()
+        } catch {
+          /* */
+        }
+      } else {
+        applyDatacoreNoduleFail(best.anomaly, best.nodule, gameState.simTime)
+        playShipDeathFx(best.nodule.position, 28)
+        flashToast('Nodule destroyed!', 2.8)
+        if (best.anomaly.status === 'completed') {
+          removeAnomalySiteMesh(best.anomaly.id)
+        }
+      }
+      if (!docked) reenterFlightMode()
+    }
+  })
+  return true
+}
+
+function removeAnomalySiteMesh(id) {
+  const mesh = anomalySiteMeshes.get(id)
+  if (!mesh) return
+  scene.remove(mesh)
+  disposeAnomalySiteMesh(mesh)
+  anomalySiteMeshes.delete(id)
+}
+
+function clearAnomalySiteMeshes() {
+  for (const id of [...anomalySiteMeshes.keys()]) removeAnomalySiteMesh(id)
+}
+
+/**
+ * Ensure world meshes exist for fully scanned sites in the current system.
+ */
+function syncAnomalySiteMeshes(system, dt) {
+  const live = new Set()
+  for (const a of system.spatialAnomalies ?? []) {
+    if (!a.fullyScanned) continue
+    if (a.status === 'completed' || a.status === 'despawning') {
+      removeAnomalySiteMesh(a.id)
+      if (a.type === 'alien_incursion') removeAnomalySiteMesh(`${a.id}-base`)
+      continue
+    }
+    if (a.type === 'datacore') {
+      live.add(a.id)
+      let mesh = anomalySiteMeshes.get(a.id)
+      if (!mesh) {
+        mesh = buildDatacoreSiteMesh(a)
+        anomalySiteMeshes.set(a.id, mesh)
+        scene.add(mesh)
+      }
+      updateDatacoreSiteMesh(mesh, a, gameState.simTime, dt)
+    } else if (a.type === 'alien_incursion' && !a.baseDestroyed && alienSiteRuntime?.anomalyId === a.id) {
+      const baseId = `${a.id}-base`
+      live.add(baseId)
+      let mesh = anomalySiteMeshes.get(baseId)
+      if (!mesh) {
+        mesh = buildAlienBaseMesh(a.position)
+        anomalySiteMeshes.set(baseId, mesh)
+        scene.add(mesh)
+      }
+      updateAlienBaseMesh(mesh, gameState.simTime, dt)
+    }
+  }
+  for (const id of [...anomalySiteMeshes.keys()]) {
+    if (!live.has(id)) removeAnomalySiteMesh(id)
+  }
+}
+
+/** Nearest sealed datacore nodule within probe range, if any. */
+function findNearbyDatacoreNodule() {
+  if (!gameState) return null
+  const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (!system) return null
+  ensureSystemAnomalies(system, gameState.galaxy)
+  const ship = gameState.player.ship.position
+  let best = null
+  let bestD = NODULE_PROBE_RANGE
+  for (const a of system.spatialAnomalies ?? []) {
+    if (a.type !== 'datacore' || !a.fullyScanned) continue
+    if (a.status === 'completed' || a.status === 'despawning') continue
+    for (const n of a.nodules ?? []) {
+      if (n.status !== 'sealed') continue
+      const d = Math.hypot(
+        ship[0] - n.position[0],
+        ship[1] - n.position[1],
+        ship[2] - n.position[2]
+      )
+      if (d < bestD) {
+        bestD = d
+        best = { anomaly: a, nodule: n, dist: d }
+      }
+    }
+  }
+  return best
+}
+
+/**
+ * Activate scanned sites in range: alien waves / base combat tracking.
+ * Also keeps datacore relic + nodule meshes visible in the system.
+ */
+function updateAnomalySites(dt) {
+  if (!gameState || docked || jumpEffect) {
+    if (docked || jumpEffect) clearAnomalySiteMeshes()
+    return
+  }
+  const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (!system) return
+  ensureSystemAnomalies(system, gameState.galaxy)
+  pruneAnomalies(system, gameState.simTime)
+  const ship = gameState.player.ship.position
+  const core = coreFraction(system)
+
+  // Always show fully-scanned site geometry while undocked in-system.
+  syncAnomalySiteMeshes(system, dt)
+
+  for (const a of system.spatialAnomalies ?? []) {
+    if (!a.fullyScanned) continue
+    if (a.status === 'completed' || a.status === 'despawning') continue
+    const d = Math.hypot(ship[0] - a.position[0], ship[1] - a.position[1], ship[2] - a.position[2])
+    if (d > SITE_ACTIVATION_RANGE) continue
+
+    if (a.type === 'alien_incursion' && !a.baseDestroyed) {
+      a.status = 'active'
+      // Spawn wave 0 if not started
+      if ((a.waveIndex ?? 0) === 0 && (a.waveCleared ?? 0) === 0) {
+        const live = gameState.npcs.filter(
+          (n) => !n.destroyed && n.anomalySiteId === a.id
+        ).length
+        if (live === 0 && a._waveSpawned == null) {
+          a._waveSpawned = 0
+          a.waveIndex = 0
+          const wave = spawnAlienIncursionWave(Math.random, a, 0, system.bodies, core)
+          for (const n of wave) {
+            gameState.npcs.push(n)
+            const mesh = buildShipMesh(getShipClass(n.shipClassId), { lite: true })
+            npcMeshes.set(n.id, mesh)
+            scene.add(mesh)
+          }
+          flashToast(`Alien Incursion — wave 1/${a.wavesTotal}`, 3.2)
+        }
+      }
+      // Advance waves when site ships dead
+      const siteLive = gameState.npcs.filter(
+        (n) => !n.destroyed && n.anomalySiteId === a.id
+      )
+      if (siteLive.length === 0 && a._waveSpawned != null) {
+        const next = a._waveSpawned + 1
+        if (next < (a.wavesTotal ?? 3)) {
+          a._waveSpawned = next
+          a.waveIndex = next
+          const wave = spawnAlienIncursionWave(Math.random, a, next, system.bodies, core)
+          for (const n of wave) {
+            gameState.npcs.push(n)
+            const mesh = buildShipMesh(getShipClass(n.shipClassId), { lite: true })
+            npcMeshes.set(n.id, mesh)
+            scene.add(mesh)
+          }
+          flashToast(`Alien Incursion — wave ${next + 1}/${a.wavesTotal}`, 3.2)
+        } else if (!a.baseDestroyed && !alienSiteRuntime) {
+          // Base becomes targetable (virtual HP entity tracked as runtime)
+          alienSiteRuntime = {
+            anomalyId: a.id,
+            position: [...a.position],
+            hull: 420,
+            maxHull: 420
+          }
+          flashToast('Alien base exposed — destroy it!', 3.5)
+        }
+      }
+    }
+
+    if (a.type === 'datacore' && (a.status === 'scanned' || a.status === 'hidden')) {
+      a.status = 'active'
+      if (!a._enteredToast) {
+        a._enteredToast = true
+        flashToast('Datacore Relic — fly to cyan nodules and press P to hack', 4.2)
+      }
+    }
+  }
+}
+
+/** Apply damage to exposed alien base if projectiles hit near it. */
+function tryDamageAlienBase(hitPos, damage = 40) {
+  if (!alienSiteRuntime || !gameState) return false
+  const d = Math.hypot(
+    hitPos[0] - alienSiteRuntime.position[0],
+    hitPos[1] - alienSiteRuntime.position[1],
+    hitPos[2] - alienSiteRuntime.position[2]
+  )
+  if (d > 350) return false
+  alienSiteRuntime.hull -= damage
+  if (alienSiteRuntime.hull <= 0) {
+    const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+    const a = getAnomaly(system, alienSiteRuntime.anomalyId, gameState.galaxy)
+    if (a) {
+      const { credits, loot } = applyAlienBaseKill(gameState, a, Math.random, gameState.simTime)
+      gameState.wrecks.push(
+        spawnWreck(alienSiteRuntime.position, gameState.simTime, Math.random, null)
+      )
+      // Site loot lands in the wreck (standard goods always; valuable rolled in loot).
+      const w = gameState.wrecks[gameState.wrecks.length - 1]
+      if (w?.loot) {
+        w.loot.cargo ??= {}
+        for (const [id, qty] of Object.entries(loot.cargo ?? {})) {
+          w.loot.cargo[id] = (w.loot.cargo[id] ?? 0) + qty
+        }
+        if (loot.shipParts) w.loot.shipParts = (w.loot.shipParts ?? 0) + loot.shipParts
+        if (loot.blueprints) {
+          w.loot.blueprints ??= {}
+          for (const [id, qty] of Object.entries(loot.blueprints)) {
+            w.loot.blueprints[id] = (w.loot.blueprints[id] ?? 0) + qty
+          }
+        }
+        if (loot.skillbooks) {
+          w.loot.skillbooks ??= {}
+          for (const [id, qty] of Object.entries(loot.skillbooks)) {
+            w.loot.skillbooks[id] = (w.loot.skillbooks[id] ?? 0) + qty
+          }
+        }
+      }
+      playShipDeathFx(alienSiteRuntime.position, 40)
+      let baseMsg = `Alien base destroyed — +${credits} cr (site despawns in 5 min)`
+      if (loot?.blueprints || loot?.skillbooks) baseMsg += ' · rare salvage in wreck!'
+      flashToast(baseMsg, 4.5)
+    }
+    alienSiteRuntime = null
+  }
+  return true
+}
+
 /** Toast when every rock in a field is gone (and remaining time until next respawn). */
 function maybeToastFieldDepleted(fieldId) {
   if (!fieldId || !gameState) return
@@ -1456,13 +1765,21 @@ function maybeSpawnMiningPirateAmbush() {
 const deathScreen = createDeathScreen(appEl, () => returnToMenu())
 const menu = createMenu(appEl, {
   onNewGame: ({ characterName, shipInstanceName, portraitDataUrl }) => {
-    const gameState = createGameState({
-      characterName,
-      shipInstanceName,
-      portraitDataUrl: portraitDataUrl || null,
-      shipClassId: STARTER_SHIP_CLASS_ID,
-      seed: Math.floor(Math.random() * 1e9)
-    })
+    // Career seed only diversifies missions; galaxy + home system are fixed.
+    const seed = Math.floor(Math.random() * 1e9)
+    const gameState = DEV_TEST_SETUP
+      ? createDevTestGameState({ characterName, shipInstanceName, seed })
+      : createGameState({
+          characterName,
+          shipInstanceName,
+          portraitDataUrl: portraitDataUrl || null,
+          shipClassId: STARTER_SHIP_CLASS_ID,
+          seed,
+          galaxySeed: CANONICAL_GALAXY_SEED
+        })
+    if (DEV_TEST_SETUP && portraitDataUrl) {
+      gameState.player.portraitDataUrl = portraitDataUrl
+    }
     startSession(gameState, { enterFlightMode: true })
   },
   onLoadGame: async () => {
@@ -1515,6 +1832,14 @@ function clearSession() {
   dockingUI?.element.remove()
   pauseMenu?.element.remove()
   navMap?.element.remove()
+  systemScanMap?.hide?.()
+  systemScanMap?.element?.remove?.()
+  systemScanMap = null
+  datacoreMinigame?.hide?.()
+  datacoreMinigame?.element?.remove?.()
+  datacoreMinigame = null
+  alienSiteRuntime = null
+  clearAnomalySiteMeshes()
   systemOverview?.element.remove()
   systemOverview = null
   inventoryUI?.element.remove()
@@ -1712,6 +2037,33 @@ function rebuildPlayerShipMesh() {
   syncMeshToEntity(playerMesh, gameState.player.ship)
 }
 
+/** Open/toggle System Scan (HUD button + B). */
+function openSystemScanPanel() {
+  if (!gameState || !systemScanMap) return
+  if (docked || dockEffect || jumpEffect || cruising) {
+    flashToast('System Scan unavailable right now')
+    return
+  }
+  if (
+    paused ||
+    navMapOpen ||
+    inventoryOpen ||
+    missionsOpen ||
+    characterOpen ||
+    datacoreMinigame?.isOpen?.()
+  ) {
+    return
+  }
+  if (systemScanMap.isOpen?.()) {
+    systemScanMap.hide()
+    return
+  }
+  exitFlightMode()
+  const sys = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (sys) ensureSystemAnomalies(sys, gameState.galaxy)
+  systemScanMap.show()
+}
+
 function startSession(newGameState, { enterFlightMode = false } = {}) {
   clearSession()
   stopMenuBackground()
@@ -1720,6 +2072,8 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   // Offline craft completions from deserialize (wall-clock) — toast after HUD exists.
   const offlineCraftDone = gameState._craftingJustCompleted ?? []
   delete gameState._craftingJustCompleted
+  const anomaliesRefreshedOffline = !!gameState._anomaliesRefreshedOffline
+  delete gameState._anomaliesRefreshedOffline
   rebuildPlayerShipMesh()
   ensureDrones(gameState.player.ship)
   clearDroneMeshes()
@@ -1786,6 +2140,21 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
     onQuit: () => window.electronAPI.quitApp()
   })
   navMap = createNavMap(appEl, gameState)
+  systemScanMap = createSystemScanMap(appEl, gameState, {
+    getShipClassId: () => gameState.player.ship.classId,
+    onFullyScanned: (a) => {
+      flashToast(`${a.displayName} locked — now on Overview`, 3.5)
+      try {
+        audio.playProbeFind()
+      } catch {
+        /* */
+      }
+    },
+    onClose: () => {
+      if (!docked && !navMapOpen) reenterFlightMode()
+    }
+  })
+  datacoreMinigame = createDatacoreMinigame(appEl)
   systemOverview = createSystemOverview(appEl, gameState, {
     canSetWaypoint: () => {
       if (cruising) {
@@ -1806,6 +2175,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   })
   systemOverview.show()
   systemOverview.setInteractive(!flightMode)
+  hud?.onSystemScan?.(openSystemScanPanel)
   inventoryUI = createInventoryUI(appEl, gameState)
   missionsUI = createMissionsUI(appEl, gameState, {
     canSetWaypoint: () => {
@@ -2045,6 +2415,9 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   audio.startAmbientMusic()
 
   if (offlineCraftDone.length) toastCraftCompleted(offlineCraftDone)
+  if (anomaliesRefreshedOffline) {
+    flashToast('Spatial anomalies refreshed while you were away', 4.5)
+  }
 
   // Restore free-flight pose or re-dock at the station saved in the file.
   restoreSessionLocation()
@@ -2093,6 +2466,11 @@ function supercruiseArrivalRangeFor(body) {
   if (body.kind === 'asteroidField') {
     const fieldR = Math.max(40, body.radius ?? 120)
     return Math.max(60, Math.min(fieldR * 0.28, fieldR - 25) + shipR * 0.25)
+  }
+
+  // Warp gates: drop well inside the 2 km F-activate bubble.
+  if (body.kind === 'warpGate') {
+    return Math.max(400, Math.min(900, WARP_GATE_ACTIVATION_RANGE * 0.4 + shipR))
   }
 
   const bodyRadius = collisionRadiusFor(body) ?? 0
@@ -2189,44 +2567,55 @@ function findNearbyWreck() {
   return nearest
 }
 
+/** Human-readable loot list for floating toasts (cargo, parts, weapons, BPs, books). */
+function formatLootSummary(loot) {
+  if (!loot) return 'nothing'
+  const bits = []
+  for (const [id, qty] of Object.entries(loot.cargo ?? {})) {
+    if (!qty) continue
+    try {
+      bits.push(`${qty} ${getGood(id).name}`)
+    } catch {
+      bits.push(`${qty} cargo`)
+    }
+  }
+  if (loot.shipParts) {
+    bits.push(`${loot.shipParts} Ship Part${loot.shipParts > 1 ? 's' : ''}`)
+  }
+  for (const [id, qty] of Object.entries(loot.weapons ?? {})) {
+    if (!qty) continue
+    try {
+      bits.push(`${qty}× ${getWeapon(id).name}`)
+    } catch {
+      bits.push(`${qty}× weapon`)
+    }
+  }
+  for (const [id, qty] of Object.entries(loot.blueprints ?? {})) {
+    if (!qty) continue
+    try {
+      bits.push(`${qty}× ${getBlueprint(id).name}`)
+    } catch {
+      bits.push(`${qty}× blueprint`)
+    }
+  }
+  for (const [id, qty] of Object.entries(loot.skillbooks ?? {})) {
+    if (!qty) continue
+    try {
+      bits.push(`${qty}× ${getSkillDef(id).bookName}`)
+    } catch {
+      bits.push(loot.skillbookName ? `${qty}× ${loot.skillbookName}` : `${qty}× skillbook`)
+    }
+  }
+  if (!bits.length) return 'nothing'
+  if (bits.length === 1) return bits[0]
+  if (bits.length === 2) return `${bits[0]} and ${bits[1]}`
+  return `${bits.slice(0, -1).join(', ')}, and ${bits[bits.length - 1]}`
+}
+
 function lootNearbyWreck(wreck) {
   const loot = lootWreck(gameState, playerShipClass, wreck.id)
   audio.playClick()
-  const parts = loot.cargo ? Object.entries(loot.cargo).map(([id, qty]) => `${qty} ${getGood(id).name}`).join(', ') : ''
-  const partsMsg = loot.shipParts ? `${parts ? ' and ' : ''}${loot.shipParts} Ship Part${loot.shipParts > 1 ? 's' : ''}` : ''
-  const weaponMsg = loot.weapons
-    ? `${parts || partsMsg ? ' and ' : ''}${Object.entries(loot.weapons).map(([id, qty]) => {
-        try {
-          return `${qty}× ${getWeapon(id).name}`
-        } catch {
-          return `${qty}× weapon`
-        }
-      }).join(', ')}`
-    : ''
-  const bpMsg = loot.blueprints
-    ? `${parts || partsMsg || weaponMsg ? ' and ' : ''}${Object.entries(loot.blueprints).map(([id, qty]) => {
-        try {
-          return `${qty}× ${getBlueprint(id).name}`
-        } catch {
-          return `${qty}× blueprint`
-        }
-      }).join(', ')}`
-    : ''
-  const bookMsg = loot.skillbooks
-    ? `${parts || partsMsg || weaponMsg || bpMsg ? ' and ' : ''}${Object.entries(loot.skillbooks)
-        .map(([id, qty]) => {
-          try {
-            return `${qty}× ${getSkillDef(id).bookName}`
-          } catch {
-            return `${qty}× skillbook`
-          }
-        })
-        .join(', ')}`
-    : ''
-  setHudGlitchText(
-    miningToastEl,
-    `Salvaged ${parts}${partsMsg}${weaponMsg}${bpMsg}${bookMsg} from the wreck`
-  )
+  setHudGlitchText(miningToastEl, `Salvaged ${formatLootSummary(loot)} from the wreck`)
   showHudGlitch(miningToastEl)
   miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
 }
@@ -2804,15 +3193,53 @@ function computeRadarContacts() {
     contacts.push({ x: -rel.x, z: rel.z, kind: 'wreck' })
   }
 
+  // Fully scanned Spatial Anomaly sites (relic, nodules, exposed alien base).
+  if (currentSystem) {
+    ensureSystemAnomalies(currentSystem, gameState.galaxy)
+    for (const a of currentSystem.spatialAnomalies ?? []) {
+      if (!a.fullyScanned) continue
+      if (a.status === 'completed' || a.status === 'despawning') continue
+      if (a.type === 'datacore') {
+        {
+          const rel = new THREE.Vector3().fromArray(a.position).sub(shipPos)
+          if (rel.length() <= RADAR_RANGE) {
+            rel.applyQuaternion(shipQuatInverse)
+            contacts.push({ x: -rel.x, z: rel.z, kind: 'anomaly' })
+          }
+        }
+        for (const n of a.nodules ?? []) {
+          if (n.status === 'destroyed') continue
+          const rel = new THREE.Vector3().fromArray(n.position).sub(shipPos)
+          if (rel.length() > RADAR_RANGE) continue
+          rel.applyQuaternion(shipQuatInverse)
+          contacts.push({ x: -rel.x, z: rel.z, kind: 'nodule' })
+        }
+      } else if (a.type === 'alien_incursion' && alienSiteRuntime?.anomalyId === a.id) {
+        const rel = new THREE.Vector3().fromArray(a.position).sub(shipPos)
+        if (rel.length() <= RADAR_RANGE) {
+          rel.applyQuaternion(shipQuatInverse)
+          contacts.push({ x: -rel.x, z: rel.z, kind: 'alien_base' })
+        }
+      }
+    }
+  }
+
   return contacts
 }
 
-// Autopilot multi-hop: after each jump, wait ROUTE_AUTOPILOT_PAUSE_S then
-// fire the next plotted hop until the route is empty (or cancelled).
-const ROUTE_AUTOPILOT_PAUSE_S = 10
-/** @type {{ pauseRemaining: number | null } | null} */
+// Route autopilot: SC → gate → wait 10s (F to skip) → jump → next gate…
+const ROUTE_AUTOPILOT_GATE_PAUSE_S = 10
+/** @type {{ phase: 'to_gate' | 'gate_wait' | 'jumping', pauseRemaining?: number, nextId?: string, gateId?: string } | null} */
 let routeAutopilot = null
 
+function isRouteAutopilotActive() {
+  return !!routeAutopilot
+}
+
+/**
+ * Abort autopilot sequence only — plotted route is kept so the player can
+ * resume later (manual F or re-engage autopilot).
+ */
 function cancelRouteAutopilot(reason) {
   if (!routeAutopilot) return
   routeAutopilot = null
@@ -2823,79 +3250,275 @@ function cancelRouteAutopilot(reason) {
   if (reason) flashToast(reason)
 }
 
-function handleJump(targetSystemId, opts = {}) {
-  // Validate up front so we don't play the animation just to fail partway
-  // through; hyperspaceJump re-checks these itself as the safety net.
-  if (docked || dockEffect) {
-    flashToast('Undock before engaging hyperdrive')
-    return
-  }
-  if (gameState.inCombat) {
-    flashToast('Cannot engage hyperdrive while in combat')
-    cancelRouteAutopilot(null)
-    return
-  }
+/** After SC drop (or already in range): 10s pause before auto-jump; F skips. */
+function armRouteAutopilotGateWait(nextId, gate) {
   if (cruising) {
-    flashToast('Drop supercruise before engaging hyperdrive')
-    return
+    cruising = false
+    gameState.player.ship.velocity = [0, 0, 0]
+    gameState.player.ship.throttle = 0
   }
-  if (targetSystemId === gameState.player.currentSystemId) {
-    flashToast('Already in that system')
-    return
+  gameState.player.waypointBodyId = null
+  gameState.player.waypointPosition = null
+  routeAutopilot = {
+    phase: 'gate_wait',
+    pauseRemaining: ROUTE_AUTOPILOT_GATE_PAUSE_S,
+    nextId,
+    gateId: gate.id
   }
+  const destSys = getSystem(gameState.galaxy, nextId)
+  flashToast(
+    `Autopilot: jump in ${ROUTE_AUTOPILOT_GATE_PAUSE_S}s — press F to jump now`,
+    3.2
+  )
+  setHudGlitchText(
+    cruiseIndicatorEl,
+    destSys
+      ? `AUTOPILOT · JUMP ${ROUTE_AUTOPILOT_GATE_PAUSE_S}s · ${destSys.name}`
+      : `AUTOPILOT · JUMP ${ROUTE_AUTOPILOT_GATE_PAUSE_S}s`
+  )
+  showHudGlitch(cruiseIndicatorEl)
+}
+
+/** Set waypoint on the gate for the next plotted hop and engage supercruise. */
+function startRouteAutopilotCruiseToGate() {
+  ensureWarpGates(gameState.galaxy)
+  const rem = gameState.player.plottedRoute
+  if (!Array.isArray(rem) || rem.length === 0) {
+    cancelRouteAutopilot('Route complete')
+    return false
+  }
+  if (!shipHasAutopilot(gameState.player.ship)) {
+    cancelRouteAutopilot('Autopilot cancelled — module not fitted')
+    return false
+  }
+  const nextId = rem[0]
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-  if (!canJumpTo(currentSystem, targetSystemId)) {
-    flashToast('Out of hyperspace range — jump via a neighboring system first')
-    cancelRouteAutopilot('Autopilot cancelled — next hop out of range')
-    return
+  if (!canJumpTo(currentSystem, nextId)) {
+    cancelRouteAutopilot('Autopilot cancelled — no warp lane')
+    return false
   }
-  // Manual single jump cancels an in-progress route autopilot chain.
-  if (opts.routeAutopilot) {
-    routeAutopilot = { pauseRemaining: null }
-  } else {
-    routeAutopilot = null
+  const gate = findWarpGateTo(currentSystem, nextId)
+  if (!gate) {
+    cancelRouteAutopilot('Autopilot cancelled — missing warp gate')
+    return false
   }
-  navMapOpen = false
-  navMap?.hide()
-  // Probe can't follow a hyperspace jump — abort mid-survey cleanly.
-  clearProbeEffect()
-  clearTargetLock() // waypoint/route unchanged; clear Tab-lock for the jump
-  // Jump is launched from a button click — arm flight intent and grab
-  // pointer lock *now* (user gesture). reenterFlightMode at jump end cannot
-  // always re-lock after the multi-second animation (no live gesture left).
-  // Follow-on autopilot jumps may lack a user gesture — pointer lock is best-effort.
-  flightModeWanted = true
-  if (document.pointerLockElement !== renderer.domElement) {
-    renderer.domElement.requestPointerLock().catch(() => {})
+  // Already in activation range → wait, then jump (F skips wait).
+  if (isNearWarpGate(gameState.player.ship.position, gate)) {
+    armRouteAutopilotGateWait(nextId, gate)
+    return true
   }
-  jumpEffect = { elapsed: 0, targetSystemId, jumped: false, spitPhase: false }
-  jumpFlashEl.style.background = HYPERSPACE_FLASH_COLOR
-  jumpFlashEl.style.display = 'block'
-  setJumpBlackOpacity(0)
-  hyperspaceTunnel.start()
-  audio.playHyperspace()
-  // Drones snap home before the corridor swallows the hull.
+  gameState.player.waypointBodyId = gate.id
+  gameState.player.waypointPosition = null
+  routeAutopilot = { phase: 'to_gate' }
   try {
     teleportDronesToBay(gameState.player.ship)
     clearDroneMeshes()
   } catch { /* */ }
-  audio.announce(opts.routeAutopilot ? 'Route autopilot engaged' : 'Hyperdrive engaged')
-  setHudGlitchText(cruiseIndicatorEl, opts.routeAutopilot ? 'ROUTE AUTOPILOT' : 'HYPERDRIVE ENGAGED')
+  clearTargetLock()
+  cruising = true
+  gameState.player.ship.supercruiseElapsed = 0
+  const destSys = getSystem(gameState.galaxy, nextId)
+  flashToast(`Route autopilot → ${gate.name}`)
+  setHudGlitchText(
+    cruiseIndicatorEl,
+    destSys ? `AUTOPILOT · ${destSys.name}` : 'ROUTE AUTOPILOT'
+  )
+  showHudGlitch(cruiseIndicatorEl)
+  audio.announce('Route autopilot engaged')
+  return true
+}
+
+function jumpEaseInOut(t) {
+  const x = Math.max(0, Math.min(1, t))
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2
+}
+
+function jumpLerp3(a, b, t) {
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t
+  ]
+}
+
+/**
+ * Camera for gate approach / exit: sit on the portal axis so the ring face
+ * is centered on screen (not a side-on silhouette).
+ * @param {'in'|'out'} mode in = looking into aperture; out = looking out of gate
+ */
+function syncGateFaceCamera(camera, shipPos, gatePos, lookDir, mode = 'in') {
+  const ship = new THREE.Vector3().fromArray(shipPos)
+  const gate = new THREE.Vector3().fromArray(gatePos)
+  const dir = new THREE.Vector3().fromArray(lookDir)
+  if (dir.lengthSq() < 1e-8) dir.set(0, 0, 1)
+  else dir.normalize()
+  // Behind the ship relative to the look direction.
+  const back = dir.clone().multiplyScalar(mode === 'in' ? -1 : -1)
+  const up = new THREE.Vector3(0, 1, 0)
+  // Prefer a stable screen-up that isn't parallel to the portal axis.
+  const camUp = up.clone().sub(dir.clone().multiplyScalar(up.dot(dir)))
+  if (camUp.lengthSq() < 1e-6) camUp.set(1, 0, 0)
+  else camUp.normalize()
+  const dist = 58
+  const lift = 14
+  camera.position.copy(ship).addScaledVector(back, dist).addScaledVector(camUp, lift)
+  // Look at a point through the aperture so the ring is framed face-on.
+  const lookTarget =
+    mode === 'in'
+      ? gate.clone().addScaledVector(dir, 40)
+      : ship.clone().addScaledVector(dir, 120)
+  camera.up.copy(camUp)
+  camera.lookAt(lookTarget)
+  camera.updateMatrixWorld(true)
+}
+
+/**
+ * Begin the warp-gate jump VFX + system swap. Caller must validate proximity.
+ * Sequence: enter origin gate → tunnel → exit destination gate.
+ */
+function beginWarpJump(targetSystemId, opts = {}) {
+  navMapOpen = false
+  navMap?.hide()
+  // Probe can't follow a warp jump — abort mid-survey cleanly.
+  clearProbeEffect()
+  clearTargetLock()
+  flightModeWanted = true
+  if (document.pointerLockElement !== renderer.domElement) {
+    renderer.domElement.requestPointerLock().catch(() => {})
+  }
+  if (opts.routeAutopilot) {
+    routeAutopilot = { phase: 'jumping' }
+  } else {
+    routeAutopilot = null
+  }
+
+  ensureWarpGates(gameState.galaxy)
+  const fromSystemId = gameState.player.currentSystemId
+  const currentSystem = getSystem(gameState.galaxy, fromSystemId)
+  const originGate =
+    opts.originGate ||
+    findWarpGateTo(currentSystem, targetSystemId) ||
+    findNearbyWarpGate(currentSystem, gameState.player.ship.position)
+  const originGatePos = originGate?.position
+    ? [...originGate.position]
+    : [...gameState.player.ship.position]
+  const enterFromPos = [...gameState.player.ship.position]
+  const enterFromQuat = [...gameState.player.ship.quaternion]
+  // Portal +Z faces the star; approach along that axis so the ring face fills the screen.
+  const outward = warpGateOutwardDir(originGatePos)
+  // Direction the camera/ship looks to see the gate face (from star-side toward the aperture).
+  const gateLookDir = [-outward[0], -outward[1], -outward[2]]
+  // Prefer starting approach on the portal axis (face-on), not a lateral skim.
+  const approachDist = Math.max(
+    380,
+    Math.hypot(
+      enterFromPos[0] - originGatePos[0],
+      enterFromPos[1] - originGatePos[1],
+      enterFromPos[2] - originGatePos[2]
+    )
+  )
+  const axialStart = [
+    originGatePos[0] + outward[0] * approachDist,
+    originGatePos[1] + outward[1] * approachDist,
+    originGatePos[2] + outward[2] * approachDist
+  ]
+  // Blend current position toward the axial approach so we don't teleport hard.
+  const startPos = jumpLerp3(enterFromPos, axialStart, 0.72)
+  const enterToQuat = quatFacingFromTo(startPos, originGatePos)
+
+  gameState.player.ship.velocity = [0, 0, 0]
+  gameState.player.ship.position = [...startPos]
+  gameState.player.ship.quaternion = [...enterToQuat]
+
+  jumpEffect = {
+    phase: 'enterGate',
+    elapsed: 0,
+    targetSystemId,
+    fromSystemId,
+    jumped: false,
+    originGatePos,
+    enterFromPos: [...startPos],
+    enterFromQuat: [...enterToQuat],
+    enterToQuat,
+    gateLookDir,
+    gateOutward: outward
+  }
+  jumpFlashEl.style.background = HYPERSPACE_FLASH_COLOR
+  jumpFlashEl.style.display = 'block'
+  jumpFlashEl.style.opacity = '0'
+  setJumpBlackOpacity(0)
+  // Tunnel starts when the ship reaches the aperture (end of enterGate).
+  try {
+    teleportDronesToBay(gameState.player.ship)
+    clearDroneMeshes()
+  } catch { /* */ }
+  audio.announce(opts.routeAutopilot ? 'Warp gate engaged' : 'Warp gate engaged')
+  setHudGlitchText(cruiseIndicatorEl, opts.routeAutopilot ? 'ROUTE AUTOPILOT' : 'ENTERING GATE')
   showHudGlitch(cruiseIndicatorEl)
 }
 
-function updateRouteAutopilot(dt) {
-  if (!routeAutopilot || routeAutopilot.pauseRemaining == null) return
-  if (docked || dockEffect || jumpEffect) {
-    cancelRouteAutopilot(docked || dockEffect ? 'Autopilot cancelled — docked' : null)
+/**
+ * Galaxy-map "Engage Autopilot": chain SC → gate → wait → jump along plottedRoute.
+ * Call again while active to cancel (route is preserved).
+ */
+function engageRouteAutopilot(nextHopSystemId) {
+  // Toggle off while running — keep plottedRoute for later resume.
+  if (routeAutopilot) {
+    cancelRouteAutopilot('Autopilot cancelled — route kept')
+    return
+  }
+  if (docked || dockEffect) {
+    flashToast('Undock before engaging autopilot')
     return
   }
   if (gameState.inCombat) {
-    cancelRouteAutopilot('Autopilot cancelled — combat')
+    flashToast('Cannot autopilot while in combat')
     return
   }
   if (!shipHasAutopilot(gameState.player.ship)) {
-    cancelRouteAutopilot('Autopilot cancelled — module not fitted')
+    flashToast('Fit an Autopilot module first')
+    return
+  }
+  if (!nextHopSystemId || nextHopSystemId === gameState.player.currentSystemId) {
+    flashToast('Plot a multi-system route first')
+    return
+  }
+  ensureWarpGates(gameState.galaxy)
+  const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (!canJumpTo(currentSystem, nextHopSystemId)) {
+    flashToast('No warp lane to the next hop — replot the route')
+    return
+  }
+  const gate = findWarpGateTo(currentSystem, nextHopSystemId)
+  if (!gate) {
+    flashToast('No warp gate to that system')
+    return
+  }
+  const rem = gameState.player.plottedRoute
+  if (!Array.isArray(rem) || rem[0] !== nextHopSystemId) {
+    if (!Array.isArray(rem) || rem.length === 0) {
+      gameState.player.plottedRoute = [nextHopSystemId]
+    }
+  }
+  navMapOpen = false
+  navMap?.hide()
+  if (!docked) reenterFlightMode()
+  startRouteAutopilotCruiseToGate()
+}
+
+function updateRouteAutopilot(dt) {
+  if (!routeAutopilot) return
+  if (docked || dockEffect) {
+    cancelRouteAutopilot('Autopilot cancelled — docked (route kept)')
+    return
+  }
+  if (jumpEffect) return
+  if (gameState.inCombat) {
+    cancelRouteAutopilot('Autopilot cancelled — combat (route kept)')
+    return
+  }
+  if (!shipHasAutopilot(gameState.player.ship)) {
+    cancelRouteAutopilot('Autopilot cancelled — module not fitted (route kept)')
     return
   }
   const rem = gameState.player.plottedRoute
@@ -2903,32 +3526,76 @@ function updateRouteAutopilot(dt) {
     cancelRouteAutopilot('Route complete')
     return
   }
-  routeAutopilot.pauseRemaining -= dt
-  // Live countdown on the cruise indicator (whole seconds remaining).
-  if (routeAutopilot.pauseRemaining > 0) {
+
+  // Hold at gate after SC: countdown, F jumps early.
+  if (routeAutopilot.phase === 'gate_wait') {
+    const nextId = routeAutopilot.nextId ?? rem[0]
+    const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+    const gate =
+      (routeAutopilot.gateId &&
+        currentSystem.bodies.find((b) => b.id === routeAutopilot.gateId)) ||
+      findWarpGateTo(currentSystem, nextId)
+    if (!gate || !isNearWarpGate(gameState.player.ship.position, gate)) {
+      // Drifted away — resume SC to the gate.
+      routeAutopilot = { phase: 'to_gate' }
+      return
+    }
+    routeAutopilot.pauseRemaining =
+      (routeAutopilot.pauseRemaining ?? ROUTE_AUTOPILOT_GATE_PAUSE_S) - dt
     const sec = Math.max(1, Math.ceil(routeAutopilot.pauseRemaining))
-    if (routeAutopilot._lastSecShown !== sec) {
-      routeAutopilot._lastSecShown = sec
-      setHudGlitchText(cruiseIndicatorEl, `AUTOPILOT · ${sec}s`)
-      // Keep visible without replaying full enter glitch every tick
-      if (cruiseIndicatorEl) {
-        cruiseIndicatorEl.style.display = 'block'
-        cruiseIndicatorEl.style.opacity = '1'
-      }
+    const destSys = getSystem(gameState.galaxy, nextId)
+    const label = destSys
+      ? `AUTOPILOT · JUMP ${sec}s · ${destSys.name} (F)`
+      : `AUTOPILOT · JUMP ${sec}s (F)`
+    setHudGlitchText(cruiseIndicatorEl, label)
+    if (cruiseIndicatorEl) {
+      cruiseIndicatorEl.style.display = 'block'
+      cruiseIndicatorEl.style.opacity = '1'
+    }
+    if (routeAutopilot.pauseRemaining <= 0) {
+      beginWarpJump(nextId, { routeAutopilot: true, originGate: gate })
     }
     return
   }
 
+  if (routeAutopilot.phase !== 'to_gate') return
+
   const nextId = rem[0]
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-  if (!canJumpTo(currentSystem, nextId)) {
-    cancelRouteAutopilot('Autopilot cancelled — next hop out of range')
+  const gate = findWarpGateTo(currentSystem, nextId)
+  if (!gate) {
+    cancelRouteAutopilot('Autopilot cancelled — missing warp gate (route kept)')
     return
   }
-  // Chain continues — pauseRemaining cleared while in jump; re-armed after arrival.
-  routeAutopilot.pauseRemaining = null
-  routeAutopilot._lastSecShown = null
-  handleJump(nextId, { routeAutopilot: true })
+  if (gameState.player.waypointBodyId !== gate.id) {
+    gameState.player.waypointBodyId = gate.id
+    gameState.player.waypointPosition = null
+  }
+  // Near the portal → drop SC and start the 10s jump pause.
+  if (isNearWarpGate(gameState.player.ship.position, gate)) {
+    armRouteAutopilotGateWait(nextId, gate)
+    return
+  }
+  // Keep supercruise engaged toward the gate.
+  if (!cruising) {
+    try {
+      teleportDronesToBay(gameState.player.ship)
+      clearDroneMeshes()
+    } catch { /* */ }
+    clearTargetLock()
+    cruising = true
+    gameState.player.ship.supercruiseElapsed = 0
+  }
+  // Live status on cruise indicator.
+  if (cruiseIndicatorEl) {
+    const destSys = getSystem(gameState.galaxy, nextId)
+    const label = destSys
+      ? `AUTOPILOT · ${destSys.name} (${rem.length} left)`
+      : `AUTOPILOT · ${rem.length} left`
+    setHudGlitchText(cruiseIndicatorEl, label)
+    cruiseIndicatorEl.style.display = 'block'
+    cruiseIndicatorEl.style.opacity = '1'
+  }
 }
 
 /** Smoothstep 0–1 (for black-fade ramps). */
@@ -2951,25 +3618,18 @@ function setJumpBlackOpacity(opacity) {
 
 /**
  * Black fade opacity for hyperspace streak phase s ∈ [0,1].
- * Fades in before the system swap (s=0.4), holds, then fades out on arrival.
+ * Fades in before the system swap, then stays fully black until jump end.
+ * Reveal is handled separately (arrival flash after jump completes).
  */
-function jumpBlackOpacityForStreak(s) {
+function jumpBlackOpacityForStreak(s, jumped) {
+  if (jumped) return 1
   if (s < JUMP_BLACK_FADE_IN_START) return 0
   if (s < JUMP_BLACK_FADE_IN_END) {
     return jumpSmoothstep(
       (s - JUMP_BLACK_FADE_IN_START) / (JUMP_BLACK_FADE_IN_END - JUMP_BLACK_FADE_IN_START)
     )
   }
-  if (s < JUMP_BLACK_FADE_OUT_START) return 1
-  if (s < JUMP_BLACK_FADE_OUT_END) {
-    return (
-      1 -
-      jumpSmoothstep(
-        (s - JUMP_BLACK_FADE_OUT_START) / (JUMP_BLACK_FADE_OUT_END - JUMP_BLACK_FADE_OUT_START)
-      )
-    )
-  }
-  return 0
+  return 1
 }
 
 function clearJumpVisuals() {
@@ -2980,12 +3640,144 @@ function clearJumpVisuals() {
   setJumpBlackOpacity(0)
 }
 
+function slerpShipQuat(fromArr, toArr, t, outShip) {
+  const a = new THREE.Quaternion().fromArray(fromArr)
+  const b = new THREE.Quaternion().fromArray(toArr)
+  a.slerp(b, Math.max(0, Math.min(1, t)))
+  outShip.quaternion = a.toArray()
+}
+
+function performWarpSystemSwap() {
+  hyperspaceJump(gameState, jumpEffect.targetSystemId, Math.random)
+  policeResponse = null
+  for (const mesh of npcMeshes.values()) scene.remove(mesh)
+  npcMeshes.clear()
+  for (const mesh of bodyMeshes.values()) scene.remove(mesh)
+  bodyMeshes.clear()
+  if (starMesh) scene.remove(starMesh)
+  starMesh = null
+  for (const mesh of projectileMeshes.values()) scene.remove(mesh)
+  projectileMeshes.clear()
+  missileTrail?.clear()
+  for (const mesh of wreckMeshes.values()) scene.remove(mesh)
+  wreckMeshes.clear()
+  for (const flash of impactFlashes) scene.remove(flash.mesh)
+  impactFlashes.length = 0
+  for (const fx of rockExplosions) {
+    scene.remove(fx.group)
+    disposeRockExplosion(fx)
+  }
+  rockExplosions.length = 0
+  for (const fx of hitImpacts) {
+    scene.remove(fx.group)
+    disposeHitImpact(fx)
+  }
+  hitImpacts.length = 0
+  for (const npc of gameState.npcs) {
+    const mesh = buildShipMesh(getShipClass(npc.shipClassId), { lite: true })
+    npcMeshes.set(npc.id, mesh)
+    scene.add(mesh)
+  }
+  loadBodiesForCurrentSystem()
+  if (playerMesh) {
+    playerMesh.scale.setScalar(1)
+    syncMeshToEntity(playerMesh, gameState.player.ship)
+  }
+}
+
+function beginJumpExitGatePhase() {
+  hyperspaceTunnel.stop()
+  if (playerMesh) playerMesh.scale.setScalar(1)
+  camera.fov = BASE_FOV
+  camera.updateProjectionMatrix()
+
+  const dest = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  const fromId = jumpEffect.fromSystemId
+  const exitFrom = [...gameState.player.ship.position]
+  const exitTo = warpArrivalNearExitGate(dest, fromId)
+  const exitFromQuat = [...gameState.player.ship.quaternion]
+  const exitToQuat = quatFacingFromTo(exitFrom, exitTo)
+  const exitOut = warpGateOutwardDir(exitFrom)
+  // Looking out through the face of the gate as we leave.
+  const exitLookDir = [...exitOut]
+
+  jumpEffect = {
+    phase: 'exitGate',
+    elapsed: 0,
+    targetSystemId: jumpEffect.targetSystemId,
+    fromSystemId: fromId,
+    exitFromPos: exitFrom,
+    exitToPos: exitTo,
+    exitFromQuat,
+    exitToQuat,
+    exitGatePos: [...exitFrom],
+    exitLookDir
+  }
+  setJumpBlackOpacity(0)
+  jumpFlashEl.style.opacity = '0.15'
+  setHudGlitchText(cruiseIndicatorEl, 'EXITING GATE')
+  showHudGlitch(cruiseIndicatorEl)
+  audio.playHyperspaceArrival()
+  audio.announce('Warp tunnel exit')
+}
+
+function finishJumpSequence() {
+  if (playerMesh) playerMesh.scale.setScalar(1)
+  camera.fov = BASE_FOV
+  camera.updateProjectionMatrix()
+  const ship = gameState.player.ship
+  // Snap to final standoff pose if exit phase completed.
+  if (jumpEffect?.exitToPos) {
+    ship.position = [...jumpEffect.exitToPos]
+    if (jumpEffect.exitToQuat) ship.quaternion = [...jumpEffect.exitToQuat]
+  }
+  ship.velocity = [0, 0, 0]
+  if (playerMesh) syncMeshToEntity(playerMesh, ship)
+
+  setJumpBlackOpacity(0)
+  jumpFlashEl.style.background = HYPERSPACE_FLASH_COLOR
+  jumpFlashEl.style.display = 'block'
+  jumpFlashEl.style.opacity = String(JUMP_ARRIVAL_FLASH_PEAK)
+  jumpEffect = {
+    phase: 'arrivalFlash',
+    elapsed: 0,
+    flashPeak: JUMP_ARRIVAL_FLASH_PEAK
+  }
+  setHudGlitchText(cruiseIndicatorEl, 'WARP TUNNEL EXIT')
+  showHudGlitch(cruiseIndicatorEl)
+  hideHudGlitch(cruiseIndicatorEl)
+  reenterFlightMode()
+  // Next leg: supercruise to the following warp gate (or finish).
+  if (routeAutopilot) {
+    const rem = gameState.player.plottedRoute
+    if (shipHasAutopilot(gameState.player.ship) && Array.isArray(rem) && rem.length > 0) {
+      flashToast(`Autopilot: next gate (${rem.length} jump${rem.length === 1 ? '' : 's'} left)`)
+      startRouteAutopilotCruiseToGate()
+    } else {
+      routeAutopilot = null
+      if (!rem?.length) flashToast('Autopilot: route complete')
+    }
+  }
+}
+
 function updateJumpEffect(dt) {
-  syncChaseCamera(camera, gameState.player.ship)
-  // Keep the hull in the right place so depth-tested tunnel FX stay behind it.
-  if (playerMesh) syncMeshToEntity(playerMesh, gameState.player.ship)
   jumpEffect.elapsed += dt
   const e = jumpEffect.elapsed
+  const ship = gameState.player.ship
+
+  // Post-arrival screen flash (new system already revealed during exit).
+  if (jumpEffect.phase === 'arrivalFlash') {
+    syncChaseCamera(camera, ship)
+    if (playerMesh) syncMeshToEntity(playerMesh, ship)
+    const t = e / JUMP_ARRIVAL_FLASH_DECAY_S
+    const op = Math.max(0, jumpEffect.flashPeak * (1 - t) * (1 - t))
+    jumpFlashEl.style.opacity = String(op)
+    if (t >= 1) {
+      jumpEffect = null
+      clearJumpVisuals()
+    }
+    return
+  }
 
   // Hull suck-in / spit-out scale (visual only — game state pose stays authoritative).
   const applyShipJumpScale = (scale, forwardPull = 0) => {
@@ -2997,83 +3789,130 @@ function updateJumpEffect(dt) {
     }
   }
 
-  if (e < JUMP_WINDUP_S) {
-    // Charge phase: FOV creep + tunnel fades in while speech/windup play.
-    const w = e / JUMP_WINDUP_S
-    const throb = 0.5 + 0.5 * Math.sin(e * 10)
-    camera.fov = BASE_FOV + w * 28 + throb * w * 8
+  // ——— Phase 1: fly into the origin gate aperture ———
+  if (jumpEffect.phase === 'enterGate') {
+    const t = Math.min(1, e / JUMP_ENTER_GATE_S)
+    const ease = jumpEaseInOut(t)
+    ship.position = jumpLerp3(jumpEffect.enterFromPos, jumpEffect.originGatePos, ease)
+    slerpShipQuat(jumpEffect.enterFromQuat, jumpEffect.enterToQuat, ease, ship)
+    ship.velocity = [0, 0, 0]
+    // Slight FOV tighten + glow as we dive into the ring.
+    camera.fov = BASE_FOV - ease * 10
     camera.updateProjectionMatrix()
-    // Light flash only — heavy wash hid the star tunnel and the ship.
-    jumpFlashEl.style.opacity = String(Math.min(0.18, w * 0.14 + throb * 0.03))
-    // Black veil starts only in the corridor (streak) phase.
+    jumpFlashEl.style.opacity = String(Math.min(0.35, ease * 0.28 + (t > 0.7 ? (t - 0.7) * 0.4 : 0)))
+    setJumpBlackOpacity(t > 0.85 ? jumpEaseInOut((t - 0.85) / 0.15) * 0.35 : 0)
+    if (playerMesh) {
+      playerMesh.scale.setScalar(1 - ease * 0.2)
+      syncMeshToEntity(playerMesh, ship)
+    }
+    // Face-on framing: ring fills the screen, not a side silhouette.
+    syncGateFaceCamera(
+      camera,
+      ship.position,
+      jumpEffect.originGatePos,
+      jumpEffect.gateLookDir,
+      'in'
+    )
+
+    if (t >= 1) {
+      // Lock in the aperture and start the tunnel.
+      ship.position = [...jumpEffect.originGatePos]
+      if (playerMesh) playerMesh.scale.setScalar(0.75)
+      hyperspaceTunnel.start({ warpMode: true })
+      audio.playHyperspace()
+      setHudGlitchText(cruiseIndicatorEl, 'WARP TUNNEL')
+      showHudGlitch(cruiseIndicatorEl)
+      jumpEffect.phase = 'tunnel'
+      jumpEffect.elapsed = 0
+      jumpEffect.jumped = false
+    }
+    return
+  }
+
+  // ——— Phase 3: fly out of the destination gate ———
+  if (jumpEffect.phase === 'exitGate') {
+    const t = Math.min(1, e / JUMP_EXIT_GATE_S)
+    const ease = jumpEaseInOut(t)
+    ship.position = jumpLerp3(jumpEffect.exitFromPos, jumpEffect.exitToPos, ease)
+    slerpShipQuat(jumpEffect.exitFromQuat, jumpEffect.exitToQuat, ease, ship)
+    ship.velocity = [0, 0, 0]
+    camera.fov = BASE_FOV + (1 - ease) * 8
+    camera.updateProjectionMatrix()
+    // Fade residual tunnel flash; keep scene fully visible.
     setJumpBlackOpacity(0)
-    // Tunnel builds late in the wind-up (stars stretch into the corridor).
-    hyperspaceTunnel.update(dt, Math.max(0, w - 0.35) / 0.65, camera, getCrosshairAimWorld())
-    // Mild pre-suck vibration
-    applyShipJumpScale(1 - w * 0.08, w * 0.4)
+    jumpFlashEl.style.opacity = String(Math.max(0, 0.2 * (1 - ease)))
+    if (playerMesh) {
+      // Scale back up as we leave the aperture.
+      playerMesh.scale.setScalar(0.55 + ease * 0.45)
+      syncMeshToEntity(playerMesh, ship)
+    }
+    // Early exit: still frame the gate face; later blend to chase.
+    if (ease < 0.55 && jumpEffect.exitGatePos && jumpEffect.exitLookDir) {
+      syncGateFaceCamera(
+        camera,
+        ship.position,
+        jumpEffect.exitGatePos,
+        jumpEffect.exitLookDir,
+        'out'
+      )
+    } else {
+      syncChaseCamera(camera, ship)
+    }
+
+    if (t >= 1) {
+      if (playerMesh) playerMesh.scale.setScalar(1)
+      finishJumpSequence()
+    }
+    return
+  }
+
+  // ——— Phase 2: windup + tunnel (system swap mid-pass under black) ———
+  syncChaseCamera(camera, ship)
+  if (playerMesh) syncMeshToEntity(playerMesh, ship)
+
+  if (e < JUMP_WINDUP_S) {
+    // Gate spool: FOV tightens, bright aperture flash, ship at aperture centre.
+    const w = e / JUMP_WINDUP_S
+    const ease = w * w
+    const throb = 0.5 + 0.5 * Math.sin(e * 14)
+    camera.fov = BASE_FOV - ease * 12 + throb * w * 4
+    camera.updateProjectionMatrix()
+    jumpFlashEl.style.opacity = String(Math.min(0.55, ease * 0.35 + throb * 0.08))
+    setJumpBlackOpacity(0)
+    hyperspaceTunnel.update(dt, Math.max(0.15, ease * 0.85), camera, getCrosshairAimWorld())
+    applyShipJumpScale(0.75 - ease * 0.25, ease * 12)
   } else {
-    // Full hyperdrive tunnel; system swap mid-corridor.
     const s = (e - JUMP_WINDUP_S) / JUMP_STREAK_S
     const punch = Math.sin(Math.min(1, s) * Math.PI)
-    camera.fov = BASE_FOV + 30 + punch * 55
+    camera.fov = BASE_FOV + 18 + punch * 42
     camera.updateProjectionMatrix()
-    // Soft mid-tunnel punch — keep ship + corridor readable under the black veil.
-    jumpFlashEl.style.opacity = String(Math.min(0.28, 0.08 + punch * 0.2) * (1 - jumpBlackOpacityForStreak(s) * 0.85))
-    setJumpBlackOpacity(jumpBlackOpacityForStreak(s))
-    // Peak strength mid-tunnel, ease out at the end.
-    const tunnelStr = s < 0.15 ? s / 0.15 : s > 0.85 ? (1 - s) / 0.15 : 1
-    hyperspaceTunnel.update(dt, Math.min(1, 0.75 + tunnelStr * 0.25), camera, getCrosshairAimWorld())
+    const black = jumpBlackOpacityForStreak(s, jumpEffect.jumped)
+    setJumpBlackOpacity(black)
+    if (!jumpEffect.jumped) {
+      jumpFlashEl.style.opacity = String(
+        Math.min(0.4, (0.12 + punch * 0.22) * (1 - black * 0.9))
+      )
+    } else {
+      jumpFlashEl.style.opacity = '0'
+    }
+    const tunnelStr = s < 0.12 ? s / 0.12 : s > 0.88 ? (1 - s) / 0.12 : 1
+    hyperspaceTunnel.update(dt, Math.min(1, 0.85 + tunnelStr * 0.2), camera, getCrosshairAimWorld())
 
-    // Suck into the tunnel just before the system swap (s → 0.4).
     if (!jumpEffect.jumped) {
       const suckT = Math.min(1, s / 0.4)
       const ease = suckT * suckT
-      applyShipJumpScale(1 - ease * 0.92, ease * 28)
-    } else {
-      // Spat out into the arrival system after the swap.
-      const after = (s - 0.4) / 0.6
-      const spit = Math.min(1, Math.max(0, after / 0.35))
-      const ease = 1 - (1 - spit) * (1 - spit)
-      applyShipJumpScale(0.08 + ease * 0.92, (1 - ease) * -12)
+      applyShipJumpScale(0.5 - ease * 0.4, ease * 28)
+    } else if (playerMesh) {
+      playerMesh.scale.setScalar(0.55)
     }
 
     if (!jumpEffect.jumped && s >= 0.4) {
       jumpEffect.jumped = true
-      // Hold full black across the swap so body/mesh rebuild is not visible.
       setJumpBlackOpacity(1)
-      if (playerMesh) playerMesh.scale.setScalar(0.08)
+      jumpFlashEl.style.opacity = '0'
+      if (playerMesh) playerMesh.scale.setScalar(0.1)
       try {
-        hyperspaceJump(gameState, jumpEffect.targetSystemId, Math.random)
-        policeResponse = null
-        for (const mesh of npcMeshes.values()) scene.remove(mesh)
-        npcMeshes.clear()
-        for (const mesh of bodyMeshes.values()) scene.remove(mesh)
-        bodyMeshes.clear()
-        if (starMesh) scene.remove(starMesh)
-        starMesh = null
-        for (const mesh of projectileMeshes.values()) scene.remove(mesh)
-        projectileMeshes.clear()
-        missileTrail?.clear()
-        for (const mesh of wreckMeshes.values()) scene.remove(mesh)
-        wreckMeshes.clear()
-        for (const flash of impactFlashes) scene.remove(flash.mesh)
-        impactFlashes.length = 0
-        for (const fx of rockExplosions) {
-          scene.remove(fx.group)
-          disposeRockExplosion(fx)
-        }
-        rockExplosions.length = 0
-        for (const fx of hitImpacts) {
-          scene.remove(fx.group)
-          disposeHitImpact(fx)
-        }
-        hitImpacts.length = 0
-        for (const npc of gameState.npcs) {
-          const mesh = buildShipMesh(getShipClass(npc.shipClassId), { lite: true })
-          npcMeshes.set(npc.id, mesh)
-          scene.add(mesh)
-        }
-        loadBodiesForCurrentSystem()
+        performWarpSystemSwap()
       } catch (err) {
         gameNotice('Hyperspace failed', err.message)
         jumpEffect = null
@@ -3083,56 +3922,15 @@ function updateJumpEffect(dt) {
         clearJumpVisuals()
         camera.fov = BASE_FOV
         camera.updateProjectionMatrix()
-        // Jump started from nav (which exits flight) — restore on abort too.
         reenterFlightMode()
         return
       }
     }
   }
 
-  if (jumpEffect && jumpEffect.elapsed >= JUMP_DURATION_S) {
-    jumpEffect = null
-    hyperspaceTunnel.stop()
-    clearJumpVisuals()
-    if (playerMesh) playerMesh.scale.setScalar(1)
-    audio.playHyperspaceArrival()
-    audio.announce('Hyperdrive disengaged')
-    setHudGlitchText(cruiseIndicatorEl, 'HYPERDRIVE DISENGAGED')
-    showHudGlitch(cruiseIndicatorEl)
-    hideHudGlitch(cruiseIndicatorEl)
-    camera.fov = BASE_FOV
-    camera.updateProjectionMatrix()
-    // Re-assert sun-facing at jump end (hyperspaceJump already set this at
-    // mid-tunnel swap; belt-and-suspenders if anything nudged orientation).
-    const ship = gameState.player.ship
-    ship.quaternion = quatFacing(
-      new THREE.Vector3().fromArray(ship.position),
-      new THREE.Vector3(0, 0, 0)
-    ).toArray()
-    if (playerMesh) syncMeshToEntity(playerMesh, ship)
-    // Nav map opens with exitFlightMode and handleJump hides the map without
-    // its onClose path — re-arm mouse-aim so the player isn't stuck free-look.
-    reenterFlightMode()
-    // Schedule next hop if Jump Route autopilot is still active.
-    if (routeAutopilot) {
-      const rem = gameState.player.plottedRoute
-      if (
-        shipHasAutopilot(gameState.player.ship) &&
-        Array.isArray(rem) &&
-        rem.length > 0
-      ) {
-        routeAutopilot.pauseRemaining = ROUTE_AUTOPILOT_PAUSE_S
-        routeAutopilot._lastSecShown = ROUTE_AUTOPILOT_PAUSE_S
-        flashToast(
-          `Autopilot: next jump in ${ROUTE_AUTOPILOT_PAUSE_S}s (${rem.length} remaining)`
-        )
-        setHudGlitchText(cruiseIndicatorEl, `AUTOPILOT · ${ROUTE_AUTOPILOT_PAUSE_S}s`)
-        showHudGlitch(cruiseIndicatorEl)
-      } else {
-        routeAutopilot = null
-        if (!rem?.length) flashToast('Autopilot: route complete')
-      }
-    }
+  if (jumpEffect && jumpEffect.phase === 'tunnel' && jumpEffect.elapsed >= JUMP_TUNNEL_DURATION_S) {
+    // Destination system already loaded under black — reveal while flying out.
+    beginJumpExitGatePhase()
   }
 }
 
@@ -3602,20 +4400,55 @@ function handlePlayerDeath() {
 
 window.addEventListener('keydown', (e) => {
   if (!gameState) return
-  if (e.code === 'KeyF' && !docked && !dockEffect && !cruising && !navMapOpen && !paused && !inventoryOpen && !missionsOpen && !characterOpen) {
-    // Wreck salvage beats docking when both are in range so you can loot
-    // at a station bay then dock again after the wreck is gone.
+  if (e.code === 'KeyF' && !docked && !dockEffect && !cruising && !jumpEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen && !characterOpen) {
+    // Priority: wreck salvage → warp gate jump (within 2 km) → dock.
     const wreck = findNearbyWreck()
     if (wreck) {
       lootNearbyWreck(wreck)
     } else {
-      const body = findNearbyDockableBody()
-      if (body) beginDocking(body)
+      ensureWarpGates(gameState.galaxy)
+      const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+      const gate = findNearbyWarpGate(currentSystem, gameState.player.ship.position)
+      if (gate?.destinationSystemId) {
+        if (gameState.inCombat) {
+          flashToast('Cannot use warp gates while in combat')
+        } else {
+          // F during autopilot gate wait (or anytime near a gate) jumps now;
+          // if AP is active it continues the route after arrival.
+          beginWarpJump(gate.destinationSystemId, {
+            routeAutopilot: !!routeAutopilot,
+            originGate: gate
+          })
+        }
+      } else {
+        const body = findNearbyDockableBody()
+        if (body) beginDocking(body)
+      }
     }
-  } else if (e.code === 'KeyP' && !docked && !dockEffect && !cruising && !probeEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen && !characterOpen) {
-    // Orbit + Tab-target planet/moon/star, or close-range belt/body flyby.
-    const launch = getProbeLaunchTarget()
-    if (launch) probeBody(launch.body)
+  } else if (e.code === 'KeyP' && !docked && !dockEffect && !cruising && !probeEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen && !characterOpen && !systemScanMap?.isOpen?.() && !datacoreMinigame?.isOpen?.()) {
+    // Datacore nodule hack if near a sealed nodule; else planetary probe.
+    if (tryDatacoreNoduleProbe()) {
+      /* handled */
+    } else {
+      const launch = getProbeLaunchTarget()
+      if (launch) probeBody(launch.body)
+    }
+  } else if (
+    e.code === 'KeyB' &&
+    !docked &&
+    !dockEffect &&
+    !jumpEffect &&
+    !cruising &&
+    !probeEffect &&
+    !navMapOpen &&
+    !paused &&
+    !inventoryOpen &&
+    !missionsOpen &&
+    !characterOpen &&
+    !datacoreMinigame?.isOpen?.()
+  ) {
+    e.preventDefault()
+    openSystemScanPanel()
   } else if (e.code === 'F5') {
     e.preventDefault()
     doSave()
@@ -3635,12 +4468,15 @@ window.addEventListener('keydown', (e) => {
     if (navMapOpen) {
       exitFlightMode()
       navMap.show({
-        onJump: handleJump,
+        onEngageAutopilot: engageRouteAutopilot,
+        onCancelAutopilot: () => {
+          cancelRouteAutopilot('Autopilot cancelled — route kept')
+        },
+        isAutopilotActive: isRouteAutopilotActive,
         onClose: () => {
           navMapOpen = false
           if (!docked) reenterFlightMode()
         },
-        supercruiseActive: cruising,
         inCombat: !!gameState.inCombat,
         docked
       })
@@ -3883,7 +4719,7 @@ function starSupercruiseArrivalRange() {
   return coreR * 1.35 + shipR + STAR_SUPERCRUISE_STANDOFF
 }
 
-const TARGETABLE_BODY_KINDS = new Set(['planet', 'moon', 'station', 'settlement'])
+const TARGETABLE_BODY_KINDS = new Set(['planet', 'moon', 'station', 'settlement', 'warpGate'])
 
 function asteroidWorldPosition(field, rock) {
   return [field.position[0] + rock.position[0], field.position[1] + rock.position[1], field.position[2] + rock.position[2]]
@@ -3914,6 +4750,7 @@ function isHostileToPlayer(npc) {
 
 function bodyKindLabel(kind) {
   if (kind === 'asteroidField') return 'belt'
+  if (kind === 'warpGate') return 'warp gate'
   return kind
 }
 
@@ -3980,6 +4817,62 @@ function getTargetableEntities() {
     }
   }
 
+  // Fully scanned Spatial Anomaly sites — central relic, nodules, alien base.
+  if (currentSystem) {
+    ensureSystemAnomalies(currentSystem, gameState.galaxy)
+    for (const a of currentSystem.spatialAnomalies ?? []) {
+      if (!a.fullyScanned) continue
+      if (a.status === 'completed' || a.status === 'despawning') continue
+      if (a.type === 'datacore') {
+        const siteDist = shipPos.distanceTo(new THREE.Vector3().fromArray(a.position))
+        if (siteDist <= TARGET_RANGE) {
+          entities.push({
+            kind: 'anomaly',
+            id: a.id,
+            position: a.position,
+            dist: siteDist,
+            radius: 90,
+            name: a.displayName || 'Datacore Relic'
+          })
+        }
+        for (const n of a.nodules ?? []) {
+          if (n.status === 'destroyed') continue
+          const nd = shipPos.distanceTo(new THREE.Vector3().fromArray(n.position))
+          if (nd > TARGET_RANGE) continue
+          entities.push({
+            kind: 'nodule',
+            id: n.id,
+            anomalyId: a.id,
+            position: n.position,
+            dist: nd,
+            radius: 30,
+            status: n.status,
+            name:
+              n.status === 'open'
+                ? 'Datacore nodule (unlocked)'
+                : 'Datacore nodule'
+          })
+        }
+      } else if (
+        a.type === 'alien_incursion' &&
+        !a.baseDestroyed &&
+        alienSiteRuntime?.anomalyId === a.id
+      ) {
+        const bd = shipPos.distanceTo(new THREE.Vector3().fromArray(a.position))
+        if (bd <= TARGET_RANGE) {
+          entities.push({
+            kind: 'alien_base',
+            id: a.id,
+            position: a.position,
+            dist: bd,
+            radius: 110,
+            name: 'Alien base'
+          })
+        }
+      }
+    }
+  }
+
   return entities
 }
 
@@ -4017,7 +4910,14 @@ function aimScore(entity, shipPos, forward) {
 
 // Bodies that can be locked as a navigation waypoint via Ctrl+Tab (fields as
 // a whole, not individual rocks — rocks are combat/mining targets only).
-const WAYPOINTABLE_BODY_KINDS = new Set(['planet', 'moon', 'station', 'settlement', 'asteroidField'])
+const WAYPOINTABLE_BODY_KINDS = new Set([
+  'planet',
+  'moon',
+  'station',
+  'settlement',
+  'asteroidField',
+  'warpGate'
+])
 
 // Ctrl+Tab: set (or clear) a waypoint on whatever body is under the crosshair.
 // No range limit — any body in the system whose aim cone / limb is under the
@@ -4262,6 +5162,58 @@ function resolveTarget() {
       kindLabel: 'nav'
     }
   }
+  if (currentTarget.kind === 'anomaly') {
+    ensureSystemAnomalies(currentSystem, gameState.galaxy)
+    const a = (currentSystem.spatialAnomalies ?? []).find((x) => x.id === currentTarget.id)
+    if (!a?.fullyScanned || a.status === 'completed' || a.status === 'despawning') return null
+    return {
+      position: a.position,
+      name: a.displayName || 'Datacore Relic',
+      hostile: false,
+      hullPct: null,
+      isAsteroid: false,
+      reticle: 'anomaly',
+      kindLabel: a.type === 'datacore' ? 'datacore relic' : 'anomaly'
+    }
+  }
+  if (currentTarget.kind === 'nodule') {
+    ensureSystemAnomalies(currentSystem, gameState.galaxy)
+    for (const a of currentSystem.spatialAnomalies ?? []) {
+      if (a.type !== 'datacore' || !a.fullyScanned) continue
+      if (a.status === 'completed' || a.status === 'despawning') continue
+      const n = (a.nodules ?? []).find((x) => x.id === currentTarget.id)
+      if (!n || n.status === 'destroyed') return null
+      return {
+        position: n.position,
+        name: n.status === 'open' ? 'Datacore nodule (unlocked)' : 'Datacore nodule',
+        hostile: false,
+        hullPct: null,
+        isAsteroid: false,
+        reticle: 'nodule',
+        kindLabel: n.status === 'sealed' ? 'sealed · hack with P' : 'unlocked',
+        noduleStatus: n.status
+      }
+    }
+    return null
+  }
+  if (currentTarget.kind === 'alien_base') {
+    if (!alienSiteRuntime || alienSiteRuntime.anomalyId !== currentTarget.id) return null
+    const a = getAnomaly(currentSystem, currentTarget.id, gameState.galaxy)
+    if (!a || a.baseDestroyed) return null
+    const maxHull = alienSiteRuntime.maxHull ?? 420
+    const hull = Math.max(0, alienSiteRuntime.hull ?? 0)
+    return {
+      position: alienSiteRuntime.position,
+      name: 'Alien base',
+      hostile: true,
+      hullPct: maxHull > 0 ? hull / maxHull : 0,
+      hull,
+      maxHull,
+      isAsteroid: false,
+      reticle: 'alien_base',
+      kindLabel: 'alien base'
+    }
+  }
   if (currentTarget.kind !== 'body') return null
   const body = currentSystem.bodies.find((b) => b.id === currentTarget.id)
   if (!body) return null
@@ -4284,6 +5236,9 @@ function targetReticleColor(target) {
   if (target.reticle === 'world') return '#9ad0ff'
   if (target.reticle === 'wreck') return '#c0a070'
   if (target.reticle === 'nav') return '#7fe0a0'
+  if (target.reticle === 'anomaly') return '#d080ff'
+  if (target.reticle === 'nodule') return '#60f0ff'
+  if (target.reticle === 'alien_base') return '#ff6040'
   return '#cfe3ff'
 }
 
@@ -4509,6 +5464,17 @@ function getActiveWaypoint() {
         arrivalRange: supercruiseArrivalRangeFor(body)
       }
     }
+    // Fully scanned Spatial Anomaly (overview waypoint)
+    const anomaly = getAnomaly(currentSystem, gameState.player.waypointBodyId, gameState.galaxy)
+    if (anomaly?.fullyScanned && anomaly.position) {
+      return {
+        position: anomaly.position,
+        name: anomaly.displayName || 'Spatial Anomaly',
+        bodyId: anomaly.id,
+        isMission: true,
+        arrivalRange: 900
+      }
+    }
   }
   if (gameState.player.waypointPosition) {
     return {
@@ -4649,7 +5615,25 @@ function animate() {
   }
 
   // Campaign clock tracks real time while not on the pause menu (asteroids, etc.).
-  if (!paused) advanceGameClock(gameState)
+  if (!paused) {
+    advanceGameClock(gameState)
+    // Every 4 sim-hours, reshuffle spatial anomalies galaxy-wide.
+    if (gameState.galaxy) {
+      const { refreshed } = tickGalaxyAnomalies(gameState.galaxy, gameState.simTime)
+      if (refreshed) {
+        alienSiteRuntime = null
+        if (Array.isArray(gameState.npcs)) {
+          gameState.npcs = gameState.npcs.filter((n) => !n.anomalySiteId)
+        }
+        // Drop waypoint if it pointed at a cleared anomaly site.
+        const wp = gameState.player?.waypointBodyId
+        if (wp && String(wp).startsWith('anomaly-')) {
+          gameState.player.waypointBodyId = null
+        }
+        flashToast('Spatial anomalies refreshed across the galaxy', 4.5)
+      }
+    }
+  }
 
   if (jumpEffect) {
     motionFx.hide()
@@ -4706,6 +5690,7 @@ function animate() {
 
   // Multi-hop Jump Route: 10s pause after each arrival, then auto-jump next hop.
   updateRouteAutopilot(dt)
+  updateAnomalySites(dt)
 
   // Probe flight runs in normal play (ship can still fly while it works).
   if (probeEffect) updateProbeEffect(dt)
@@ -4758,19 +5743,32 @@ function animate() {
         // Kill residual cruise speed immediately so we don't coast into the shell.
         gameState.player.ship.velocity = [0, 0, 0]
         gameState.player.ship.throttle = 0
-        // Keep a reticle on the destination after the waypoint is cleared.
-        setTargetFromSupercruiseArrival(wp)
-        // Clear nav lock on arrival — you're already there.
-        gameState.player.waypointBodyId = null
-        gameState.player.waypointPosition = null
         // Snap facing onto the destination so you're lined up to dock/approach.
         const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
         const targetPos = new THREE.Vector3(...wp.position)
         if (shipPos.distanceToSquared(targetPos) > 1e-4) {
           gameState.player.ship.quaternion = quatFacing(shipPos, targetPos).toArray()
         }
-        // Arriving at a fully mined belt — show respawn countdown.
-        toastIfDepletedField(wp.bodyId)
+        // Route autopilot: arrival at a warp gate → 10s pause (F to jump early).
+        const arrivedBody = wp.bodyId
+          ? currentSystem.bodies.find((b) => b.id === wp.bodyId)
+          : null
+        if (
+          routeAutopilot &&
+          arrivedBody?.kind === 'warpGate' &&
+          arrivedBody.destinationSystemId &&
+          shipHasAutopilot(gameState.player.ship)
+        ) {
+          armRouteAutopilotGateWait(arrivedBody.destinationSystemId, arrivedBody)
+        } else {
+          // Keep a reticle on the destination after the waypoint is cleared.
+          setTargetFromSupercruiseArrival(wp)
+          // Clear nav lock on arrival — you're already there.
+          gameState.player.waypointBodyId = null
+          gameState.player.waypointPosition = null
+          // Arriving at a fully mined belt — show respawn countdown.
+          toastIfDepletedField(wp.bodyId)
+        }
       }
     }
     audio.setThrustState(null)
@@ -4997,7 +5995,7 @@ function animate() {
       )
     )
     nextAmbientSpawnAt = gameState.simTime + AMBIENT_SPAWN_INTERVAL_S * (0.7 + core * 0.6)
-    // Occasionally replace killed station patrols in Sec 3–6.
+    // Occasionally replace killed station / warp-gate patrols.
     refreshStationPolicePatrols()
   }
 
@@ -5163,8 +6161,16 @@ function animate() {
   }
 
   if (starMesh) updateStarMesh(starMesh, gameState.simTime, dt, camera)
-  // Axial spin for planets/moons (spinSpeed) + station beacons; fixed world positions.
-  for (const mesh of bodyMeshes.values()) updateStationMesh(mesh, gameState.simTime, dt)
+  // Axial spin for planets/moons (spinSpeed) + station beacons; warp-gate swirl;
+  // gas-giant cloud shells.
+  for (const mesh of bodyMeshes.values()) {
+    if (mesh.userData?.kind === 'warpGate') {
+      updateWarpGateMesh(mesh, dt, gameState.simTime)
+    } else {
+      updateStationMesh(mesh, gameState.simTime, dt)
+      updatePlanetAtmosphere(mesh, gameState.simTime, dt)
+    }
+  }
   // Depleted rocks "explode" (see onProjectileHit) and stay hidden until
   // their own respawn delay passes — isRockAlive is the single source of
   // truth for that, shared with targeting (getTargetableEntities/resolveTarget).
@@ -5277,19 +6283,30 @@ function animate() {
   }
   hud.updateRadar(computeRadarContacts(), RADAR_RANGE, gameState.simTime)
 
-  // Dock / probe / wreck prompts are normal-space only — in supercruise you
-  // skim past shells so constantly, that those toasts just spam the HUD.
-  // Lootable wrecks override docking when both are in range (KeyF salvages first).
+  // Dock / probe / wreck / gate prompts are normal-space only — in supercruise
+  // you skim past shells so constantly that those toasts just spam the HUD.
+  // F priority: wreck → warp gate (2 km) → dock.
   const nearbyWreck = !cruising ? findNearbyWreck() : null
-  const nearbyBody = !cruising && !nearbyWreck ? findNearbyDockableBody() : null
+  const currentSysForPrompt = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  const nearbyGate =
+    !cruising && !nearbyWreck && !jumpEffect
+      ? findNearbyWarpGate(currentSysForPrompt, gameState.player.ship.position)
+      : null
+  const nearbyBody =
+    !cruising && !nearbyWreck && !nearbyGate ? findNearbyDockableBody() : null
   wreckPromptEl.style.display = nearbyWreck ? 'block' : 'none'
   if (nearbyWreck) {
     wreckPromptEl.textContent = 'Press F to salvage wreck'
   }
 
-  dockPromptEl.style.display = nearbyBody ? 'block' : 'none'
-  if (nearbyBody) {
-    const dockSys = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  dockPromptEl.style.display = nearbyGate || nearbyBody ? 'block' : 'none'
+  if (nearbyGate) {
+    const originName = currentSysForPrompt?.name ?? 'here'
+    const dest = getSystem(gameState.galaxy, nearbyGate.destinationSystemId)
+    const destName = dest?.name ?? 'unknown system'
+    dockPromptEl.textContent = `Press F to activate Warp Gate: ${originName} → ${destName}`
+  } else if (nearbyBody) {
+    const dockSys = currentSysForPrompt
     if (dockSys) ensureSystemSecurity(dockSys)
     if (!canDockWithLaw(gameState, nearbyBody, dockSys)) {
       dockPromptEl.textContent = `${nearbyBody.name} — docking refused (security standing)`
@@ -5298,9 +6315,14 @@ function animate() {
     }
   }
 
-  const probeLaunch = !cruising && !probeEffect ? getProbeLaunchTarget() : null
-  probePromptEl.style.display = probeLaunch ? 'block' : 'none'
-  if (probeLaunch) {
+  const nearbyNodule =
+    !cruising && !probeEffect && !datacoreMinigame?.isOpen?.() ? findNearbyDatacoreNodule() : null
+  const probeLaunch =
+    !nearbyNodule && !cruising && !probeEffect ? getProbeLaunchTarget() : null
+  probePromptEl.style.display = nearbyNodule || probeLaunch ? 'block' : 'none'
+  if (nearbyNodule) {
+    probePromptEl.textContent = 'Press P to hack Datacore nodule'
+  } else if (probeLaunch) {
     const left = MAX_PROBE_ATTEMPTS - probeAttemptCount(gameState, probeLaunch.body.id)
     if (left <= 0) {
       // Fully scanned, but an open probe/investigation mission still needs one re-scan.

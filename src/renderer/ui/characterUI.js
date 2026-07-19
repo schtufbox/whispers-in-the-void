@@ -1,6 +1,6 @@
 import { getShipClass } from '../data/shipClasses.js'
-import { accessorySlotCount, effectiveMiningCapacity } from '../data/accessories.js'
-import { droneBayCount } from '../data/drones.js'
+import { accessorySlotCount, effectiveMiningCapacity, getAccessory } from '../data/accessories.js'
+import { getWeapon, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID } from '../data/weapons.js'
 import { ensureLawStanding, MAX_LAW_STANDING } from '../game/security.js'
 import { SKILLS, MAX_SKILL_LEVEL, ensureSkills, skillLevel } from '../game/skills.js'
 import { escapeHtml } from './escapeHtml.js'
@@ -183,6 +183,23 @@ const STYLE = `
   border-top: 1px solid rgba(111,216,242,0.2);
   font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
   color: #7fe6ff; opacity: 0.85; margin-bottom: 3px;
+}
+/* Equipped hardpoint / accessory lines under Fit */
+#character-ui .ship-stats-panel .ss-fit-line {
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: 10px; line-height: 1.35;
+  border-bottom: 1px solid rgba(42,58,85,0.3);
+  padding: 3px 0;
+}
+#character-ui .ship-stats-panel .ss-fit-line:last-child { border-bottom: none; }
+#character-ui .ship-stats-panel .ss-fit-line .ss-slot {
+  color: #7fa8c9; letter-spacing: 0.3px; text-transform: uppercase; font-size: 8px;
+}
+#character-ui .ship-stats-panel .ss-fit-line .ss-item {
+  color: #eaffff; word-break: break-word;
+}
+#character-ui .ship-stats-panel .ss-fit-line .ss-item.empty {
+  color: #6a8098; font-style: italic;
 }
 `
 
@@ -367,14 +384,7 @@ export function createCharacterUI(container, gameState) {
     if (shipStatsPanel && shipClass) {
       const ship = gameState.player.ship
       const hps = Array.isArray(shipClass.hardpoints) ? shipClass.hardpoints : []
-      let turrets = 0
-      let launchers = 0
-      for (const hp of hps) {
-        if (hp?.type === 'missile') launchers++
-        else turrets++
-      }
       const accSlots = accessorySlotCount(shipClass)
-      const droneBays = droneBayCount(shipClass)
       const role = shipClass.role
         ? String(shipClass.role).charAt(0).toUpperCase() + String(shipClass.role).slice(1)
         : '—'
@@ -398,26 +408,77 @@ export function createCharacterUI(container, gameState) {
         return `<div class="ss-row"><span class="ss-label">${label}</span><span class="ss-val">${escapeHtml(val)}</span></div>`
       }).join('')
 
-      const hpSummary =
-        hps.length > 0
-          ? `${hps.length} (${turrets}T${launchers ? ` ${launchers}L` : ''})`
-          : '0'
       // Custom instance name → show that alone; otherwise model only (not both).
       const modelName = shipClass.name || '—'
       const instanceName = String(ship.instanceName ?? '').trim()
       const hasCustomName = instanceName.length > 0 && instanceName !== modelName
       const displayName = hasCustomName ? instanceName : modelName
+
+      const baseIds = shipClass.alien ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
+      let laserN = 0
+      let missileN = 0
+      const hardpointFitLines = hps
+        .map((hp) => {
+          const mountType = hp?.type === 'missile' ? 'missile' : 'laser'
+          if (mountType === 'missile') missileN++
+          else laserN++
+          const slotLabel =
+            mountType === 'missile' ? `Launcher ${missileN}` : `Turret ${laserN}`
+          const equippedId = ship.equippedWeapons?.[hp.id] ?? baseIds[mountType]
+          let itemName = 'Empty'
+          let empty = true
+          if (equippedId) {
+            try {
+              itemName = getWeapon(equippedId).name
+              empty = false
+            } catch {
+              itemName = String(equippedId)
+              empty = false
+            }
+          }
+          return `<div class="ss-fit-line">
+            <span class="ss-slot">${escapeHtml(slotLabel)}</span>
+            <span class="ss-item${empty ? ' empty' : ''}">${escapeHtml(itemName)}</span>
+          </div>`
+        })
+        .join('')
+
+      const equippedAcc = Array.isArray(ship.equippedAccessories)
+        ? ship.equippedAccessories
+        : []
+      const accessoryFitLines = Array.from({ length: accSlots }, (_, i) => {
+        const id = equippedAcc[i] ?? null
+        let itemName = 'Empty'
+        let empty = true
+        if (id) {
+          try {
+            itemName = getAccessory(id).name
+            empty = false
+          } catch {
+            itemName = String(id)
+            empty = false
+          }
+        }
+        return `<div class="ss-fit-line">
+          <span class="ss-slot">Accessory ${i + 1}</span>
+          <span class="ss-item${empty ? ' empty' : ''}">${escapeHtml(itemName)}</span>
+        </div>`
+      }).join('')
+
+      const fitBody = [
+        hardpointFitLines,
+        accessoryFitLines
+      ]
+        .filter(Boolean)
+        .join('') || '<div class="ss-fit-line"><span class="ss-item empty">No fit slots</span></div>'
+
       shipStatsPanel.innerHTML = `
         <div class="ss-title">Ship stats</div>
         <div class="ss-name">${escapeHtml(displayName)}</div>
         <div class="ss-class">${escapeHtml(role)}</div>
         ${statLines}
         <div class="ss-section">Fit</div>
-        <div class="ss-row"><span class="ss-label">Hardpoints</span><span class="ss-val">${escapeHtml(hpSummary)}</span></div>
-        <div class="ss-row"><span class="ss-label">Accessories</span><span class="ss-val">${accSlots}</span></div>
-        ${droneBays > 0
-          ? `<div class="ss-row"><span class="ss-label">Drone bays</span><span class="ss-val">${droneBays}</span></div>`
-          : ''}
+        ${fitBody}
       `
     } else if (shipStatsPanel) {
       shipStatsPanel.innerHTML = '<div class="ss-title">Ship stats</div><div class="ss-class">Unknown hull</div>'

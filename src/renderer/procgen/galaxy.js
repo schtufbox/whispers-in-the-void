@@ -56,17 +56,40 @@ const SETTLEMENT_ASTEROID_CHANCE = 0.003
 const SETTLEMENT_WITH_STATION_CHANCE = 0.05
 // Placement retries when a rolled position clips another body / orbit band.
 const STATION_PLACE_ATTEMPTS = 48
-const JUMP_NEIGHBOR_COUNT = 5
+// Sparse warp-lane graph: MST over k-nearest candidates (all systems reachable)
+// + a few short extras. Not a dense mesh — most systems have 2–3 gates.
+const JUMP_NEAREST_CANDIDATES = 10 // candidate edges per system for Kruskal MST
+const JUMP_EXTRA_NEAR_LINKS = 1 // try one optional short hop beyond the MST
+const JUMP_MAX_DEGREE = 4
 
 export const SYSTEM_ARRIVAL_POSITION = [0, 400, -SYSTEM_LOCAL_MAX_RADIUS * 0.95]
 
 // Special outer-rim destination: always one system, always this station name.
 // Ambient hostiles never spawn here (mission NPCs still can).
 export const WHISPERS_SYSTEM_NAME = 'Whispers'
+/** Canonical name for the New Game home system (galactic centre). */
+export const STARTING_SYSTEM_NAME = 'Terra Prime'
 export const WHISPERS_STATION_NAME = "SerNub's Pleasure Palace"
 
-function spiralPosition(rng, armIndex) {
-  const radius = MAX_RADIUS * Math.sqrt(rng())
+/**
+ * Spiral-arm galaxy position.
+ * @param {{ coreOnly?: boolean, outerOnly?: boolean }} [opts]
+ *   coreOnly  — place inside ~30% of max radius (dense core)
+ *   outerOnly — place outside the core disk
+ */
+function spiralPosition(rng, armIndex, opts = {}) {
+  const { coreOnly = false, outerOnly = false } = opts
+  // sqrt radius keeps surface density roughly even within the chosen band.
+  let radius
+  if (coreOnly) {
+    radius = MAX_RADIUS * 0.3 * Math.sqrt(rng())
+  } else if (outerOnly) {
+    // Annulus from 0.3R–1.0R (area-weighted via sqrt of remapped u).
+    const u = 0.09 + rng() * (1 - 0.09)
+    radius = MAX_RADIUS * Math.sqrt(u)
+  } else {
+    radius = MAX_RADIUS * Math.sqrt(rng())
+  }
   const angle = (armIndex / ARM_COUNT) * Math.PI * 2 + radius * 0.01 * ARM_TWIST + (rng() - 0.5) * JITTER_ANGLE
   const x = radius * Math.cos(angle)
   const z = radius * Math.sin(angle)
@@ -693,23 +716,301 @@ function retagSequentialBodiesForSystemRename(system, oldName, newName) {
   }
 }
 
+function galaxyDistXZ(a, b) {
+  return Math.hypot(
+    a.galaxyPosition[0] - b.galaxyPosition[0],
+    a.galaxyPosition[2] - b.galaxyPosition[2]
+  )
+}
+
+/** Stable 0–1 from string (edge decisions without galaxy RNG stream). */
+function hash01(str) {
+  let h = 2166136261
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0) / 4294967296
+}
+
+/**
+ * Sparse undirected warp graph (scales to thousands of systems):
+ * 1) k-nearest candidate edges → Kruskal MST (or forest)
+ * 2) Bridge any remaining components with nearest inter-component links
+ * 3) Optional short extras so routes aren't pure trees
+ */
 function computeNeighborLanes(systems) {
+  if (!systems?.length) return
+  if (systems.length === 1) {
+    systems[0].neighborIds = []
+    return
+  }
+
   const neighborSets = new Map(systems.map((s) => [s.id, new Set()]))
+  const parent = new Map(systems.map((s) => [s.id, s.id]))
+  function find(id) {
+    let p = parent.get(id)
+    if (p !== id) {
+      p = find(p)
+      parent.set(id, p)
+    }
+    return p
+  }
+  function unite(a, b) {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra === rb) return false
+    parent.set(ra, rb)
+    return true
+  }
+
+  // Per-system k-nearest (undirected candidates) — O(n·k) edges, not O(n²).
+  const nearestBySystem = new Map()
+  const edgeKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`)
+  const edgeMap = new Map()
   for (const system of systems) {
     const nearest = systems
-      .filter((other) => other !== system)
-      .map((other) => ({
-        id: other.id,
-        dist: Math.hypot(other.galaxyPosition[0] - system.galaxyPosition[0], other.galaxyPosition[2] - system.galaxyPosition[2])
-      }))
+      .filter((o) => o.id !== system.id)
+      .map((o) => ({ id: o.id, dist: galaxyDistXZ(system, o) }))
       .sort((a, b) => a.dist - b.dist)
-      .slice(0, JUMP_NEIGHBOR_COUNT)
-    for (const { id } of nearest) {
-      neighborSets.get(system.id).add(id)
-      neighborSets.get(id).add(system.id)
+      .slice(0, JUMP_NEAREST_CANDIDATES)
+    nearestBySystem.set(system.id, nearest)
+    for (const n of nearest) {
+      const key = edgeKey(system.id, n.id)
+      if (!edgeMap.has(key)) edgeMap.set(key, { a: system.id, b: n.id, dist: n.dist })
     }
   }
-  for (const system of systems) system.neighborIds = [...neighborSets.get(system.id)]
+  const edges = [...edgeMap.values()].sort(
+    (e1, e2) => e1.dist - e2.dist || String(e1.a).localeCompare(String(e2.a))
+  )
+
+  // Phase 1 — Kruskal forest on k-nearest candidates.
+  let mstEdges = 0
+  const need = systems.length - 1
+  for (const e of edges) {
+    if (unite(e.a, e.b)) {
+      neighborSets.get(e.a).add(e.b)
+      neighborSets.get(e.b).add(e.a)
+      mstEdges++
+      if (mstEdges >= need) break
+    }
+  }
+
+  // Phase 1b — if k-nearest forest is incomplete, bridge components by nearest pair.
+  if (mstEdges < need) {
+    const byId = new Map(systems.map((s) => [s.id, s]))
+    const components = () => {
+      const groups = new Map()
+      for (const s of systems) {
+        const r = find(s.id)
+        if (!groups.has(r)) groups.set(r, [])
+        groups.get(r).push(s.id)
+      }
+      return [...groups.values()]
+    }
+    let comps = components()
+    let guard = 0
+    while (comps.length > 1 && guard++ < systems.length) {
+      let best = null
+      for (let i = 0; i < comps.length; i++) {
+        for (let j = i + 1; j < comps.length; j++) {
+          // Sample up to 40 systems per component for bridge search (O(1) pairs).
+          const aList = comps[i].length > 40 ? comps[i].slice(0, 40) : comps[i]
+          const bList = comps[j].length > 40 ? comps[j].slice(0, 40) : comps[j]
+          for (const aId of aList) {
+            const a = byId.get(aId)
+            for (const bId of bList) {
+              const b = byId.get(bId)
+              const dist = galaxyDistXZ(a, b)
+              if (!best || dist < best.dist) best = { aId, bId, dist }
+            }
+          }
+        }
+      }
+      if (!best) break
+      if (unite(best.aId, best.bId)) {
+        neighborSets.get(best.aId).add(best.bId)
+        neighborSets.get(best.bId).add(best.aId)
+        mstEdges++
+      }
+      comps = components()
+    }
+  }
+
+  // Phase 2 — short redundant lanes from each system's k-nearest list.
+  for (const system of systems) {
+    const nearest = nearestBySystem.get(system.id) ?? []
+    let added = 0
+    for (const n of nearest) {
+      if (added >= JUMP_EXTRA_NEAR_LINKS) break
+      if (neighborSets.get(system.id).has(n.id)) continue
+      if (neighborSets.get(system.id).size >= JUMP_MAX_DEGREE) break
+      if (neighborSets.get(n.id).size >= JUMP_MAX_DEGREE) continue
+      const key = edgeKey(system.id, n.id)
+      if (hash01(`warp-extra:${key}`) > 0.42) continue
+      neighborSets.get(system.id).add(n.id)
+      neighborSets.get(n.id).add(system.id)
+      added++
+    }
+  }
+
+  for (const system of systems) {
+    system.neighborIds = [...neighborSets.get(system.id)]
+  }
+}
+
+/** World radius of a warp gate portal shell (flight / SC arrival). */
+export const WARP_GATE_RADIUS = 140
+/** Max distance from gate center to activate / F-jump (2 km). */
+export const WARP_GATE_ACTIVATION_RANGE = 2000
+/** Local-system orbital radius for gate placement (outer rim). */
+const WARP_GATE_ORBIT = SYSTEM_LOCAL_MAX_RADIUS * 0.88
+
+/**
+ * One warp gate per neighbor lane. Names: "Warp Gate: {adjoining system}".
+ * Deterministic from galaxy geometry (no RNG). Safe to re-run on load.
+ */
+export function placeWarpGates(systems) {
+  if (!systems?.length) return
+  const byId = new Map(systems.map((s) => [s.id, s]))
+
+  for (const system of systems) {
+    system.bodies = (system.bodies ?? []).filter((b) => b.kind !== 'warpGate')
+    const neighbors = (system.neighborIds ?? [])
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+    // Stable order: angle toward neighbor in galaxy XZ, then id.
+    neighbors.sort((a, b) => {
+      const aa = Math.atan2(
+        a.galaxyPosition[2] - system.galaxyPosition[2],
+        a.galaxyPosition[0] - system.galaxyPosition[0]
+      )
+      const bb = Math.atan2(
+        b.galaxyPosition[2] - system.galaxyPosition[2],
+        b.galaxyPosition[0] - system.galaxyPosition[0]
+      )
+      if (aa !== bb) return aa - bb
+      return String(a.id).localeCompare(String(b.id))
+    })
+
+    neighbors.forEach((neighbor, i) => {
+      const dx = neighbor.galaxyPosition[0] - system.galaxyPosition[0]
+      const dz = neighbor.galaxyPosition[2] - system.galaxyPosition[2]
+      let angle = Math.atan2(dz, dx)
+      if (!Number.isFinite(angle)) angle = (i / Math.max(1, neighbors.length)) * Math.PI * 2
+      // Slight fan if two neighbors share nearly the same bearing.
+      angle += (i % 5) * 0.04
+      const x = Math.cos(angle) * WARP_GATE_ORBIT
+      const z = Math.sin(angle) * WARP_GATE_ORBIT
+      const y = 180 + (i % 4) * 55
+      system.bodies.push({
+        id: `warp-gate-${system.id}-${neighbor.id}`,
+        name: `Warp Gate: ${neighbor.name}`,
+        kind: 'warpGate',
+        position: [x, y, z],
+        radius: WARP_GATE_RADIUS,
+        destinationSystemId: neighbor.id
+      })
+    })
+  }
+}
+
+/**
+ * Rename the home system to Terra Prime and retag sequential planet names /
+ * warp gates that reference it. Idempotent if already named.
+ */
+export function applyStartingSystemName(system, galaxy) {
+  if (!system) return system
+  const previous = system.name
+  if (previous === STARTING_SYSTEM_NAME) {
+    system.securityRating = 6
+    return system
+  }
+  // Free the reserved name if another system accidentally has it.
+  if (galaxy?.systems) {
+    for (const s of galaxy.systems) {
+      if (s !== system && s.name === STARTING_SYSTEM_NAME) {
+        s.name = previous && previous !== STARTING_SYSTEM_NAME ? `${previous} Reach` : `${s.id}`
+        retagSequentialBodiesForSystemRename(s, STARTING_SYSTEM_NAME, s.name)
+      }
+    }
+  }
+  system.name = STARTING_SYSTEM_NAME
+  retagSequentialBodiesForSystemRename(system, previous, STARTING_SYSTEM_NAME)
+  system.securityRating = 6
+  // Gate labels are "Warp Gate: {neighbor name}" — rebuild so routes read Terra Prime.
+  if (galaxy?.systems?.length) placeWarpGates(galaxy.systems)
+  return system
+}
+
+/** Rebuild warp gates if missing or out of sync with neighborIds (old saves). */
+export function ensureWarpGates(galaxy) {
+  if (!galaxy?.systems?.length) return
+  const byId = new Map(galaxy.systems.map((s) => [s.id, s]))
+  let needs = false
+  for (const system of galaxy.systems) {
+    const gates = (system.bodies ?? []).filter((b) => b.kind === 'warpGate')
+    const n = system.neighborIds?.length ?? 0
+    if (gates.length !== n) {
+      needs = true
+      break
+    }
+    const dests = new Set(gates.map((g) => String(g.destinationSystemId)))
+    for (const id of system.neighborIds ?? []) {
+      if (!dests.has(String(id))) {
+        needs = true
+        break
+      }
+    }
+    if (needs) break
+    for (const g of gates) {
+      const dest = byId.get(g.destinationSystemId)
+      if (dest && g.name !== `Warp Gate: ${dest.name}`) {
+        needs = true
+        break
+      }
+    }
+    if (needs) break
+  }
+  if (needs) placeWarpGates(galaxy.systems)
+}
+
+export function findWarpGateTo(system, destinationSystemId) {
+  if (!system || destinationSystemId == null) return null
+  const dest = String(destinationSystemId)
+  return (
+    (system.bodies ?? []).find(
+      (b) => b.kind === 'warpGate' && String(b.destinationSystemId) === dest
+    ) ?? null
+  )
+}
+
+/** True when ship is within `range` metres of the gate centre (default 2 km). */
+export function isNearWarpGate(shipPosition, gate, range = WARP_GATE_ACTIVATION_RANGE) {
+  if (!gate || !shipPosition) return false
+  const dx = shipPosition[0] - gate.position[0]
+  const dy = shipPosition[1] - gate.position[1]
+  const dz = shipPosition[2] - gate.position[2]
+  return dx * dx + dy * dy + dz * dz <= range * range
+}
+
+/** Nearest warp gate within activation range, or null. */
+export function findNearbyWarpGate(system, shipPosition, range = WARP_GATE_ACTIVATION_RANGE) {
+  if (!system?.bodies || !shipPosition) return null
+  let best = null
+  let bestD2 = range * range
+  for (const body of system.bodies) {
+    if (body.kind !== 'warpGate') continue
+    const dx = shipPosition[0] - body.position[0]
+    const dy = shipPosition[1] - body.position[1]
+    const dz = shipPosition[2] - body.position[2]
+    const d2 = dx * dx + dy * dy + dz * dz
+    if (d2 <= bestD2) {
+      bestD2 = d2
+      best = body
+    }
+  }
+  return best
 }
 
 // Guarantees the player's home system has somewhere to dock and trade.
@@ -750,15 +1051,44 @@ export function ensureStartingSystemFacilities(system, rng, startId = 0) {
   return bodyIdCounter
 }
 
+// Default production galaxy (~7.8× original 450 systems). Density kept similar
+// to the 4050-system pass; denser core (40% of systems/planets).
+export const DEFAULT_SYSTEM_COUNT = 3500
+export const DEFAULT_TOTAL_PLANETS = 11667
+export const DEFAULT_STATION_COUNT = 1400
+export const DEFAULT_SETTLEMENT_COUNT = 933
+export const DEFAULT_ASTEROID_FIELD_COUNT = 1167
+export const DEFAULT_SPECIES_COUNT = 40
+/** Fraction of systems (and thus ~planets) placed in the dense core disk. */
+export const CORE_SYSTEM_FRACTION = 0.4
+/**
+ * Fixed seed for the shared galaxy layout — every New Game uses the same systems,
+ * names, warp lanes, and central home system. Player seed only diversifies
+ * mission boards / career rolls, not the map.
+ */
+export const CANONICAL_GALAXY_SEED = 8675309
+
+/** Compact galaxy for unit tests (full default is multi-k systems / 13.5k planets). */
+export const TEST_GALAXY_OPTS = {
+  systemCount: 90,
+  totalPlanets: 280,
+  stationCount: 40,
+  settlementCount: 30,
+  asteroidFieldCount: 28,
+  speciesCount: 8,
+  coreSystemFraction: CORE_SYSTEM_FRACTION
+}
+
 export function generateGalaxy(seed, opts = {}) {
   const {
-    systemCount = 450,
-    totalPlanets = 1500,
-    stationCount = 180,
-    settlementCount = 120,
+    systemCount = DEFAULT_SYSTEM_COUNT,
+    totalPlanets = DEFAULT_TOTAL_PLANETS,
+    stationCount = DEFAULT_STATION_COUNT,
+    settlementCount = DEFAULT_SETTLEMENT_COUNT,
     // ~1/3 of systems get a belt so mining isn't rare when exploring.
-    asteroidFieldCount = 150,
-    speciesCount = 20
+    asteroidFieldCount = DEFAULT_ASTEROID_FIELD_COUNT,
+    speciesCount = DEFAULT_SPECIES_COUNT,
+    coreSystemFraction = CORE_SYSTEM_FRACTION
   } = opts
   const rng = mulberry32(seed)
   let bodyIdCounter = 0
@@ -766,8 +1096,16 @@ export function generateGalaxy(seed, opts = {}) {
   // Galaxy-wide display-name registry (case-insensitive). Reserved specials first.
   const usedNames = new Set([
     WHISPERS_SYSTEM_NAME.toLowerCase(),
-    WHISPERS_STATION_NAME.toLowerCase()
+    WHISPERS_STATION_NAME.toLowerCase(),
+    STARTING_SYSTEM_NAME.toLowerCase()
   ])
+
+  // 40% of systems in the core disk so ~40% of planets sit toward the core
+  // (planets are spread evenly across systems).
+  const coreSystemCount = Math.max(
+    1,
+    Math.min(systemCount - 1, Math.round(systemCount * coreSystemFraction))
+  )
 
   const planetsPerSystem = []
   let remainingPlanets = totalPlanets
@@ -778,7 +1116,10 @@ export function generateGalaxy(seed, opts = {}) {
     planetsPerSystem.push(count)
     remainingPlanets -= count
   }
-  planetsPerSystem[planetsPerSystem.length - 1] = Math.max(1, planetsPerSystem[planetsPerSystem.length - 1] + remainingPlanets)
+  planetsPerSystem[planetsPerSystem.length - 1] = Math.max(
+    1,
+    planetsPerSystem[planetsPerSystem.length - 1] + remainingPlanets
+  )
 
   const systems = []
   for (let i = 0; i < systemCount; i++) {
@@ -818,7 +1159,12 @@ export function generateGalaxy(seed, opts = {}) {
         bodies.push(moon)
       }
     }
-    const galaxyPosition = spiralPosition(rng, i % ARM_COUNT)
+    // First coreSystemCount systems land in the dense core; rest in the outer arms.
+    const inCore = i < coreSystemCount
+    const galaxyPosition = spiralPosition(rng, i % ARM_COUNT, {
+      coreOnly: inCore,
+      outerOnly: !inCore
+    })
     // Security rating 0–6: center 30% core, outer 10% rim always 0 (see game/security.js).
     const dist = Math.hypot(galaxyPosition[0], galaxyPosition[2])
     const f = Math.min(1, dist / GALAXY_MAX_RADIUS)
@@ -845,17 +1191,25 @@ export function generateGalaxy(seed, opts = {}) {
     })
   }
 
+  // Facilities: slight core bias so busy hubs cluster where more planets are.
+  function pickSystemBiased() {
+    if (rng() < coreSystemFraction && coreSystemCount > 0) {
+      return systems[intRange(rng, 0, coreSystemCount - 1)]
+    }
+    return pick(rng, systems)
+  }
+
   for (let i = 0; i < stationCount; i++) {
-    const system = pick(rng, systems)
+    const system = pickSystemBiased()
     system.bodies.push(makeStation(rng, bodyIdCounter++, system))
   }
   for (let i = 0; i < settlementCount; i++) {
-    const system = pick(rng, systems)
+    const system = pickSystemBiased()
     const settlement = makeSettlement(rng, bodyIdCounter++, system)
     if (settlement) system.bodies.push(settlement)
   }
   for (let i = 0; i < asteroidFieldCount; i++) {
-    const system = pick(rng, systems)
+    const system = pickSystemBiased()
     system.bodies.push(makeAsteroidField(rng, bodyIdCounter++, system.sizeScale, usedNames))
   }
 
@@ -865,6 +1219,9 @@ export function generateGalaxy(seed, opts = {}) {
 
   // Outer-rim landmark: rename the farthest system and guarantee SerNub's station.
   bodyIdCounter = placeWhispersSystem(systems, bodyIdCounter, usedNames)
+
+  // Warp gates after renames so "Warp Gate: Whispers" uses the final name.
+  placeWarpGates(systems)
 
   // Drop generation-only name sets so save JSON stays lean.
   for (const system of systems) delete system._usedNames
