@@ -12,6 +12,7 @@ import { defaultLoadoutFor } from '../data/weapons.js'
 import { defaultAccessoriesFor } from '../data/accessories.js'
 import { getSystem, findBody } from '../procgen/galaxy.js'
 import { MINED_ORE_GOOD_IDS } from '../data/goods.js'
+import { playerSkillBonuses, scaleOreCost } from './skills.js'
 
 // Very rare blueprint finds.
 export const WRECK_BLUEPRINT_DROP_CHANCE = 0.025
@@ -144,11 +145,21 @@ export function startCraft(gameState, bodyId, blueprintId, nowMs = Date.now()) {
   if ((storage.blueprints[blueprintId] ?? 0) < 1) {
     throw new Error('Blueprint must be in station storage before assembling')
   }
-  const oreCost = oreCostForBlueprint(blueprintId)
+  // Industry skill reduces credits + ore materials (player only).
+  let industryMult = 1
+  try {
+    industryMult = playerSkillBonuses(gameState).industryMult
+  } catch {
+    industryMult = 1
+  }
+  const oreCost = scaleOreCost(oreCostForBlueprint(blueprintId), industryMult)
   if (!hasOre(storage.miningHold, oreCost)) {
     throw new Error('Not enough ore in station storage for this blueprint')
   }
-  const creditCost = creditCostForBlueprint(blueprintId)
+  const creditCost = Math.max(
+    0,
+    Math.round(creditCostForBlueprint(blueprintId) * industryMult)
+  )
   if (gameState.player.credits < creditCost) {
     throw new Error(`Need ${creditCost}cr for bay fees (have ${gameState.player.credits}cr)`)
   }

@@ -23,7 +23,7 @@ const STYLE = `
   display: flex; flex-direction: column; gap: 10px; width: 560px; position: relative; z-index: 1;
   padding: 28px 32px;
 }
-/* Full-screen main view: title up above the star, menu links dead-center. */
+/* Full-screen main view: title up above the star; menu row above lower HUD. */
 #main-menu .main-view {
   width: min(92vw, 720px);
   height: 100%;
@@ -34,12 +34,20 @@ const STYLE = `
   text-align: center;
   pointer-events: none; /* only interactive children re-enable */
 }
+/* Horizontal strip a bit above the footer / lower HUD band (footer ~26px). */
 #main-menu .main-view .menu-links {
   pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  bottom: max(64px, 8.5vh);
+  transform: translateX(-50%);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  gap: 10px 36px;
+  width: min(94vw, 920px);
   z-index: 2;
 }
 #main-menu .title-block {
@@ -209,9 +217,10 @@ const STYLE = `
 
 /* Top-level New Game / Load / Quit — plain text only, never a hover box. */
 #main-menu button.menu-link {
-  background: transparent !important; border: none !important; padding: 6px 0; margin: 0;
-  color: #e8f4ff; font-size: 19px; letter-spacing: 3px; text-transform: uppercase;
+  background: transparent !important; border: none !important; padding: 6px 4px; margin: 0;
+  color: #e8f4ff; font-size: 17px; letter-spacing: 3px; text-transform: uppercase;
   cursor: pointer; font-family: monospace;
+  white-space: nowrap;
   opacity: 0; transform: translateY(8px);
   transition: color 0.2s ease, filter 0.2s ease;
   box-shadow: none !important; outline: none;

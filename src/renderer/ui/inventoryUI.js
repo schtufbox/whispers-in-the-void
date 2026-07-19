@@ -1,15 +1,24 @@
 import { getGood } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
-import { useShipPart, storageHasAssets } from '../game/economy.js'
+import { useShipPart, storageHasAssets, discardCargo, discardOre } from '../game/economy.js'
 import { findBody, findSystemOfBody } from '../procgen/galaxy.js'
 import { getWeapon } from '../data/weapons.js'
 import { getAccessory, effectiveMiningCapacity } from '../data/accessories.js'
 import { craftRemainingS } from '../game/crafting.js'
 import { getBlueprint, formatDuration } from '../data/blueprints.js'
+import {
+  ensureSkills,
+  useSkillbook,
+  getSkillDef,
+  skillLevel,
+  MAX_SKILL_LEVEL
+} from '../game/skills.js'
 import { escapeHtml } from './escapeHtml.js'
-import { gameNotice } from './gameDialog.js'
+import { gameNotice, gamePrompt } from './gameDialog.js'
+import { goodIcon, itemIcon, itemNameCell, ITEM_ICON_CSS } from './itemIcons.js'
 
 const STYLE = `
+${ITEM_ICON_CSS}
 /* Above docking chrome (z 50) so Inventory opens while docked.
    Vertical anchor: just below the HUD system-label (+50px), not screen-centered. */
 #inventory-ui {
@@ -20,7 +29,7 @@ const STYLE = `
   box-sizing: border-box;
 }
 #inventory-ui .panel {
-  width: 620px; max-height: calc(100vh - 140px); overflow-y: auto; padding: 18px 22px;
+  width: min(920px, 94vw); max-height: calc(100vh - 140px); overflow-y: auto; padding: 18px 24px;
   background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
   border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
   box-shadow: 0 0 26px rgba(79,195,217,0.22), inset 0 0 26px rgba(79,195,217,0.05);
@@ -47,12 +56,14 @@ const STYLE = `
 #inventory-ui .tabs {
   display: flex; gap: 2px; margin-bottom: 14px;
   border-bottom: 1px solid rgba(111,216,242,0.25);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 #inventory-ui .tab {
   background: transparent; border: none; border-bottom: 2px solid transparent;
-  color: #8fb3d9; padding: 7px 12px; cursor: pointer; font-family: monospace;
+  color: #8fb3d9; padding: 7px 10px; cursor: pointer; font-family: monospace;
   font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  white-space: nowrap; flex-shrink: 0;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 #inventory-ui .tab:hover { color: #cfe3ff; }
@@ -61,8 +72,9 @@ const STYLE = `
   text-shadow: 0 0 6px rgba(79,195,217,0.55);
 }
 #inventory-ui table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-#inventory-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); }
+#inventory-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); white-space: nowrap; }
 #inventory-ui td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
+#inventory-ui td:not(:first-child) { white-space: nowrap; }
 #inventory-ui button.close {
   background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
   padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
@@ -85,6 +97,17 @@ const STYLE = `
 }
 #inventory-ui .parts-badge.none { color: #8fb3d9; opacity: 0.65; }
 #inventory-ui .empty { opacity: 0.5; font-size: 12px; }
+#inventory-ui button.discard-item {
+  background: rgba(224,90,90,0.1); border: 1px solid rgba(224,90,90,0.45); color: #ffb3b3;
+  padding: 2px 8px; cursor: pointer; font-family: monospace; font-size: 11px;
+}
+#inventory-ui button.discard-item:hover {
+  background: rgba(224,90,90,0.22); box-shadow: 0 0 10px rgba(224,90,90,0.35);
+}
+#inventory-ui button.use-skillbook {
+  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  padding: 3px 10px; cursor: pointer; font-family: monospace; font-size: 11px;
+}
 #inventory-ui .tab-meta {
   font-size: 12px; opacity: 0.75; margin: 0 0 12px 0; line-height: 1.4;
 }
@@ -144,6 +167,7 @@ export function createInventoryUI(container, gameState) {
         <button type="button" class="tab" data-tab="ore">Ore</button>
         <button type="button" class="tab" data-tab="parts">Ship parts</button>
         <button type="button" class="tab" data-tab="blueprints">Blueprints</button>
+        <button type="button" class="tab" data-tab="skills">Skillbooks</button>
         <button type="button" class="tab" data-tab="stored">Stored assets</button>
         <button type="button" class="tab" data-tab="industry">Industry</button>
       </div>
@@ -197,18 +221,65 @@ export function createInventoryUI(container, gameState) {
     else repairBtn.title = `Use 1 ship part (${parts} on board) — restores 10% hull/armour`
   }
 
+  async function planDiscardQty(label, available) {
+    const max = Math.max(0, Math.floor(available))
+    if (max < 1) return 0
+    const ans = await gamePrompt(
+      'Jettison item',
+      String(max === 1 ? 1 : max),
+      {
+        body: `Permanently destroy “${label}”? Enter quantity (max ${max}). Cannot be undone.`,
+        okLabel: 'Destroy',
+        cancelLabel: 'Cancel',
+        maxLength: 10
+      }
+    )
+    if (ans == null) return 0
+    const n = Math.floor(Number(String(ans).trim()))
+    if (!Number.isFinite(n) || n < 1) return 0
+    return Math.min(max, n)
+  }
+
+  function wireInventoryDiscard(kind) {
+    contentEl.querySelectorAll('button.discard-item').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id')
+        const max = Math.max(0, Math.floor(Number(btn.getAttribute('data-qty')) || 0))
+        let label = id
+        try {
+          label = getGood(id).name
+        } catch {
+          /* */
+        }
+        const qty = await planDiscardQty(label, max)
+        if (qty < 1) return
+        try {
+          if (kind === 'ore') discardOre(gameState, id, qty, 'ship')
+          else discardCargo(gameState, id, qty, 'ship')
+          await gameNotice(`Destroyed ${qty}× ${label}.`)
+          render()
+        } catch (err) {
+          await gameNotice(err?.message || String(err))
+        }
+      })
+    })
+  }
+
   function renderCargoTab(ship, shipClass) {
     const cargoRows = Object.entries(ship.cargo).filter(([, qty]) => qty > 0)
     const used = cargoRows.reduce((a, [, q]) => a + q, 0)
     contentEl.innerHTML = `
-      <h3>Cargo Hold (${used}/${shipClass.stats.cargoCapacity})</h3>
+      <div class="hull-status" style="margin-bottom:10px;opacity:0.7">${used}/${shipClass.stats.cargoCapacity}</div>
       ${cargoRows.length
         ? `<table>
-            <thead><tr><th>Good</th><th>Qty</th></tr></thead>
-            <tbody>${cargoRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody>
+            <thead><tr><th>Good</th><th>Qty</th><th></th></tr></thead>
+            <tbody>${cargoRows.map(([id, qty]) =>
+              `<tr><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty}</td><td><button type="button" class="discard-item" data-id="${escapeHtml(id)}" data-qty="${qty}">✕</button></td></tr>`
+            ).join('')}</tbody>
           </table>`
         : '<div class="empty">Empty</div>'}
     `
+    wireInventoryDiscard('cargo')
   }
 
   function renderPartsTab(ship, shipClass) {
@@ -216,10 +287,7 @@ export function createInventoryUI(container, gameState) {
     const hull = Math.round(ship.hull)
     const armor = Math.round(ship.armor)
     contentEl.innerHTML = `
-      <h3>Ship Parts</h3>
-      <p class="tab-meta">On board: <strong>${parts}</strong></p>
-      <div class="hull-status">Hull ${hull}/${shipClass.stats.hull} · Armour ${armor}/${shipClass.stats.armor}</div>
-      <p class="tab-meta">Each repair uses 1 part and restores 10% of max hull and armour.</p>
+      <div class="hull-status">${parts} part${parts === 1 ? '' : 's'} · Hull ${hull}/${shipClass.stats.hull} · Armour ${armor}/${shipClass.stats.armor}</div>
     `
   }
 
@@ -228,14 +296,74 @@ export function createInventoryUI(container, gameState) {
     const used = oreRows.reduce((a, [, q]) => a + q, 0)
     const cap = effectiveMiningCapacity(ship, shipClass)
     contentEl.innerHTML = `
-      <h3>Ore Hold (${used}/${cap})</h3>
+      <div class="hull-status" style="margin-bottom:10px;opacity:0.7">${used}/${cap}</div>
       ${oreRows.length
         ? `<table>
-            <thead><tr><th>Ore</th><th>Qty</th></tr></thead>
-            <tbody>${oreRows.map(([id, qty]) => `<tr><td>${getGood(id).name}</td><td>${qty}</td></tr>`).join('')}</tbody>
+            <thead><tr><th>Ore</th><th>Qty</th><th></th></tr></thead>
+            <tbody>${oreRows.map(([id, qty]) =>
+              `<tr><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty}</td><td><button type="button" class="discard-item" data-id="${escapeHtml(id)}" data-qty="${qty}">✕</button></td></tr>`
+            ).join('')}</tbody>
           </table>`
         : '<div class="empty">Empty</div>'}
     `
+    wireInventoryDiscard('ore')
+  }
+
+  function renderSkillsTab(ship) {
+    ensureSkills(gameState)
+    const skills = gameState.player.skills
+    // Only books currently on board — not the full skill tree.
+    const bookRows = Object.entries(ship.skillbooks ?? {})
+      .filter(([, qty]) => qty > 0)
+      .sort((a, b) => {
+        try {
+          return getSkillDef(a[0]).name.localeCompare(getSkillDef(b[0]).name)
+        } catch {
+          return String(a[0]).localeCompare(String(b[0]))
+        }
+      })
+    contentEl.innerHTML = bookRows.length
+      ? `<table>
+            <thead><tr><th>Skillbook</th><th>Qty</th><th>Level</th><th></th></tr></thead>
+            <tbody>
+              ${bookRows.map(([skillId, qty]) => {
+                let def
+                try {
+                  def = getSkillDef(skillId)
+                } catch {
+                  def = { name: skillId, bookName: skillId, description: '' }
+                }
+                const lv = skillLevel(skills, skillId)
+                const maxed = lv >= MAX_SKILL_LEVEL
+                return `<tr>
+                  <td>
+                    <div>${itemNameCell(itemIcon('skillbook'), def.bookName || def.name)}</div>
+                    <div style="opacity:0.55;font-size:10px;max-width:320px;padding-left:26px">${escapeHtml(def.description || '')}</div>
+                  </td>
+                  <td>×${qty}</td>
+                  <td>${lv} / ${MAX_SKILL_LEVEL}</td>
+                  <td>${
+                    maxed
+                      ? '<span style="opacity:0.5">Maxed</span>'
+                      : `<button type="button" class="use-skillbook" data-skill="${escapeHtml(skillId)}">Read</button>`
+                  }</td>
+                </tr>`
+              }).join('')}
+            </tbody>
+          </table>`
+      : '<div class="empty">Empty</div>'
+    contentEl.querySelectorAll('.use-skillbook').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const skillId = btn.getAttribute('data-skill')
+        const r = useSkillbook(gameState, skillId)
+        if (!r.ok) {
+          gameNotice(r.reason || 'Cannot read skillbook')
+          return
+        }
+        gameNotice(`Read skillbook — ${r.name} is now level ${r.level}.`)
+        render()
+      })
+    })
   }
 
   function renderBlueprintsTab(ship) {
@@ -256,7 +384,7 @@ export function createInventoryUI(container, gameState) {
     for (const list of Object.values(byKind)) {
       list.sort((a, b) => String(a.name).localeCompare(String(b.name)))
     }
-    function section(title, rows) {
+    function section(title, rows, blueprintKind) {
       if (!rows.length) return ''
       return `
         <h3 style="margin-top:14px">${escapeHtml(title)}</h3>
@@ -264,22 +392,18 @@ export function createInventoryUI(container, gameState) {
           <thead><tr><th>Blueprint</th><th>Builds</th><th>Qty</th></tr></thead>
           <tbody>${rows.map((r) => `
             <tr>
-              <td>${escapeHtml(r.name)}</td>
+              <td>${itemNameCell(itemIcon('blueprint', { blueprintKind }), r.name)}</td>
               <td>${escapeHtml(r.itemName ?? '—')}</td>
               <td>×${r.qty}</td>
             </tr>`).join('')}</tbody>
         </table>`
     }
-    contentEl.innerHTML = `
-      <h3>Blueprints on board (${total})</h3>
-      <p class="tab-meta">One-shot: each craft consumes one blueprint. Not sellable — store or assemble at Industry.</p>
-      ${total
-        ? `${section('Ships', byKind.ship)}
-           ${section('Accessories', byKind.accessory)}
-           ${section('Weapons', byKind.weapon)}
-           ${section('Other', byKind.other)}`
-        : '<div class="empty">None on board — find via wrecks, probes, or transfer from station Industry.</div>'}
-    `
+    contentEl.innerHTML = total
+      ? `${section('Ships', byKind.ship, 'ship')}
+           ${section('Accessories', byKind.accessory, 'accessory')}
+           ${section('Weapons', byKind.weapon, 'weapon')}
+           ${section('Other', byKind.other, 'ship')}`
+      : '<div class="empty">Empty</div>'
   }
 
   function renderStoredTab() {
@@ -287,11 +411,8 @@ export function createInventoryUI(container, gameState) {
     const remoteEntries = Object.entries(gameState.stationStorage ?? {}).filter(([, s]) =>
       storageHasAssets(s)
     )
-    contentEl.innerHTML = `
-      <h3>Stored Assets</h3>
-      <p class="tab-meta">Cargo, ships, and gear left at stations and settlements.</p>
-      ${remoteEntries.length
-        ? remoteEntries
+    contentEl.innerHTML = remoteEntries.length
+      ? remoteEntries
             .map(([bodyId, s]) => {
               const body = findBody(gameState.galaxy, bodyId)
               const system = findSystemOfBody(gameState.galaxy, bodyId)
@@ -325,19 +446,15 @@ export function createInventoryUI(container, gameState) {
         </div>`
             })
             .join('')
-        : '<div class="empty">Nothing stored anywhere yet — leave items at a station or settlement Storage bay.</div>'}
-    `
+      : '<div class="empty">Empty</div>'
   }
 
   function renderIndustryTab() {
     const now = Date.now()
     // In-progress jobs only (finished ones are removed after delivery).
     const jobs = gameState.craftingJobs ?? []
-    contentEl.innerHTML = `
-      <h3>Industry Jobs</h3>
-      <p class="tab-meta">Builds run on wall-clock at their bay — even while you fly elsewhere.</p>
-      ${jobs.length
-        ? jobs
+    contentEl.innerHTML = jobs.length
+      ? jobs
             .map((job) => {
               let name = job.blueprintId
               try {
@@ -364,8 +481,7 @@ export function createInventoryUI(container, gameState) {
             </div>`
             })
             .join('')
-        : '<div class="empty">No active industry jobs. Start builds at a station or settlement Industry bay.</div>'}
-    `
+      : '<div class="empty">Empty</div>'
   }
 
   function render() {
@@ -379,6 +495,7 @@ export function createInventoryUI(container, gameState) {
     else if (currentTab === 'ore') renderOreTab(ship, shipClass)
     else if (currentTab === 'parts') renderPartsTab(ship, shipClass)
     else if (currentTab === 'blueprints') renderBlueprintsTab(ship)
+    else if (currentTab === 'skills') renderSkillsTab(ship)
     else if (currentTab === 'stored') renderStoredTab()
     else renderIndustryTab()
   }

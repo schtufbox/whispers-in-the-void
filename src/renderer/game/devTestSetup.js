@@ -4,7 +4,8 @@ import { createGameState } from './state.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
 import { defaultAccessoriesFor } from '../data/accessories.js'
-import { ensureDrones } from './drones.js'
+import { ensureDrones, installDroneOnShip } from './drones.js'
+import { DEFAULT_DRONE_ID } from '../data/drones.js'
 
 /** When true, New Game uses the test ship + resources (menu still boots normally). */
 export const DEV_TEST_SETUP = false
@@ -58,8 +59,15 @@ export function applyDevTestLoadout(gameState, opts = {}) {
   ship.miningHold = {}
   ship.shipParts = ship.shipParts ?? 0
 
-  // Player-only combat drones for the two bays.
+  // Player-only combat drones for the two bays (normally bought from Armoury).
   ensureDrones(ship, shipClass)
+  ship.drones = []
+  try {
+    installDroneOnShip(ship, DEFAULT_DRONE_ID, shipClass)
+    installDroneOnShip(ship, DEFAULT_DRONE_ID, shipClass)
+  } catch {
+    /* hull may have fewer bays */
+  }
 
   gameState.player.credits = 999_999
 

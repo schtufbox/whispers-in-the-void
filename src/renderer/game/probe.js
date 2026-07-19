@@ -8,23 +8,38 @@ import { getBlueprint } from '../data/blueprints.js'
 import { mulberry32, pick } from '../procgen/prng.js'
 import { starTypeForSystem } from '../procgen/starType.js'
 import { oreTierForSystem } from './mining.js'
+import { tryRollProbeSkillbook, getSkillDef, playerSkillBonuses } from './skills.js'
 
 export const PROBE_FIND_CHANCE = 0.08
 /** Explorer hulls: +5 percentage points to survey-data finds when probing. */
 export const EXPLORER_PROBE_LOOT_BONUS = 0.05
 export const MAX_PROBE_ATTEMPTS = 3
 
-/** Effective survey-data find chance for this ship class. */
-export function probeFindChance(shipClass) {
+/** Effective survey-data find chance for this ship class (+ Probe Expert skill). */
+export function probeFindChance(shipClass, gameState = null) {
   let p = PROBE_FIND_CHANCE
   if (shipClass?.role === 'explorer') p += EXPLORER_PROBE_LOOT_BONUS
+  if (gameState) {
+    try {
+      p += playerSkillBonuses(gameState).probeLoot
+    } catch {
+      /* */
+    }
+  }
   return Math.min(1, Math.max(0, p))
 }
 
-/** Effective blueprint drop chance (explorers get +5% relative). */
-export function probeBlueprintChance(shipClass) {
+/** Effective blueprint drop chance (explorers + Probe Expert). */
+export function probeBlueprintChance(shipClass, gameState = null) {
   let p = PROBE_BLUEPRINT_DROP_CHANCE
   if (shipClass?.role === 'explorer') p *= 1 + EXPLORER_PROBE_LOOT_BONUS
+  if (gameState) {
+    try {
+      p += playerSkillBonuses(gameState).probeLoot
+    } catch {
+      /* */
+    }
+  }
   return Math.min(1, Math.max(0, p))
 }
 /** Shown after the last allowed probe attempt on a body. */
@@ -256,8 +271,8 @@ export function isActiveMissionProbeTarget(gameState, bodyId) {
 // (caller still handles mission logic separately; this only affects survey data).
 export function launchProbe(gameState, shipClass, rng, { forceFind = false } = {}) {
   // Independent ultra-rare blueprint find (does not require survey-data roll).
-  // Explorer role: better odds on blueprint drops and survey-data finds.
-  const blueprintId = tryRollBlueprintDrop(rng, probeBlueprintChance(shipClass))
+  // Explorer role + Probe Expert skill raise odds.
+  const blueprintId = tryRollBlueprintDrop(rng, probeBlueprintChance(shipClass, gameState))
   let blueprint = null
   if (blueprintId) {
     grantShipBlueprint(gameState, blueprintId)
@@ -268,17 +283,31 @@ export function launchProbe(gameState, shipClass, rng, { forceFind = false } = {
     }
   }
 
-  if (!forceFind && rng() >= probeFindChance(shipClass)) {
-    return { found: false, stored: false, blueprint }
+  // Independent skillbook roll (0.05%); maxed skills excluded from pool.
+  let skillbook = null
+  const skillId = tryRollProbeSkillbook(rng, gameState)
+  if (skillId) {
+    const ship = gameState.player.ship
+    ship.skillbooks ??= {}
+    ship.skillbooks[skillId] = (ship.skillbooks[skillId] ?? 0) + 1
+    try {
+      skillbook = { skillId, name: getSkillDef(skillId).bookName }
+    } catch {
+      skillbook = { skillId, name: 'Skillbook' }
+    }
+  }
+
+  if (!forceFind && rng() >= probeFindChance(shipClass, gameState)) {
+    return { found: false, stored: false, blueprint, skillbook }
   }
 
   const cargo = gameState.player.ship.cargo
   const used = Object.values(cargo).reduce((a, b) => a + b, 0)
   if (used >= shipClass.stats.cargoCapacity) {
-    return { found: true, stored: false, blueprint }
+    return { found: true, stored: false, blueprint, skillbook }
   }
 
   // Survey data is ordinary cargo — drag to station storage on Storage tab to sell.
   cargo[SURVEY_DATA_GOOD_ID] = (cargo[SURVEY_DATA_GOOD_ID] ?? 0) + 1
-  return { found: true, stored: true, blueprint }
+  return { found: true, stored: true, blueprint, skillbook }
 }

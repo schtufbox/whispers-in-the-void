@@ -36,8 +36,15 @@ export function createMouseAimState() {
   return state
 }
 
-export function updateFlight(shipState, shipClass, keys, mouseAim, dt) {
-  const { speed, turnRate, accel } = shipClass.stats
+/**
+ * @param {object} [skillOpts] player-only skill mults: { speedMult, turnMult }
+ */
+export function updateFlight(shipState, shipClass, keys, mouseAim, dt, skillOpts = null) {
+  const speedMult = skillOpts?.speedMult ?? 1
+  const turnMult = skillOpts?.turnMult ?? 1
+  const speed = shipClass.stats.speed * speedMult
+  const turnRate = shipClass.stats.turnRate * turnMult
+  const { accel } = shipClass.stats
   const quat = new THREE.Quaternion().fromArray(shipState.quaternion)
   const velocity = new THREE.Vector3().fromArray(shipState.velocity)
 

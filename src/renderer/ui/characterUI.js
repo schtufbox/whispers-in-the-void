@@ -1,5 +1,6 @@
 import { getShipClass } from '../data/shipClasses.js'
 import { ensureLawStanding, MAX_LAW_STANDING } from '../game/security.js'
+import { SKILLS, MAX_SKILL_LEVEL, ensureSkills, skillLevel } from '../game/skills.js'
 import { escapeHtml } from './escapeHtml.js'
 
 const STYLE = `
@@ -234,6 +235,11 @@ export function createCharacterUI(container, gameState) {
             <span class="label">Status</span>
             <span class="value law-status" style="font-size:12px"></span>
           </div>
+          <div class="stat-row skills-block">
+            <span class="label">Skills</span>
+            <div class="skills-list" style="font-size:11px;line-height:1.45;margin-top:4px;color:#b8d4e8"></div>
+            <div style="font-size:10px;opacity:0.55;margin-top:6px">Read skillbooks from Inventory → Skillbooks. Max ${MAX_SKILL_LEVEL} each.</div>
+          </div>
         </div>
       </div>
       <div class="footer">
@@ -262,6 +268,7 @@ export function createCharacterUI(container, gameState) {
   const lawStatusEl = root.querySelector('.law-status')
   const creditsEl = root.querySelector('.credits')
   const lawHintRow = root.querySelector('.law-hint-row')
+  const skillsListEl = root.querySelector('.skills-list')
 
   let onClose = null
 
@@ -291,6 +298,7 @@ export function createCharacterUI(container, gameState) {
 
   function refreshStats() {
     ensureLawStanding(gameState)
+    ensureSkills(gameState)
     const shipClass = getShipClass(gameState.player.ship.classId)
     const law = gameState.player.lawStanding
 
@@ -324,6 +332,16 @@ export function createCharacterUI(container, gameState) {
       lawStatusEl.classList.add(lawClass(law))
     } else if (lawHintRow) {
       lawHintRow.style.display = 'none'
+    }
+
+    if (skillsListEl) {
+      const books = gameState.player.ship.skillbooks ?? {}
+      skillsListEl.innerHTML = SKILLS.map((s) => {
+        const lv = skillLevel(gameState.player.skills, s.id)
+        const b = books[s.id] ?? 0
+        const bookBit = b > 0 ? ` · <span style="color:#ffe08a">${b} book${b > 1 ? 's' : ''}</span>` : ''
+        return `<div>${escapeHtml(s.name)}: <strong style="color:#eaffff">${lv}</strong>/${MAX_SKILL_LEVEL}${bookBit}</div>`
+      }).join('')
     }
   }
 

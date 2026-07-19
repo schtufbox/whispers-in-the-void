@@ -7,6 +7,7 @@ import { applyOfflineTime, reanchorGameClock } from './gameClock.js'
 import { ensureDrones } from './drones.js'
 import { ensureLawStanding } from './security.js'
 import { ensureSystemSecurity, getSystem } from '../procgen/galaxy.js'
+import { ensureSkills } from './skills.js'
 
 export function serializeGameState(gameState) {
   // Snapshot clock at save so load can apply offline wall time.
@@ -70,7 +71,10 @@ export function deserializeGameState(data) {
   ).equipped
   gameState.player.ship.spareWeapons ??= {}
   gameState.player.ship.blueprints ??= {}
+  gameState.player.ship.skillbooks ??= {}
   gameState.player.ship.drones ??= []
+  // Skills (0–20) + skillbooks on ship; normalize missing keys from older saves.
+  ensureSkills(gameState)
   // Ensure bay-compatible drone slots after load (class may have gained bays).
   try {
     ensureDrones(gameState.player.ship)
@@ -82,6 +86,7 @@ export function deserializeGameState(data) {
     if (!storage) continue
     storage.accessories ??= {}
     storage.weapons ??= {}
+    storage.drones ??= {}
     for (const parked of storage.ships ?? []) {
       try {
         const cls = getShipClass(parked.classId)

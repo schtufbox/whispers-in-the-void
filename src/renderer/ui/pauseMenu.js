@@ -18,7 +18,7 @@ const CONTROLS = [
   ['M', 'Galaxy map / hyperspace jump'],
   ['F', 'Dock at station/settlement or loot wreck'],
   ['P', 'Launch survey probe (orbit / near target)'],
-  ['G', 'Launch drones (requires drone bays)'],
+  ['G', 'Launch drones (buy & equip from Shipyard Armoury)'],
   ['H', 'Recall drones to bay'],
   ['I', 'Inventory'],
   ['J', 'Missions'],

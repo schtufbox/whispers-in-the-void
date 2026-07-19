@@ -8,7 +8,8 @@ import {
   NPC_SPAWN_SHIP_RADIUS
 } from './spawner.js'
 import { mineRock, isRockAlive, mineYieldForWeapon } from './mining.js'
-import { spawnWreck } from './wrecks.js'
+import { spawnWreckWithSkills } from './wrecks.js'
+import { playerSkillBonuses } from './skills.js'
 import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
 import { rockCollisionRadius } from './collision.js'
 import { getWeapon, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID } from '../data/weapons.js'
@@ -229,6 +230,17 @@ export function fireProjectile(
     }
     _projQuat.setFromUnitVectors(_localForward, _projDir)
 
+    // Gunnery / Launchers skills boost player hardpoint damage only.
+    let dmg = weapon.damage
+    if (ownerId === 'player') {
+      try {
+        const b = playerSkillBonuses(gameState)
+        dmg *= mountType === 'missile' ? b.launchersMult : b.gunneryMult
+      } catch {
+        /* */
+      }
+    }
+
     gameState.projectiles.push({
       id: `proj-${projectileCounter++}`,
       ownerId,
@@ -238,7 +250,7 @@ export function fireProjectile(
       position: worldPos.toArray(),
       quaternion: _projQuat.toArray(),
       velocity: _projDir.clone().multiplyScalar(weapon.speed).toArray(),
-      damage: weapon.damage,
+      damage: dmg,
       ttl: weapon.ttl
     })
     try {
@@ -330,7 +342,13 @@ export function updateProjectiles(gameState, dt, onHit) {
         // suicide ram don't count, per its own design.
         if (proj.ownerId === 'player' && target.destroyed) {
           gameState.wrecks.push(
-            spawnWreck(newPos.toArray(), gameState.simTime, Math.random, target.shipClassId ?? target.classId)
+            spawnWreckWithSkills(
+              newPos.toArray(),
+              gameState.simTime,
+              Math.random,
+              target.shipClassId ?? target.classId,
+              gameState
+            )
           )
           if (target.faction === 'pirate') {
             applyLawBonusForPirateKill(gameState)

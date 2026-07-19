@@ -1,5 +1,6 @@
 // Player combat drones only — launched from player ship drone bays (max 2).
 // NPCs never receive, summon, or operate drones (even on hulls that list droneBays).
+// Hulls with droneBays do NOT include drones — buy from Shipyard → Armoury.
 
 export const DEFAULT_DRONE_ID = 'asp_light'
 
@@ -17,9 +18,16 @@ export const DRONES = [
     accel: 55,
     // Visual scale relative to a full ship hull mesh.
     meshScale: 0.22,
-    color: '#8ab4c8'
+    color: '#8ab4c8',
+    // Bought separately (not free with the hull).
+    price: 18500
   }
 ]
+
+/** Buyable drone types for the shipyard Armoury. */
+export function purchasableDrones() {
+  return DRONES.filter((d) => (d.price ?? 0) > 0)
+}
 
 export function getDrone(id = DEFAULT_DRONE_ID) {
   const d = DRONES.find((x) => x.id === id)

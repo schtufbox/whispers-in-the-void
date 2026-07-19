@@ -9,6 +9,7 @@ import {
 import { getShipClass } from '../data/shipClasses.js'
 import { findBody, findSystemOfBody, coreFraction } from '../procgen/galaxy.js'
 import { getWeapon, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID, defaultLoadoutFor } from '../data/weapons.js'
+import { playerSkillBonuses } from './skills.js'
 import {
   getAccessory,
   defaultAccessoriesFor,
@@ -16,7 +17,15 @@ import {
   accessorySlotCount,
   effectiveMiningCapacity
 } from '../data/accessories.js'
-import { repairDrones, ensureDrones, teleportDronesToBay } from './drones.js'
+import {
+  repairDrones,
+  ensureDrones,
+  teleportDronesToBay,
+  installDroneOnShip,
+  removeDroneFromShip,
+  freeDroneBayCount
+} from './drones.js'
+import { getDrone, DEFAULT_DRONE_ID } from '../data/drones.js'
 
 const TRADE_PRICE_NUDGE_FACTOR = 0.002
 /** At full rim (coreFraction 1), rare ores are this fraction cheaper. */
@@ -114,7 +123,11 @@ function restockMarket(gameState, bodyId, goodId, qty) {
  * Thin stock raises price (they'll charge more when short). Outer rim:
  * rare ores ~20% cheaper; low-grade ore stays cheap (no rim markup).
  */
-export function getPrice(gameState, bodyId, goodId) {
+/**
+ * Base bay price (tags/scarcity/rim) before player Trading skill.
+ * @param {'buy'|'sell'|null} tradeSide apply player Trading skill when set
+ */
+export function getPrice(gameState, bodyId, goodId, tradeSide = null) {
   const body = findBody(gameState.galaxy, bodyId)
   const system = findSystemOfBody(gameState.galaxy, bodyId)
   const good = getGood(goodId)
@@ -147,7 +160,17 @@ export function getPrice(gameState, bodyId, goodId) {
   }
 
   const override = gameState.economyOverrides[bodyId]?.[goodId] ?? 0
-  return Math.max(1, Math.round(price + override))
+  let final = Math.max(1, Math.round(price + override))
+  // Trading skill: player-only buy discount / sell bonus.
+  if (tradeSide === 'buy' || tradeSide === 'sell') {
+    try {
+      const b = playerSkillBonuses(gameState)
+      final = Math.max(1, Math.round(final * (tradeSide === 'buy' ? b.buyMult : b.sellMult)))
+    } catch {
+      /* */
+    }
+  }
+  return final
 }
 
 function nudgePrice(gameState, bodyId, goodId, quantityDelta) {
@@ -161,14 +184,23 @@ function cargoLoad(cargo) {
   return Object.values(cargo).reduce((a, b) => a + b, 0)
 }
 
+/** Skillbooks never trade — loot/train only (ship.skillbooks map). */
+function assertNotSkillbookTrade(goodId) {
+  const id = String(goodId ?? '')
+  if (id.startsWith('skillbook') || id.startsWith('skill_book')) {
+    throw new Error('Skillbooks cannot be bought or sold')
+  }
+}
+
 export function buyGood(gameState, bodyId, goodId, quantity) {
+  assertNotSkillbookTrade(goodId)
   if (!isBuyableTradeGood(goodId)) throw new Error('This good cannot be bought here — obtain it by probing')
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   if (qty < 1) throw new Error('Invalid quantity')
   const available = getMarketAvailable(gameState, bodyId, goodId)
   if (available < qty) throw new Error('Not enough stock available at this bay')
   // Purchases go into station storage — player transfers to ship separately.
-  const cost = getPrice(gameState, bodyId, goodId) * qty
+  const cost = getPrice(gameState, bodyId, goodId, 'buy') * qty
   if (gameState.player.credits < cost) throw new Error('Not enough credits')
 
   consumeMarketStock(gameState, bodyId, goodId, qty)
@@ -180,18 +212,79 @@ export function buyGood(gameState, bodyId, goodId, quantity) {
 
 // Sell from station storage cargo (haul goods off the ship first via Storage).
 export function sellGood(gameState, bodyId, goodId, quantity) {
+  assertNotSkillbookTrade(goodId)
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   if (qty < 1) throw new Error('Invalid quantity')
   const storage = storageFor(gameState, bodyId)
   const cargo = storage.cargo
   if ((cargo[goodId] ?? 0) < qty) throw new Error('Not enough in station storage to sell')
 
-  const proceeds = getPrice(gameState, bodyId, goodId) * qty
+  const proceeds = getPrice(gameState, bodyId, goodId, 'sell') * qty
   cargo[goodId] -= qty
   if (cargo[goodId] <= 0) delete cargo[goodId]
   gameState.player.credits += proceeds
   restockMarket(gameState, bodyId, goodId, qty)
   nudgePrice(gameState, bodyId, goodId, -qty)
+}
+
+/**
+ * Permanently destroy cargo from ship hold or station bay.
+ * @param {'ship'|'station'} where
+ * @returns {number} quantity discarded
+ */
+export function discardCargo(gameState, goodId, quantity, where = 'ship', bodyId = null) {
+  assertNotSkillbookTrade(goodId)
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0))
+  if (qty < 1) throw new Error('Invalid quantity')
+  if (where === 'ship') {
+    const cargo = gameState.player.ship.cargo ??= {}
+    const have = cargo[goodId] ?? 0
+    if (have < qty) throw new Error('Not enough in ship cargo')
+    cargo[goodId] = have - qty
+    if (cargo[goodId] <= 0) delete cargo[goodId]
+    return qty
+  }
+  if (where === 'station') {
+    if (!bodyId) throw new Error('Station required')
+    const cargo = storageFor(gameState, bodyId).cargo
+    const have = cargo[goodId] ?? 0
+    if (have < qty) throw new Error('Not enough in station storage')
+    cargo[goodId] = have - qty
+    if (cargo[goodId] <= 0) delete cargo[goodId]
+    return qty
+  }
+  throw new Error('Invalid storage location')
+}
+
+/**
+ * Permanently destroy ore from ship mining hold or station ore bay.
+ * @param {'ship'|'station'} where
+ * @returns {number} quantity discarded
+ */
+export function discardOre(gameState, goodId, quantity, where = 'ship', bodyId = null) {
+  if (!MINED_ORE_GOOD_IDS.includes(goodId) && goodId !== 'ore') {
+    // Still allow discard of whatever is sitting in the hold id map.
+  }
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0))
+  if (qty < 1) throw new Error('Invalid quantity')
+  if (where === 'ship') {
+    const hold = gameState.player.ship.miningHold ??= {}
+    const have = hold[goodId] ?? 0
+    if (have < qty) throw new Error('Not enough in ship ore hold')
+    hold[goodId] = have - qty
+    if (hold[goodId] <= 0) delete hold[goodId]
+    return qty
+  }
+  if (where === 'station') {
+    if (!bodyId) throw new Error('Station required')
+    const hold = storageFor(gameState, bodyId).miningHold
+    const have = hold[goodId] ?? 0
+    if (have < qty) throw new Error('Not enough ore in station storage')
+    hold[goodId] = have - qty
+    if (hold[goodId] <= 0) delete hold[goodId]
+    return qty
+  }
+  throw new Error('Invalid storage location')
 }
 
 // Sell ore from station storage mining bay (transfer from ship on Industry first).
@@ -202,7 +295,7 @@ export function sellMinedOre(gameState, bodyId, goodId, quantity) {
   const hold = storage.miningHold
   if ((hold[goodId] ?? 0) < qty) throw new Error('Not enough ore in station storage to sell')
 
-  const proceeds = getPrice(gameState, bodyId, goodId) * qty
+  const proceeds = getPrice(gameState, bodyId, goodId, 'sell') * qty
   hold[goodId] -= qty
   if (hold[goodId] <= 0) delete hold[goodId]
   gameState.player.credits += proceeds
@@ -216,7 +309,7 @@ export function buyMinedOre(gameState, bodyId, goodId, quantity) {
   if (qty < 1) throw new Error('Invalid quantity')
   const available = getMarketAvailable(gameState, bodyId, goodId)
   if (available < qty) throw new Error('Not enough stock available at this bay')
-  const cost = getPrice(gameState, bodyId, goodId) * qty
+  const cost = getPrice(gameState, bodyId, goodId, 'buy') * qty
   if (gameState.player.credits < cost) throw new Error('Not enough credits')
 
   consumeMarketStock(gameState, bodyId, goodId, qty)
@@ -281,11 +374,13 @@ function storageFor(gameState, bodyId) {
     ships: [],
     weapons: {},
     accessories: {},
-    blueprints: {}
+    blueprints: {},
+    drones: {}
   })
   storage.weapons ??= {}
   storage.accessories ??= {}
   storage.blueprints ??= {}
+  storage.drones ??= {}
   return storage
 }
 
@@ -304,12 +399,31 @@ function mergeInto(target, source) {
 // from, not made active automatically — see activateStoredShip below for the
 // only way a stored ship (new or previously owned) actually becomes the
 // player's active ship.
+function playerBuyCost(gameState, listPrice) {
+  const base = Math.max(0, Math.round(Number(listPrice) || 0))
+  try {
+    return Math.max(1, Math.round(base * playerSkillBonuses(gameState).buyMult))
+  } catch {
+    return base
+  }
+}
+
+function playerSellProceeds(gameState, listPrice) {
+  const base = Math.max(0, Math.round(Number(listPrice) || 0))
+  try {
+    return Math.max(1, Math.round(base * playerSkillBonuses(gameState).sellMult))
+  } catch {
+    return base
+  }
+}
+
 export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
   const newClass = getShipClass(newClassId)
   if (newClass.alien || newClass.npcOnly) throw new Error('That hull is not for sale')
-  if (gameState.player.credits < newClass.price) throw new Error('Not enough credits')
+  const cost = playerBuyCost(gameState, newClass.price)
+  if (gameState.player.credits < cost) throw new Error('Not enough credits')
 
-  gameState.player.credits -= newClass.price
+  gameState.player.credits -= cost
   const hull = {
     classId: newClassId,
     instanceName,
@@ -325,6 +439,7 @@ export function purchaseShip(gameState, bodyId, newClassId, instanceName) {
     blueprints: {},
     drones: []
   }
+  // Drone bays start empty — buy drones from Armoury, then equip.
   ensureDrones(hull, newClass)
   storageFor(gameState, bodyId).ships.push(hull)
 }
@@ -559,7 +674,7 @@ export function buyShipParts(gameState, bodyId, quantity) {
   if (!body?.hasShipParts) throw new Error('Ship parts are not stocked here')
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   if (qty < 1) throw new Error('Invalid quantity')
-  const cost = getPrice(gameState, bodyId, SHIP_PARTS_GOOD_ID) * qty
+  const cost = getPrice(gameState, bodyId, SHIP_PARTS_GOOD_ID, 'buy') * qty
   if (gameState.player.credits < cost) throw new Error('Not enough credits')
 
   gameState.player.credits -= cost
@@ -594,7 +709,7 @@ export function buyWeapon(gameState, bodyId, weaponId, quantity = 1) {
   if (weapon.alien) throw new Error('Alien weapons cannot be purchased')
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   if (qty < 1) throw new Error('Invalid quantity')
-  const cost = weapon.price * qty
+  const cost = playerBuyCost(gameState, weapon.price) * qty
   if (gameState.player.credits < cost) throw new Error('Not enough credits')
   gameState.player.credits -= cost
   const storage = storageFor(gameState, bodyId)
@@ -610,7 +725,8 @@ export function sellStoredWeapon(gameState, bodyId, weaponId, quantity = 1) {
   if ((storage.weapons[weaponId] ?? 0) < qty) throw new Error('No such weapon in storage')
   storage.weapons[weaponId] -= qty
   if (storage.weapons[weaponId] <= 0) delete storage.weapons[weaponId]
-  gameState.player.credits += Math.round(getWeapon(weaponId).price * WEAPON_RESALE_FRACTION) * qty
+  const unit = Math.round(getWeapon(weaponId).price * WEAPON_RESALE_FRACTION)
+  gameState.player.credits += playerSellProceeds(gameState, unit) * qty
 }
 
 // Swaps whatever's equipped at this hardpoint for a weapon sitting in this
@@ -656,7 +772,8 @@ export function sellCarriedWeapon(gameState, weaponId, quantity = 1) {
   if ((ship.spareWeapons[weaponId] ?? 0) < qty) throw new Error('No such weapon on board')
   ship.spareWeapons[weaponId] -= qty
   if (ship.spareWeapons[weaponId] <= 0) delete ship.spareWeapons[weaponId]
-  gameState.player.credits += Math.round(getWeapon(weaponId).price * WEAPON_RESALE_FRACTION) * qty
+  const unit = Math.round(getWeapon(weaponId).price * WEAPON_RESALE_FRACTION)
+  gameState.player.credits += playerSellProceeds(gameState, unit) * qty
 }
 
 // Move all spare weapons into this station's storage (optional stash).
@@ -677,7 +794,7 @@ export function buyAccessory(gameState, bodyId, accessoryId, quantity = 1) {
   const accessory = getAccessory(accessoryId)
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   if (qty < 1) throw new Error('Invalid quantity')
-  const cost = accessory.price * qty
+  const cost = playerBuyCost(gameState, accessory.price) * qty
   if (gameState.player.credits < cost) throw new Error('Not enough credits')
   gameState.player.credits -= cost
   const storage = storageFor(gameState, bodyId)
@@ -693,7 +810,8 @@ export function sellStoredAccessory(gameState, bodyId, accessoryId, quantity = 1
   if ((storage.accessories[accessoryId] ?? 0) < qty) throw new Error('No such accessory in storage')
   storage.accessories[accessoryId] -= qty
   if (storage.accessories[accessoryId] <= 0) delete storage.accessories[accessoryId]
-  gameState.player.credits += Math.round(getAccessory(accessoryId).price * ACCESSORY_RESALE_FRACTION) * qty
+  const unit = Math.round(getAccessory(accessoryId).price * ACCESSORY_RESALE_FRACTION)
+  gameState.player.credits += playerSellProceeds(gameState, unit) * qty
 }
 
 /**
@@ -733,12 +851,75 @@ export function equipAccessory(gameState, bodyId, slotIndex, accessoryId) {
   ship.equippedAccessories[idx] = wantId
 }
 
+// Combat drones: buy into station storage, equip into empty bays on the active
+// ship. Hulls with droneBays do not include free drones.
+const DRONE_RESALE_FRACTION = 0.5
+
+export function buyDrone(gameState, bodyId, droneId = DEFAULT_DRONE_ID, quantity = 1) {
+  const drone = getDrone(droneId)
+  const price = Math.max(0, Math.floor(Number(drone.price) || 0))
+  if (price <= 0) throw new Error('That drone is not for sale')
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0))
+  if (qty < 1) throw new Error('Invalid quantity')
+  const cost = playerBuyCost(gameState, price) * qty
+  if (gameState.player.credits < cost) throw new Error('Not enough credits')
+  gameState.player.credits -= cost
+  const storage = storageFor(gameState, bodyId)
+  storage.drones[droneId] = (storage.drones[droneId] ?? 0) + qty
+}
+
+export function sellStoredDrone(gameState, bodyId, droneId = DEFAULT_DRONE_ID, quantity = 1) {
+  const storage = storageFor(gameState, bodyId)
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0))
+  if (qty < 1) throw new Error('Invalid quantity')
+  if ((storage.drones[droneId] ?? 0) < qty) throw new Error('No such drone in storage')
+  storage.drones[droneId] -= qty
+  if (storage.drones[droneId] <= 0) delete storage.drones[droneId]
+  const unit = Math.round(getDrone(droneId).price * DRONE_RESALE_FRACTION)
+  gameState.player.credits += playerSellProceeds(gameState, unit) * qty
+}
+
+/** Move one drone from station storage into an empty bay on the active ship. */
+export function equipDrone(gameState, bodyId, droneId = DEFAULT_DRONE_ID) {
+  const ship = gameState.player.ship
+  const storage = storageFor(gameState, bodyId)
+  getDrone(droneId) // validate
+  if ((storage.drones[droneId] ?? 0) < 1) throw new Error('That drone is not in station storage')
+  if (freeDroneBayCount(ship) < 1) throw new Error('No free drone bay on this ship')
+  storage.drones[droneId] -= 1
+  if (storage.drones[droneId] <= 0) delete storage.drones[droneId]
+  installDroneOnShip(ship, droneId)
+}
+
+/** Return an installed drone from a bay back to station storage. */
+export function unequipDrone(gameState, bodyId, bayIndex) {
+  const ship = gameState.player.ship
+  const typeId = removeDroneFromShip(ship, bayIndex)
+  const storage = storageFor(gameState, bodyId)
+  storage.drones[typeId] = (storage.drones[typeId] ?? 0) + 1
+}
+
+/** Sell one drone currently installed on the active ship. */
+export function sellShipDrone(gameState, bayIndex) {
+  const ship = gameState.player.ship
+  const typeId = removeDroneFromShip(ship, bayIndex)
+  const unit = Math.round(getDrone(typeId).price * DRONE_RESALE_FRACTION)
+  gameState.player.credits += playerSellProceeds(gameState, unit)
+}
+
 /** True if a station/settlement storage entry holds anything of value. */
 export function storageHasAssets(storage) {
   if (!storage) return false
   if ((storage.ships?.length ?? 0) > 0) return true
   if ((storage.shipParts ?? 0) > 0) return true
-  const qtyMaps = [storage.cargo, storage.miningHold, storage.weapons, storage.accessories, storage.blueprints]
+  const qtyMaps = [
+    storage.cargo,
+    storage.miningHold,
+    storage.weapons,
+    storage.accessories,
+    storage.blueprints,
+    storage.drones
+  ]
   for (const map of qtyMaps) {
     if (!map) continue
     for (const qty of Object.values(map)) {

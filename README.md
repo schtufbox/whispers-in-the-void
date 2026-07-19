@@ -27,7 +27,8 @@ New Game starts you in a **Bravia Mk2** near the galactic core (always **Securit
 - **100+ ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**.
 - **Alien ships & weapons** — four exclusive organic hulls (Void Cyst, Spine Skimmer, Chor Lathe, Zealot Carapace) with alien guns and unique fire SFX. **Never sold.** Craft only if you salvage an **extremely rare** alien blueprint from an alien wreck (the only source of alien tech).
 - **Real-time flight and combat** — mouse-aim flight; **LMB** lasers and **RMB** missiles can fire together; boresight weapons; shield/armour/hull; NPC AI. Core systems are busier; the rim is quieter and more alien, with tougher pirates. Pirates may truce with you against aliens.
-- **Combat drones** — launch (**G**) / recall (**H**) wingmen from ships with drone bays; they engage only after shots are exchanged.
+- **Combat drones** — hulls with drone bays start empty; buy **Asp Light** drones from **Shipyard → Armoury** (turrets / launchers / drones listed separately), equip into bays, then launch (**G**) / recall (**H**). They engage only after shots are exchanged.
+- **Skills & skillbooks** — pilot skills **0–20** (Character / inventory). Skillbooks are **loot-only** (wrecks, rare alien wreck bonus); read from Inventory. Not sold on markets.
 - **System security & law** — security rating **0–6** per system (core safer, rim often lawless). **Law standing 0–10** (start 10): attacking innocents only costs law in Sec 3–6. Low law draws police, station docking refusals, and eventually shoot-on-sight. Police patrol stations; black/white livery with red/blue flashers.
 - **Combat FX** — hit sparks/smoke, missile models and contrails, rock explosions, ship death FX; projectiles pass through station/settlement mesh so geometry does not block fire.
 - **Wall-clock campaign time** — `simTime` tracks real time while you play; offline catch-up on load (asteroid respawns, cooldowns). Industry jobs use wall-clock timestamps and continue while you fly elsewhere.
@@ -35,9 +36,9 @@ New Game starts you in a **Bravia Mk2** near the galactic core (always **Securit
 - **Every station has a shipyard** — Ships / Armoury / Accessories tabs: buy into **station storage**, sell from storage; loadout and repair (settlements repair only). Role **Bonus** listed under ship stats. Alien tech is craft/equip only (no buy).
 - **Accessories** — optional slots (Autopilot multi-hop jumps, Extra Ore Storage ×5 hold, …).
 - **Trading economy** — tag-driven prices; **market stock** (Available) per bay; demand and scarcity raise prices. Buy/sell goods and ore use **station storage** (transfer to ship yourself). Outer rim: low-grade ore stays cheap and thin; rare ore is deeper and ~**20%** cheaper.
-- **Docking & storage** — dock into a themed bay interior; per-station cargo, ore, parts, ships, weapons, accessories, blueprints. Drag-and-drop ship ↔ bay (cargo/parts on Storage; ore/BPs on Industry).
-- **Inventory (I)** — cargo, ore, ship parts, **blueprints on board**, remote stored assets, industry jobs.
-- **Character (F1)** — pilot portrait, law standing, credits, ship summary; available anytime in-session.
+- **Docking & storage** — dock into a themed bay interior; per-station cargo, ore, parts, ships, weapons, accessories, blueprints, drones. Drag-and-drop ship ↔ bay (cargo/ore/parts on Storage; ore/BPs on Industry).
+- **Inventory (I)** — cargo, ore, ship parts, blueprints, **skillbooks**, remote stored assets, industry jobs.
+- **Character (F1)** — pilot portrait, law standing, credits, ship summary, **skills**; available anytime in-session.
 - **Missions** — bounty, exploration, investigation, and probe contracts. **J** tracks active work; orange rings on the galaxy map mark objectives and turn-ins. Mission waypoints advance as you complete steps.
 - **Mining** — fire weapons at individual asteroids for ore; finite yield per rock, rarer tiers toward the rim; depleted rocks explode and respawn on the campaign clock. In **Security 0–3**, mining has a **10%** chance per hit to attract pirates (with a cooldown so laser spam cannot stack fleets).
 - **Probing** — scan planets, moons, asteroid fields, and stars for survey data, classification reports, and rare **human** blueprints; probe auto-returns after scan.
@@ -109,7 +110,7 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **M** | Galaxy map / hyperspace |
 | **F** | Dock at station/settlement or loot wreck |
 | **P** | Launch survey probe (orbit / near target) |
-| **G** | Launch drones (requires drone bays) |
+| **G** | Launch drones (requires installed drones in bays) |
 | **H** | Recall drones to bay |
 | **I** | Inventory |
 | **J** | Missions tracker |

@@ -33,7 +33,10 @@ export const SURVEY_DATA_GOOD_ID = 'survey_data'
 export const MINED_ORE_GOOD_IDS = ['raw_ore', 'rich_ore', 'exotic_ore', 'quantum_ore']
 
 // Not station-stocked (no Buy). Survey data is sell-only after transfer to storage.
+// Skillbooks are never goods — they live on ship.skillbooks and are loot/train only.
 export function isBuyableTradeGood(id) {
+  const s = String(id ?? '')
+  if (s.startsWith('skillbook') || s.startsWith('skill_book')) return false
   return (
     id !== SHIP_PARTS_GOOD_ID &&
     id !== SURVEY_DATA_GOOD_ID &&
@@ -42,8 +45,10 @@ export function isBuyableTradeGood(id) {
   )
 }
 
-/** Goods shown on the Trade → Goods table (not mined ore / parts). */
+/** Goods shown on the Trade → Goods table (not mined ore / parts / skillbooks). */
 export function isTradeListGood(id) {
+  const s = String(id ?? '')
+  if (s.startsWith('skillbook') || s.startsWith('skill_book')) return false
   return id !== SHIP_PARTS_GOOD_ID && id !== 'ore' && !MINED_ORE_GOOD_IDS.includes(id)
 }
 

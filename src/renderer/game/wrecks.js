@@ -7,6 +7,7 @@ import {
   tryRollBlueprintDrop,
   tryRollAlienBlueprintDrop
 } from './crafting.js'
+import { tryRollWreckSkillbook, getSkillDef } from './skills.js'
 
 let wreckCounter = 0
 
@@ -69,7 +70,30 @@ export function spawnWreck(position, simTime, rng = Math.random, shipClassId = n
     const blueprintId = tryRollBlueprintDrop(rng, WRECK_BLUEPRINT_DROP_CHANCE)
     if (blueprintId) loot.blueprints = { [blueprintId]: 1 }
   }
+  // Skillbook chance is independent; maxed skills are excluded from the pool.
+  // Caller may pass gameState via opts for skill-aware drops — see spawnWreckWithSkills.
   return { id: `wreck-${wreckCounter++}`, position: [...position], spawnedAt: simTime, loot }
+}
+
+/**
+ * Same as spawnWreck, then rolls a skillbook against the player's trainable skills.
+ * @param {object|null} gameState required for skill-aware skillbook drops
+ */
+export function spawnWreckWithSkills(position, simTime, rng, shipClassId, gameState) {
+  const wreck = spawnWreck(position, simTime, rng, shipClassId)
+  if (gameState) {
+    // Alien hulls: base 0.5% + 1% bonus = 1.5% skillbook chance.
+    const skillId = tryRollWreckSkillbook(rng, gameState, isAlienShipClass(shipClassId))
+    if (skillId) {
+      wreck.loot.skillbooks = { [skillId]: 1 }
+      try {
+        wreck.loot.skillbookName = getSkillDef(skillId).bookName
+      } catch {
+        wreck.loot.skillbookName = 'Skillbook'
+      }
+    }
+  }
+  return wreck
 }
 
 // Called once per frame from main.js — cheap given how few wrecks exist at
@@ -105,6 +129,11 @@ export function lootWreck(gameState, shipClass, wreckId) {
   ship.blueprints ??= {}
   for (const [blueprintId, qty] of Object.entries(wreck.loot.blueprints ?? {})) {
     ship.blueprints[blueprintId] = (ship.blueprints[blueprintId] ?? 0) + qty
+  }
+
+  ship.skillbooks ??= {}
+  for (const [skillId, qty] of Object.entries(wreck.loot.skillbooks ?? {})) {
+    ship.skillbooks[skillId] = (ship.skillbooks[skillId] ?? 0) + qty
   }
 
   gameState.wrecks = gameState.wrecks.filter((w) => w.id !== wreckId)

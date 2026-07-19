@@ -11,6 +11,7 @@ import { getShipClass } from '../data/shipClasses.js'
 import { seedMissionsForGalaxy } from '../data/missionTemplates.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
 import { defaultAccessoriesFor } from '../data/accessories.js'
+import { emptySkills } from '../data/skills.js'
 import { quatFacingSun } from './hyperspace.js'
 
 // Dev convenience: start new games in the outer-rim Whispers system.
@@ -92,6 +93,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
       lawStanding: 10,
       // Optional base64 data-URL of player portrait (Character screen upload).
       portraitDataUrl: null,
+      // Player-only skills 0–20 (data/skills.js) — raised via skillbooks.
+      skills: emptySkills(),
       ship: {
         classId: shipClassId,
         instanceName: shipInstanceName,
@@ -111,7 +114,9 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
         spareWeapons: {},
         // Rare industry blueprints (ships/weapons) — craft at station Industry.
         blueprints: {},
-        // Combat drones (Asp Light) — sized by shipClass.droneBays (0–2).
+        // Skillbooks on board { skillId: qty } — use from Character / Inventory.
+        skillbooks: {},
+        // Combat drones — empty until bought/equipped (max = shipClass.droneBays).
         drones: [],
         position: [...SYSTEM_ARRIVAL_POSITION],
         velocity: [0, 0, 0],

@@ -33,6 +33,7 @@ function applySfxMute() {
   if (masterGain) masterGain.gain.value = sfxEnabled ? 1 : 0
   if (!sfxEnabled && window.speechSynthesis) {
     try { window.speechSynthesis.cancel() } catch { /* */ }
+    try { stopAnnounceBed() } catch { /* */ }
   }
 }
 
@@ -836,10 +837,13 @@ export function playRockExplosion() {
 // available, rather than throwing, since this is a nice-to-have layered on
 // top of the existing synthesized SFX above, not a required system.
 //
-// OS TTS can't be wired into the Web Audio graph, so "reverb" is faked as a
-// soft multi-tap delay bloom under the phrase (plus a slower rate), not a
-// true wet process of the voice itself.
+// OS TTS cannot be routed into the Web Audio graph, so robot/reverb character
+// is: (1) pitch/rate tuned for a cooler female synth voice, plus (2) a wet
+// multi-tap bloom and soft formant pad under the phrase (not a true wet
+// process of the voice itself).
 let femaleVoice = null
+/** Active robot-bed nodes so a new announce can cut the previous pad cleanly. */
+let announceBedNodes = null
 
 function refreshFemaleVoice() {
   if (!window.speechSynthesis) return
@@ -847,9 +851,10 @@ function refreshFemaleVoice() {
   if (!voices.length) return
   const en = voices.filter((v) => /^en\b/i.test(v.lang))
   const pool = en.length ? en : voices
-  // Known female system voices across macOS / Windows / Chrome.
-  const prefer = /samantha|victoria|karen|moira|tessa|fiona|veena|zira|hazel|susan|linda|heather|serena|catherine|google us english female|microsoft zira|female|woman/i
-  const avoidMale = /david|mark|daniel|alex|fred|jorge|male|\bman\b|guy|tom|bruce|rishi|aaron/i
+  // Prefer clearer female system voices; compact/neural often read more "synth".
+  const prefer =
+    /samantha|victoria|karen|moira|tessa|fiona|veena|zira|hazel|susan|linda|heather|serena|catherine|google us english female|microsoft zira|female|woman|siri|allison|ava|nicky|salli|joanna|ivy|kimberly/i
+  const avoidMale = /david|mark|daniel|alex|fred|jorge|male|\bman\b|guy|tom|bruce|rishi|aaron|james|brian|guy/i
   femaleVoice =
     pool.find((v) => prefer.test(v.name)) ??
     pool.find((v) => !avoidMale.test(v.name)) ??
@@ -861,44 +866,147 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
   window.speechSynthesis.addEventListener('voiceschanged', refreshFemaleVoice)
 }
 
-// Quiet noise through short feed-forward taps — sits under TTS for a bit of
-// space without delay feedback (feedback loops could self-oscillate into a
-// sustained synth-like buzz after callouts like "Supercruise disengaged").
-function playAnnounceReverbBloom(durationS = 0.9) {
+function stopAnnounceBed() {
+  if (!announceBedNodes) return
   const audio = getContext()
   const now = audio.currentTime
-  const length = Math.ceil(audio.sampleRate * 0.05)
+  try {
+    if (announceBedNodes.gain) {
+      announceBedNodes.gain.gain.cancelScheduledValues(now)
+      announceBedNodes.gain.gain.setValueAtTime(Math.max(0.0001, announceBedNodes.gain.gain.value), now)
+      announceBedNodes.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12)
+    }
+    for (const n of announceBedNodes.stops ?? []) {
+      try {
+        n.stop(now + 0.15)
+      } catch {
+        /* already stopped */
+      }
+    }
+  } catch {
+    /* */
+  }
+  announceBedNodes = null
+}
+
+/**
+ * Wet multi-tap bloom + soft formant pad under TTS — female ship-computer vibe.
+ * Feed-forward delays only (no feedback loops that can self-oscillate).
+ */
+function playAnnounceRobotBed(durationS = 1.65) {
+  stopAnnounceBed()
+  const audio = getContext()
+  const now = audio.currentTime
+  const stops = []
+
+  // Burst of filtered noise → multi-tap delays (fake early reflections / reverb).
+  const length = Math.ceil(audio.sampleRate * 0.06)
   const buffer = audio.createBuffer(1, length, audio.sampleRate)
   const data = buffer.getChannelData(0)
   for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length)
 
   const src = audio.createBufferSource()
   src.buffer = buffer
+  stops.push(src)
 
   const band = audio.createBiquadFilter()
   band.type = 'bandpass'
-  band.frequency.value = 1200
-  band.Q.value = 0.7
+  band.frequency.value = 1450
+  band.Q.value = 0.85
 
-  const wet = audio.createGain()
-  wet.gain.setValueAtTime(0.0001, now)
-  wet.gain.exponentialRampToValueAtTime(0.03, now + 0.03)
-  wet.gain.exponentialRampToValueAtTime(0.0001, now + durationS)
+  const bloom = audio.createGain()
+  bloom.gain.setValueAtTime(0.0001, now)
+  bloom.gain.exponentialRampToValueAtTime(0.055, now + 0.04)
+  bloom.gain.exponentialRampToValueAtTime(0.0001, now + Math.min(durationS, 1.1))
 
   src.connect(band)
-  // Feed-forward taps only — no delay→feedback→delay loops.
-  for (const delayS of [0.05, 0.1, 0.16]) {
+  // Longer feed-forward taps for a roomier, slightly synthetic trail.
+  for (const [delayS, g] of [
+    [0.04, 0.42],
+    [0.09, 0.34],
+    [0.15, 0.26],
+    [0.24, 0.18],
+    [0.36, 0.12]
+  ]) {
     const delay = audio.createDelay(1)
     delay.delayTime.value = delayS
+    const lp = audio.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 3200 - delayS * 1800
     const tap = audio.createGain()
-    tap.gain.value = 0.35
+    tap.gain.value = g
     band.connect(delay)
-    delay.connect(tap)
-    tap.connect(wet)
+    delay.connect(lp)
+    lp.connect(tap)
+    tap.connect(bloom)
   }
-  wet.connect(getMasterDestination())
+  bloom.connect(getMasterDestination())
   src.start(now)
-  src.stop(now + 0.08)
+  src.stop(now + 0.09)
+
+  // Soft formant pad (vocoder-ish) under the phrase — triangle + sine stack.
+  const padGain = audio.createGain()
+  padGain.gain.setValueAtTime(0.0001, now)
+  padGain.gain.exponentialRampToValueAtTime(0.028, now + 0.08)
+  padGain.gain.setValueAtTime(0.028, now + durationS * 0.55)
+  padGain.gain.exponentialRampToValueAtTime(0.0001, now + durationS)
+
+  const formants = [
+    { f: 520, type: 'sine', g: 0.45 },
+    { f: 920, type: 'triangle', g: 0.32 },
+    { f: 1480, type: 'sine', g: 0.22 },
+    { f: 2100, type: 'triangle', g: 0.12 }
+  ]
+  for (const { f, type, g } of formants) {
+    const osc = audio.createOscillator()
+    osc.type = type
+    osc.frequency.value = f
+    // Slow detune wobble → less pure tone, more "synth voice" bed.
+    const lfo = audio.createOscillator()
+    lfo.type = 'sine'
+    lfo.frequency.value = 0.7 + f * 0.0004
+    const lfoG = audio.createGain()
+    lfoG.gain.value = 4 + f * 0.004
+    lfo.connect(lfoG)
+    lfoG.connect(osc.frequency)
+    lfo.start(now)
+    lfo.stop(now + durationS + 0.05)
+    stops.push(lfo)
+
+    const og = audio.createGain()
+    og.gain.value = g
+    const hp = audio.createBiquadFilter()
+    hp.type = 'highpass'
+    hp.frequency.value = 180
+    osc.connect(og)
+    og.connect(hp)
+    hp.connect(padGain)
+    osc.start(now)
+    osc.stop(now + durationS + 0.05)
+    stops.push(osc)
+  }
+
+  // Thin metallic shimmer (very low level) — robot chassis ring.
+  const shimmer = audio.createOscillator()
+  shimmer.type = 'sawtooth'
+  shimmer.frequency.value = 3100
+  const shG = audio.createGain()
+  shG.gain.setValueAtTime(0.0001, now)
+  shG.gain.exponentialRampToValueAtTime(0.008, now + 0.05)
+  shG.gain.exponentialRampToValueAtTime(0.0001, now + durationS * 0.7)
+  const shBp = audio.createBiquadFilter()
+  shBp.type = 'bandpass'
+  shBp.frequency.value = 3400
+  shBp.Q.value = 6
+  shimmer.connect(shBp)
+  shBp.connect(shG)
+  shG.connect(padGain)
+  shimmer.start(now)
+  shimmer.stop(now + durationS)
+  stops.push(shimmer)
+
+  padGain.connect(getMasterDestination())
+  announceBedNodes = { gain: padGain, stops }
 }
 
 export function announce(text) {
@@ -906,13 +1014,17 @@ export function announce(text) {
   window.speechSynthesis.cancel() // don't queue up stale callouts behind a new one
   if (!femaleVoice) refreshFemaleVoice()
 
-  playAnnounceReverbBloom(0.9)
+  // Estimate phrase length so the robot bed covers the utterance.
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean).length
+  const bedS = Math.min(2.4, Math.max(1.35, 0.85 + words * 0.28))
+  playAnnounceRobotBed(bedS)
 
   const utterance = new SpeechSynthesisUtterance(text)
   if (femaleVoice) utterance.voice = femaleVoice
-  utterance.rate = 0.72
-  utterance.pitch = 1.15
-  utterance.volume = 0.85
+  // Cooler, flatter ship computer — lower pitch (was 1.32; default TTS is 1.0).
+  utterance.rate = 0.78
+  utterance.pitch = 0.88
+  utterance.volume = 0.8
   window.speechSynthesis.speak(utterance)
 }
 

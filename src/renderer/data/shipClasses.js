@@ -356,7 +356,7 @@ const HAND_CRAFTED_SHIP_CLASSES = [
       }
     }
   },
-  // --- Drone-bay hulls (Asp Light Combat escorts) ---
+  // --- Drone-bay hulls (bays only — buy drones in Shipyard Armoury) ---
   {
     id: 'pathfinder',
     name: 'Pathfinder',

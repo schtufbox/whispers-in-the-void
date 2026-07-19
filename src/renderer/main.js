@@ -50,6 +50,7 @@ import {
   ensureStationPolicePatrols,
   spawnMiningPirateAmbush
 } from './game/spawner.js'
+import { playerSkillBonuses, ensureSkills, getSkillDef } from './game/skills.js'
 import {
   fireProjectile,
   updateProjectiles,
@@ -304,6 +305,12 @@ const JUMP_WINDUP_S = 2.35
 // Corridor phase (+8s vs prior 1.85) so the star tunnel has time to read.
 const JUMP_STREAK_S = 9.85
 const JUMP_DURATION_S = JUMP_WINDUP_S + JUMP_STREAK_S
+// Black screen fade around the mid-tunnel system swap (streak phase s = 0–1).
+// Fade in before the swap (s=0.4), hold, then fade out into the arrival system.
+const JUMP_BLACK_FADE_IN_START = 0.22
+const JUMP_BLACK_FADE_IN_END = 0.4
+const JUMP_BLACK_FADE_OUT_START = 0.48
+const JUMP_BLACK_FADE_OUT_END = 0.72
 const BASE_FOV = 60
 // Supercruise FOV (degrees) — wider than base for speed read.
 const CRUISE_FOV = 100
@@ -803,6 +810,8 @@ let targetDirEl = null
 let currentTarget = null
 let cruiseIndicatorEl = null
 let jumpFlashEl = null
+/** Full-screen black overlay for hyperspace system-change fade. */
+let jumpBlackEl = null
 let jumpEffect = null
 let dockEffect = null
 let dockedApproach = null
@@ -1429,6 +1438,8 @@ function clearSession() {
   currentTarget = null
   cruiseIndicatorEl?.remove()
   jumpFlashEl?.remove()
+  jumpBlackEl?.remove()
+  jumpBlackEl = null
   if (interiorMesh) scene.remove(interiorMesh)
   audio.setThrustState(null)
   audio.setSupercruiseActive(false)
@@ -1518,6 +1529,12 @@ function updatePlayerDrones(dt) {
       const len = Math.hypot(to[0], to[1], to[2]) || 1
       const dir = [to[0] / len, to[1] / len, to[2] / len]
       const speed = weapon.speed ?? 400
+      let dmg = weapon.damage ?? 8
+      try {
+        dmg *= playerSkillBonuses(gameState).droneMult
+      } catch {
+        /* */
+      }
       const proj = {
         id: `drone-shot-${drone.id}-${Math.floor(gameState.simTime * 1000)}-${Math.random().toString(36).slice(2, 7)}`,
         ownerId: 'player',
@@ -1525,7 +1542,7 @@ function updatePlayerDrones(dt) {
         weaponType: 'laser',
         position: [...origin],
         velocity: [dir[0] * speed, dir[1] * speed, dir[2] * speed],
-        damage: weapon.damage ?? 8,
+        damage: dmg,
         ttl: weapon.ttl ?? 2.5,
         spawnedAt: gameState.simTime,
         fromDrone: true
@@ -1893,8 +1910,15 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   // background color is set explicitly wherever each effect triggers.
   jumpFlashEl = document.createElement('div')
   jumpFlashEl.id = 'jump-flash'
-  jumpFlashEl.style.cssText = 'position:fixed;inset:0;opacity:0;pointer-events:none;display:none;'
+  jumpFlashEl.style.cssText = 'position:fixed;inset:0;opacity:0;pointer-events:none;display:none;z-index:38;'
   appEl.appendChild(jumpFlashEl)
+
+  // Opaque black veil across the system swap (fade in → hold → fade out).
+  jumpBlackEl = document.createElement('div')
+  jumpBlackEl.id = 'jump-black'
+  jumpBlackEl.style.cssText =
+    'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;display:none;z-index:39;'
+  appEl.appendChild(jumpBlackEl)
 
   nextAmbientSpawnAt = gameState.simTime + AMBIENT_SPAWN_INTERVAL_S
   audio.startAmbientMusic()
@@ -2067,10 +2091,25 @@ function lootNearbyWreck(wreck) {
         }
       }).join(', ')}`
     : ''
-  setHudGlitchText(miningToastEl, `Salvaged ${parts}${partsMsg}${weaponMsg}${bpMsg} from the wreck`)
+  const bookMsg = loot.skillbooks
+    ? `${parts || partsMsg || weaponMsg || bpMsg ? ' and ' : ''}${Object.entries(loot.skillbooks)
+        .map(([id, qty]) => {
+          try {
+            return `${qty}× ${getSkillDef(id).bookName}`
+          } catch {
+            return `${qty}× skillbook`
+          }
+        })
+        .join(', ')}`
+    : ''
+  setHudGlitchText(
+    miningToastEl,
+    `Salvaged ${parts}${partsMsg}${weaponMsg}${bpMsg}${bookMsg} from the wreck`
+  )
   showHudGlitch(miningToastEl)
   miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
 }
+
 
 function flashToast(text, durationS = MINING_TOAST_DURATION_S) {
   if (!miningToastEl || !gameState) return
@@ -2466,6 +2505,11 @@ function finishProbeResults(body, attemptNumber = null, missionTargetAtLaunch = 
   if (result.blueprint) {
     messages.push(`Rare find: ${result.blueprint.name}! Stored in ship blueprints — craft at a station Industry bay.`)
   }
+  if (result.skillbook) {
+    messages.push(
+      `Skillbook found: ${result.skillbook.name}! Read it under Inventory → Skillbooks.`
+    )
+  }
   if (attempt >= MAX_PROBE_ATTEMPTS) {
     messages.push(probeExhaustedMessage(body.name))
   }
@@ -2653,6 +2697,7 @@ function handleJump(targetSystemId, opts = {}) {
   navMap?.hide()
   // Probe can't follow a hyperspace jump — abort mid-survey cleanly.
   clearProbeEffect()
+  clearTargetLock() // waypoint/route unchanged; clear Tab-lock for the jump
   // Jump is launched from a button click — arm flight intent and grab
   // pointer lock *now* (user gesture). reenterFlightMode at jump end cannot
   // always re-lock after the multi-second animation (no live gesture left).
@@ -2664,6 +2709,7 @@ function handleJump(targetSystemId, opts = {}) {
   jumpEffect = { elapsed: 0, targetSystemId, jumped: false, spitPhase: false }
   jumpFlashEl.style.background = HYPERSPACE_FLASH_COLOR
   jumpFlashEl.style.display = 'block'
+  setJumpBlackOpacity(0)
   hyperspaceTunnel.start()
   audio.playHyperspace()
   // Drones snap home before the corridor swallows the hull.
@@ -2723,6 +2769,55 @@ function updateRouteAutopilot(dt) {
   handleJump(nextId, { routeAutopilot: true })
 }
 
+/** Smoothstep 0–1 (for black-fade ramps). */
+function jumpSmoothstep(t) {
+  const x = Math.max(0, Math.min(1, t))
+  return x * x * (3 - 2 * x)
+}
+
+function setJumpBlackOpacity(opacity) {
+  if (!jumpBlackEl) return
+  const v = Math.max(0, Math.min(1, opacity))
+  if (v <= 0.001) {
+    jumpBlackEl.style.opacity = '0'
+    jumpBlackEl.style.display = 'none'
+  } else {
+    jumpBlackEl.style.display = 'block'
+    jumpBlackEl.style.opacity = String(v)
+  }
+}
+
+/**
+ * Black fade opacity for hyperspace streak phase s ∈ [0,1].
+ * Fades in before the system swap (s=0.4), holds, then fades out on arrival.
+ */
+function jumpBlackOpacityForStreak(s) {
+  if (s < JUMP_BLACK_FADE_IN_START) return 0
+  if (s < JUMP_BLACK_FADE_IN_END) {
+    return jumpSmoothstep(
+      (s - JUMP_BLACK_FADE_IN_START) / (JUMP_BLACK_FADE_IN_END - JUMP_BLACK_FADE_IN_START)
+    )
+  }
+  if (s < JUMP_BLACK_FADE_OUT_START) return 1
+  if (s < JUMP_BLACK_FADE_OUT_END) {
+    return (
+      1 -
+      jumpSmoothstep(
+        (s - JUMP_BLACK_FADE_OUT_START) / (JUMP_BLACK_FADE_OUT_END - JUMP_BLACK_FADE_OUT_START)
+      )
+    )
+  }
+  return 0
+}
+
+function clearJumpVisuals() {
+  if (jumpFlashEl) {
+    jumpFlashEl.style.opacity = '0'
+    jumpFlashEl.style.display = 'none'
+  }
+  setJumpBlackOpacity(0)
+}
+
 function updateJumpEffect(dt) {
   syncChaseCamera(camera, gameState.player.ship)
   // Keep the hull in the right place so depth-tested tunnel FX stay behind it.
@@ -2748,6 +2843,8 @@ function updateJumpEffect(dt) {
     camera.updateProjectionMatrix()
     // Light flash only — heavy wash hid the star tunnel and the ship.
     jumpFlashEl.style.opacity = String(Math.min(0.18, w * 0.14 + throb * 0.03))
+    // Black veil starts only in the corridor (streak) phase.
+    setJumpBlackOpacity(0)
     // Tunnel builds late in the wind-up (stars stretch into the corridor).
     hyperspaceTunnel.update(dt, Math.max(0, w - 0.35) / 0.65, camera, getCrosshairAimWorld())
     // Mild pre-suck vibration
@@ -2758,8 +2855,9 @@ function updateJumpEffect(dt) {
     const punch = Math.sin(Math.min(1, s) * Math.PI)
     camera.fov = BASE_FOV + 30 + punch * 55
     camera.updateProjectionMatrix()
-    // Soft mid-tunnel punch — keep ship + corridor readable.
-    jumpFlashEl.style.opacity = String(Math.min(0.28, 0.08 + punch * 0.2))
+    // Soft mid-tunnel punch — keep ship + corridor readable under the black veil.
+    jumpFlashEl.style.opacity = String(Math.min(0.28, 0.08 + punch * 0.2) * (1 - jumpBlackOpacityForStreak(s) * 0.85))
+    setJumpBlackOpacity(jumpBlackOpacityForStreak(s))
     // Peak strength mid-tunnel, ease out at the end.
     const tunnelStr = s < 0.15 ? s / 0.15 : s > 0.85 ? (1 - s) / 0.15 : 1
     hyperspaceTunnel.update(dt, Math.min(1, 0.75 + tunnelStr * 0.25), camera, getCrosshairAimWorld())
@@ -2779,6 +2877,8 @@ function updateJumpEffect(dt) {
 
     if (!jumpEffect.jumped && s >= 0.4) {
       jumpEffect.jumped = true
+      // Hold full black across the swap so body/mesh rebuild is not visible.
+      setJumpBlackOpacity(1)
       if (playerMesh) playerMesh.scale.setScalar(0.08)
       try {
         hyperspaceJump(gameState, jumpEffect.targetSystemId, Math.random)
@@ -2818,7 +2918,7 @@ function updateJumpEffect(dt) {
         hyperspaceTunnel.stop()
         if (playerMesh) playerMesh.scale.setScalar(1)
         audio.playHyperspaceArrival()
-        jumpFlashEl.style.display = 'none'
+        clearJumpVisuals()
         camera.fov = BASE_FOV
         camera.updateProjectionMatrix()
         // Jump started from nav (which exits flight) — restore on abort too.
@@ -2831,7 +2931,7 @@ function updateJumpEffect(dt) {
   if (jumpEffect && jumpEffect.elapsed >= JUMP_DURATION_S) {
     jumpEffect = null
     hyperspaceTunnel.stop()
-    jumpFlashEl.style.display = 'none'
+    clearJumpVisuals()
     if (playerMesh) playerMesh.scale.setScalar(1)
     audio.playHyperspaceArrival()
     audio.announce('Hyperdrive disengaged')
@@ -3078,7 +3178,8 @@ function beginDocking(body) {
     thrusterEffects?.stopCruiseStreaks()
     updateStarfieldMotion(starfield, 0, false)
     audio.setSupercruiseActive(false)
-    audio.announce('Supercruise disengaged')
+    // Phonetic TTS spelling only — HUD already shows SUPERCRUISE DISENGAGED.
+    audio.announce('Supercrews disengaged')
   }
   exitFlightMode()
   dockPromptEl.style.display = 'none'
@@ -3368,6 +3469,7 @@ window.addEventListener('keydown', (e) => {
       // Drones ride the hyperplane home before SC engages.
       teleportDronesToBay(gameState.player.ship)
       clearDroneMeshes()
+      clearTargetLock() // keep waypoint; drop combat/tab lock for cruise
       cruising = true
       gameState.player.ship.supercruiseElapsed = 0
     }
@@ -3413,9 +3515,7 @@ window.addEventListener('keydown', (e) => {
       setWaypointFromCrosshair()
     } else if (e.shiftKey) {
       // Shift+Tab: clear lock (plain Tab still cycles).
-      currentTarget = null
-      if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
-      if (targetDirEl) targetDirEl.style.display = 'none'
+      clearTargetLock()
     } else {
       cycleTarget()
     }
@@ -3832,6 +3932,13 @@ function cruiseTunnelIgnoreIds(wp, bodies) {
   return ids.size ? ids : null
 }
 
+/** Clear Tab-lock target only — does not touch waypoints / plotted routes. */
+function clearTargetLock() {
+  currentTarget = null
+  if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
+  if (targetDirEl) targetDirEl.style.display = 'none'
+}
+
 // Tab targeting: anything under the crosshair always wins first. If that
 // object is already locked (or nothing is under the reticle), cycle by
 // distance to the next entity, wrapping around.
@@ -4029,6 +4136,12 @@ function updateTargetIndicator() {
 // Distance from the projected ship to the direction chevron (px).
 // Higher = further from dead-center / the hull silhouette.
 const TARGET_DIR_OFFSET_PX = 96
+const _tdirShip = new THREE.Vector3()
+const _tdirTarget = new THREE.Vector3()
+const _tdirTo = new THREE.Vector3()
+const _tdirRight = new THREE.Vector3()
+const _tdirUp = new THREE.Vector3()
+const _tdirShipProj = new THREE.Vector3()
 
 function updateTargetDirectionIndicator() {
   if (!targetDirEl) return
@@ -4038,20 +4151,37 @@ function updateTargetDirectionIndicator() {
     return
   }
 
+  // Must match the camera used for project() this frame (chase seat already synced).
   camera.updateMatrixWorld(true)
-  const shipWorld = new THREE.Vector3().fromArray(gameState.player.ship.position)
-  const targetWorld = new THREE.Vector3(...target.position)
+  _tdirShip.fromArray(gameState.player.ship.position)
+  _tdirTarget.fromArray(target.position)
 
-  // Camera-space direction to target (works when target is off-screen / behind).
-  const camLocal = targetWorld.clone().applyMatrix4(camera.matrixWorldInverse)
-  let dirX = camLocal.x
-  let dirY = -camLocal.y // screen Y down
-  // Points behind the camera: flip so the arrow still points "that way" on rim.
-  if (camLocal.z >= 0) {
-    dirX = -dirX
-    dirY = -dirY
+  // World direction ship → target (not camera → target: chase offset made the
+  // old camLocal-position approach point the wrong way, especially off-boresight
+  // and in free-look).
+  _tdirTo.subVectors(_tdirTarget, _tdirShip)
+  if (_tdirTo.lengthSq() < 1e-10) {
+    targetDirEl.style.display = 'none'
+    return
   }
-  if (Math.abs(dirX) < 1e-6 && Math.abs(dirY) < 1e-6) {
+  _tdirTo.normalize()
+
+  // Camera world axes (column-major matrixWorld).
+  const me = camera.matrixWorld.elements
+  _tdirRight.set(me[0], me[1], me[2])
+  _tdirUp.set(me[4], me[5], me[6])
+  if (_tdirRight.lengthSq() < 1e-10 || _tdirUp.lengthSq() < 1e-10) {
+    targetDirEl.style.display = 'none'
+    return
+  }
+  _tdirRight.normalize()
+  _tdirUp.normalize()
+
+  // Screen: +X right, +Y down (CSS). Camera +Y is up → flip.
+  let dirX = _tdirTo.dot(_tdirRight)
+  let dirY = -_tdirTo.dot(_tdirUp)
+  // Nearly along the view axis — (x,y) vanishes; keep a stable “ahead” cue.
+  if (Math.abs(dirX) < 1e-5 && Math.abs(dirY) < 1e-5) {
     dirX = 0
     dirY = -1
   }
@@ -4060,23 +4190,30 @@ function updateTargetDirectionIndicator() {
   dirY /= len
 
   // Anchor on the ship's projected screen position (chase cam: lower-center).
-  const shipProj = shipWorld.clone().project(camera)
+  _tdirShipProj.copy(_tdirShip).project(camera)
   const w = window.innerWidth
   const h = window.innerHeight
-  // If ship is somehow behind the camera (shouldn't be in chase), fall back.
-  if (shipProj.z > 1) {
-    targetDirEl.style.display = 'none'
-    return
+  // NDC z outside ~[-1,1] can mean behind / clipped — still place using center
+  // fallback so the chevron remains usable during extreme free-look.
+  let sx
+  let sy
+  if (!Number.isFinite(_tdirShipProj.x) || !Number.isFinite(_tdirShipProj.y)) {
+    sx = w * 0.5
+    sy = h * 0.62
+  } else {
+    sx = (_tdirShipProj.x * 0.5 + 0.5) * w
+    sy = (-_tdirShipProj.y * 0.5 + 0.5) * h
+    // Clamp so the cue stays on-screen if projection goes wild.
+    sx = Math.max(24, Math.min(w - 24, sx))
+    sy = Math.max(24, Math.min(h - 24, sy))
   }
-  const sx = (shipProj.x * 0.5 + 0.5) * w
-  const sy = (-shipProj.y * 0.5 + 0.5) * h
 
   targetDirEl.style.left = `${Math.round(sx + dirX * TARGET_DIR_OFFSET_PX)}px`
   targetDirEl.style.top = `${Math.round(sy + dirY * TARGET_DIR_OFFSET_PX)}px`
   targetDirEl.style.display = 'block'
   const color = targetReticleColor(target)
   const arrow = targetDirEl.querySelector('.tdir-arrow')
-  // Triangle points "up" (border-bottom); +π/2 maps atan2 screen dir to that.
+  // Triangle points "up" (border-bottom); +π/2 maps atan2(screenY_down, screenX) to it.
   arrow.style.transform = `rotate(${Math.atan2(dirY, dirX) + Math.PI / 2}rad)`
   arrow.style.borderBottomColor = color
 }
@@ -4195,64 +4332,89 @@ function getActiveWaypoint() {
   return null
 }
 
+const _wpTarget = new THREE.Vector3()
+const _wpShip = new THREE.Vector3()
+const _wpCamLocal = new THREE.Vector3()
+const _wpProj = new THREE.Vector3()
+
 function updateWaypointIndicator() {
   const wp = getActiveWaypoint()
-  if (!wp) {
-    waypointEl.style.display = 'none'
+  if (!wp || !waypointEl) {
+    if (waypointEl) waypointEl.style.display = 'none'
     return
   }
 
   const color = wp.isMission ? '#ff8a3d' : '#7fe0a0'
-  const targetPos = new THREE.Vector3(...wp.position)
-  const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
-  const distance = shipPos.distanceTo(targetPos)
+  _wpTarget.fromArray(wp.position)
+  _wpShip.fromArray(gameState.player.ship.position)
+  const distance = _wpShip.distanceTo(_wpTarget)
 
-  // Camera-space direction (Three: look = -Z). Don't use project().z for
-  // "behind" — points past camera.far look behind even when in front, which
-  // hid far waypoints in large systems.
-  const camLocal = targetPos.clone().applyMatrix4(camera.matrixWorldInverse)
-  const behind = camLocal.z >= 0
+  // Behind test in camera space (Three: look = -Z). Don't use project().z —
+  // points past camera.far looked "behind" even when in front (hid far WPs).
+  camera.updateMatrixWorld(true)
+  _wpCamLocal.copy(_wpTarget).applyMatrix4(camera.matrixWorldInverse)
+  const behind = _wpCamLocal.z >= 0
+  _wpProj.copy(_wpTarget).project(camera)
+
   const w = window.innerWidth
   const h = window.innerHeight
   const cx = w / 2
   const cy = h / 2
   const margin = 60
 
-  // Screen-space offset from center using view direction (works at any range).
-  let dirX = camLocal.x
-  let dirY = -camLocal.y // screen Y is down
-  if (behind) {
-    dirX = -dirX
-    dirY = -dirY
+  // Screen-pixel direction from view center toward waypoint.
+  // Scale NDC by (w,h) so diagonals are aspect-correct (raw NDC unit vectors
+  // treat the viewport as square and skew edge placement on widescreen).
+  // Behind: project() already flips via negative w; camLocal fallback flips
+  // explicitly and applies projection scale for the same aspect correction.
+  let dirX
+  let dirY
+  if (Number.isFinite(_wpProj.x) && Number.isFinite(_wpProj.y)) {
+    dirX = _wpProj.x * w
+    dirY = -_wpProj.y * h // NDC +Y up → screen Y down
+  } else {
+    // Rare non-finite project: camera-local lateral × projection scale.
+    const pe = camera.projectionMatrix.elements
+    dirX = _wpCamLocal.x * pe[0] * w
+    dirY = -_wpCamLocal.y * pe[5] * h
+    if (behind) {
+      dirX = -dirX
+      dirY = -dirY
+    }
   }
-  if (Math.abs(dirX) < 1e-6 && Math.abs(dirY) < 1e-6) {
-    dirX = 0.0001
+  if (Math.abs(dirX) < 1e-8 && Math.abs(dirY) < 1e-8) {
+    dirX = 0
     dirY = behind ? 1 : -1
   }
 
-  // On-screen only when in front and inside the view frustum (NDC).
-  const projected = targetPos.clone().project(camera)
   const onScreen =
     !behind &&
-    projected.x >= -1 &&
-    projected.x <= 1 &&
-    projected.y >= -1 &&
-    projected.y <= 1
+    Number.isFinite(_wpProj.x) &&
+    Number.isFinite(_wpProj.y) &&
+    _wpProj.x >= -1 &&
+    _wpProj.x <= 1 &&
+    _wpProj.y >= -1 &&
+    _wpProj.y <= 1
 
   let dx
   let dy
   if (onScreen) {
-    dx = (projected.x * 0.5 + 0.5) * w - cx
-    dy = (-projected.y * 0.5 + 0.5) * h - cy
+    // Sit on the projected waypoint (center of view → marker offset).
+    dx = (_wpProj.x * 0.5 + 0.5) * w - cx
+    dy = (-_wpProj.y * 0.5 + 0.5) * h - cy
   } else {
-    // Clamp to screen edge in the direction of the target.
-    const sx = (w / 2 - margin) / Math.abs(dirX)
-    const sy = (h / 2 - margin) / Math.abs(dirY)
+    // Clamp to screen edge along the aspect-correct screen direction.
+    const len = Math.hypot(dirX, dirY) || 1
+    dirX /= len
+    dirY /= len
+    const sx = (w / 2 - margin) / Math.max(1e-6, Math.abs(dirX))
+    const sy = (h / 2 - margin) / Math.max(1e-6, Math.abs(dirY))
     const edge = Math.min(sx, sy)
     dx = dirX * edge
     dy = dirY * edge
   }
 
+  // Triangle points up; +π/2 maps atan2(screenY_down, screenX) like target cue.
   const angle = Math.atan2(dy, dx) + Math.PI / 2
   waypointEl.style.left = `${cx + dx}px`
   waypointEl.style.top = `${cy + dy}px`
@@ -4391,6 +4553,7 @@ function animate() {
       const shipRadius = getShipCollisionRadius(playerShipClass)
       // Steer around other bodies on the way; destination body is not avoided
       // so arrival still works (see supercruise.aimAroundObstacles).
+      const skillB = playerSkillBonuses(gameState)
       if (updateSupercruise(
         gameState.player.ship,
         playerShipClass,
@@ -4399,7 +4562,12 @@ function animate() {
         wp.arrivalRange,
         currentSystem.bodies,
         shipRadius,
-        wp.bodyId
+        wp.bodyId,
+        {
+          speedMult: skillB.speedMult,
+          cruiseMult: skillB.cruiseMult,
+          turnMult: skillB.turnMult
+        }
       )) {
         cruising = false
         // Kill residual cruise speed immediately so we don't coast into the shell.
@@ -4422,7 +4590,17 @@ function animate() {
     }
     audio.setThrustState(null)
   } else {
-    updateFlight(gameState.player.ship, playerShipClass, flightMode ? keys : EMPTY_KEYS, mouseAim, dt)
+    {
+      const skillB = playerSkillBonuses(gameState)
+      updateFlight(
+        gameState.player.ship,
+        playerShipClass,
+        flightMode ? keys : EMPTY_KEYS,
+        mouseAim,
+        dt,
+        { speedMult: skillB.speedMult, turnMult: skillB.turnMult }
+      )
+    }
     thrustState = !flightMode ? null : keys.has('KeyW') ? 'accel' : keys.has('KeyS') ? 'brake' : null
     audio.setThrustState(thrustState)
     // Drop laser bolts from the last turn so a stationary burst isn't buried
@@ -4451,7 +4629,9 @@ function animate() {
       thrusterEffects?.stopCruiseStreaks()
       updateStarfieldMotion(starfield, 0, false)
     }
-    audio.announce(cruising ? 'Supercruise engaged' : 'Supercruise disengaged')
+    // TTS says "supercrews" so speech synthesis hits the right phonetics;
+    // on-screen HUD text stays SUPERCRUISE …
+    audio.announce(cruising ? 'Supercrews engaged' : 'Supercrews disengaged')
     if (cruising) {
       setHudGlitchText(cruiseIndicatorEl, 'SUPERCRUISE ENGAGED')
       showHudGlitch(cruiseIndicatorEl)
@@ -4938,7 +5118,7 @@ function animate() {
   if (probeLaunch) {
     const left = MAX_PROBE_ATTEMPTS - probeAttemptCount(gameState, probeLaunch.body.id)
     if (left <= 0) {
-      probePromptEl.textContent = `Probes exhausted at ${probeLaunch.body.name}`
+      probePromptEl.textContent = probeExhaustedMessage(probeLaunch.body.name)
     } else {
       const base = probeLaunch.viaOrbit
         ? `Press P to probe ${probeLaunch.body.name} (in orbit)`

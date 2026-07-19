@@ -10,8 +10,12 @@ import {
   getPrice, getMarketAvailable, buyGood, sellGood, sellMinedOre, buyMinedOre, buyShipParts, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip,
   renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon, sellCarriedWeapon, storeCarriedWeapons,
-  buyAccessory, sellStoredAccessory, equipAccessory, storageHasAssets, transferStorageItem
+  buyAccessory, sellStoredAccessory, equipAccessory, storageHasAssets, transferStorageItem,
+  discardCargo, discardOre,
+  buyDrone, sellStoredDrone, equipDrone, unequipDrone, sellShipDrone
 } from '../game/economy.js'
+import { DRONES, getDrone, droneBayCount, DEFAULT_DRONE_ID } from '../data/drones.js'
+import { freeDroneBayCount } from '../game/drones.js'
 import {
   startCraft,
   transferBlueprintItem,
@@ -33,13 +37,16 @@ import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
 import { WEAPONS, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID, getWeapon, weaponsForCategory, allWeaponsForCategory } from '../data/weapons.js'
 import { ACCESSORIES, getAccessory, accessorySlotCount, effectiveMiningCapacity } from '../data/accessories.js'
 import { EXPLORER_PROBE_LOOT_BONUS } from '../game/probe.js'
+import { playerSkillBonuses, scaleOreCost } from '../game/skills.js'
 import { findBody, findSystemOfBody } from '../procgen/galaxy.js'
 import { acceptMission, turnInMission } from '../game/missions.js'
 import { refillMissionsIfExhausted } from '../data/missionTemplates.js'
 import { escapeHtml } from './escapeHtml.js'
 import { gameNotice, gamePrompt } from './gameDialog.js'
+import { goodIcon, itemIcon, itemNameCell, ITEM_ICON_CSS } from './itemIcons.js'
 
 const STYLE = `
+${ITEM_ICON_CSS}
 /* Docked chrome: actions stay clickable; full menu only when .services-open.
    Top-aligned so Trade / Shipyard / etc. keep the same header Y when side
    boxes appear or content height changes. */
@@ -223,11 +230,20 @@ const STYLE = `
 #docking-ui button.rename-active, #docking-ui button.rename-stored,
 #docking-ui button.buy-weapon, #docking-ui button.sell-weapon,
 #docking-ui button.buy-accessory, #docking-ui button.sell-accessory,
+#docking-ui button.buy-drone, #docking-ui button.sell-drone, #docking-ui button.install-drone,
 #docking-ui button.store-weapons, #docking-ui button.store-all-bps,
 #docking-ui button.assemble-btn {
   background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
   padding: 4px 10px; cursor: pointer; margin-right: 4px; font-family: monospace;
   transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#docking-ui button.discard-item {
+  background: rgba(224,90,90,0.1); border: 1px solid rgba(224,90,90,0.45); color: #ffb3b3;
+  padding: 2px 8px; cursor: pointer; font-family: monospace; font-size: 11px;
+  margin-left: 6px; line-height: 1.2;
+}
+#docking-ui button.discard-item:hover {
+  background: rgba(224,90,90,0.22); box-shadow: 0 0 10px rgba(224,90,90,0.35);
 }
 #docking-ui button.buy:hover, #docking-ui button.sell:hover, #docking-ui button.buy-ore:hover, #docking-ui button.sell-ore:hover,
 #docking-ui button.buy-parts:hover, #docking-ui button.buy-ship:hover, #docking-ui button.accept-mission:hover, #docking-ui button.turnin:hover,
@@ -236,13 +252,24 @@ const STYLE = `
 #docking-ui button.rename-active:hover, #docking-ui button.rename-stored:hover,
 #docking-ui button.buy-weapon:hover, #docking-ui button.sell-weapon:hover,
 #docking-ui button.buy-accessory:hover, #docking-ui button.sell-accessory:hover,
+#docking-ui button.buy-drone:hover, #docking-ui button.sell-drone:hover, #docking-ui button.install-drone:hover,
 #docking-ui button.store-weapons:hover, #docking-ui button.store-all-bps:hover,
 #docking-ui button.assemble-btn:hover:not(:disabled) {
   background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35);
 }
 #docking-ui button.assemble-btn:disabled,
 #docking-ui button.buy:disabled,
-#docking-ui button.buy-ore:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+#docking-ui button.buy-ore:disabled,
+#docking-ui button.buy-weapon:disabled,
+#docking-ui button.buy-drone:disabled,
+#docking-ui button.buy-accessory:disabled,
+#docking-ui button.install-drone:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+#docking-ui .armoury-section-title {
+  margin: 16px 0 8px; font-weight: normal; letter-spacing: 2px; text-transform: uppercase;
+  color: #7fe6ff; font-size: 12px; text-shadow: 0 0 6px rgba(79,195,217,0.5);
+}
+#docking-ui .armoury-section-title:first-child { margin-top: 0; }
+#docking-ui .armoury-actions { white-space: nowrap; }
 #docking-ui .craft-progress {
   height: 8px; background: #0c1424; border: 1px solid #2a3a55; margin-top: 4px; overflow: hidden;
 }
@@ -421,7 +448,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     if (!currentBody || (currentBody.kind !== 'station' && currentBody.kind !== 'settlement')) {
       return false
     }
-    // Cargo/parts on Storage; ore/blueprints on Industry.
+    // Cargo/parts/ore on Storage (local); ore/blueprints on Industry.
     if (currentTab === 'storage' && storageSubTab === 'local') return true
     if (currentTab === 'industry') return true
     return false
@@ -465,6 +492,91 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     const n = Math.floor(Number(String(ans).trim()))
     if (!Number.isFinite(n) || n < 1) return 0
     return Math.min(available, n)
+  }
+
+  /** Prompt how many units to permanently discard (default = all). */
+  async function planDiscardQty(label, available) {
+    const max = Math.max(0, Math.floor(available))
+    if (max < 1) return 0
+    if (max === 1) {
+      const ok = await gamePrompt(
+        'Jettison item',
+        '1',
+        {
+          body: `Permanently destroy 1× ${label}? This cannot be undone.`,
+          okLabel: 'Destroy',
+          cancelLabel: 'Cancel',
+          maxLength: 4
+        }
+      )
+      return ok == null ? 0 : 1
+    }
+    const ans = await gamePrompt(
+      'Jettison item',
+      String(max),
+      {
+        body: `Permanently destroy “${label}”? Enter quantity (max ${max}). Cannot be undone.`,
+        okLabel: 'Destroy',
+        cancelLabel: 'Cancel',
+        maxLength: 10
+      }
+    )
+    if (ans == null) return 0
+    const n = Math.floor(Number(String(ans).trim()))
+    if (!Number.isFinite(n) || n < 1) return 0
+    return Math.min(max, n)
+  }
+
+  function wireDiscardButtons(rootEl) {
+    if (!rootEl) return
+    rootEl.querySelectorAll('button.discard-item').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const kind = btn.getAttribute('data-kind') // cargo | ore
+        const where = btn.getAttribute('data-where') // ship | station
+        const id = btn.getAttribute('data-id')
+        const max = Math.max(0, Math.floor(Number(btn.getAttribute('data-qty')) || 0))
+        if (!kind || !where || !id || max < 1) return
+        let label = id
+        try {
+          label = getGood(id).name
+        } catch {
+          /* */
+        }
+        const qty = await planDiscardQty(label, max)
+        if (qty < 1) return
+        try {
+          if (kind === 'ore') {
+            discardOre(
+              gameState,
+              id,
+              qty,
+              where,
+              where === 'station' ? currentBody.id : null
+            )
+          } else {
+            discardCargo(
+              gameState,
+              id,
+              qty,
+              where,
+              where === 'station' ? currentBody.id : null
+            )
+          }
+          await showNotice('Jettisoned', `Destroyed ${qty}× ${label}.`)
+          refreshStorageViews()
+          renderSidePanel()
+          if (currentTab === 'trade') renderTrade()
+        } catch (err) {
+          await showNotice('Cannot jettison', err?.message || String(err))
+        }
+      })
+    })
+  }
+
+  function discardBtn(where, kind, id, qty) {
+    return `<button type="button" class="discard-item" data-where="${where}" data-kind="${kind}" data-id="${escapeHtml(String(id))}" data-qty="${qty}" title="Permanently destroy">✕</button>`
   }
 
   /**
@@ -641,23 +753,24 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         ? `<div class="holds-actions"><button type="button" class="store-weapons">Store salvaged weapons</button></div>`
         : ''
 
-    // Ore + blueprints transfer on Industry; cargo/parts on Storage.
+    // Cargo/parts on Storage; blueprints on Industry; ore on both.
     const onIndustry = canXfer && currentTab === 'industry'
     const onStorage = canXfer && currentTab === 'storage'
+    const oreXfer = onIndustry || onStorage
     holdsSideEl.innerHTML = `
       <div class="panel-kicker">Your ship</div>
-      ${onStorage ? `<p class="xfer-hint">Drag cargo or parts onto station storage (or reverse). Ore &amp; blueprints: use the Industry tab.</p>` : ''}
+      ${onStorage ? `<p class="xfer-hint">Drag cargo, ore, or parts onto station storage (or reverse). Blueprints: Industry tab.</p>` : ''}
       ${onIndustry ? `<p class="xfer-hint">Drag ore or blueprints onto the Industry bay (or reverse).</p>` : ''}
       <h3>Cargo Hold (${cargoUsed}/${shipClass.stats.cargoCapacity})</h3>
       ${cargoRows.length
         ? `<table><tbody>${cargoRows.map(([id, qty]) =>
-            `<tr class="${onStorage ? xferClass(qty).trim() : ''}"${onStorage ? xferAttrs('ship', 'cargo', id, qty) : ''}><td>${getGood(id).name}</td><td>${qty}</td></tr>`
+            `<tr class="${onStorage ? xferClass(qty).trim() : ''}"${onStorage ? xferAttrs('ship', 'cargo', id, qty) : ''}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('ship', 'cargo', id, qty)}</td></tr>`
           ).join('')}</tbody></table>`
         : '<div class="empty">Empty</div>'}
       <h3>Ore Hold (${oreUsed}/${effectiveMiningCapacity(ship, shipClass)})</h3>
       ${oreRows.length
         ? `<table><tbody>${oreRows.map(([id, qty]) =>
-            `<tr class="${onIndustry ? xferClass(qty).trim() : ''}"${onIndustry ? xferAttrs('ship', 'ore', id, qty) : ''}><td>${getGood(id).name}</td><td>${qty}</td></tr>`
+            `<tr class="${oreXfer ? xferClass(qty).trim() : ''}"${oreXfer ? xferAttrs('ship', 'ore', id, qty) : ''}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('ship', 'ore', id, qty)}</td></tr>`
           ).join('')}</tbody></table>`
         : '<div class="empty">Empty</div>'}
       <h3>Ship Parts</h3>
@@ -666,10 +779,19 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         : '<div class="meta-line">Carried: 0</div>'}
       <h3>Salvaged Weapons</h3>
       ${spareWeaponRows.length
-        ? `<table><tbody>${spareWeaponRows.map(([id, qty]) => `
+        ? `<table><tbody>${spareWeaponRows.map(([id, qty]) => {
+            let cat = 'laser'
+            let name = id
+            try {
+              const w = getWeapon(id)
+              cat = w.category
+              name = w.name
+            } catch { /* */ }
+            return `
             <tr>
-              <td>${getWeapon(id).name}</td><td>×${qty}</td>
-            </tr>`).join('')}</tbody></table>
+              <td>${itemNameCell(itemIcon('weapon', { weaponCategory: cat }), name)}</td><td>×${qty}</td>
+            </tr>`
+          }).join('')}</tbody></table>
           <p class="empty" style="font-size:11px">Sell salvaged weapons from Shipyard → Armoury.</p>`
         : '<div class="empty">None</div>'}
       <div class="bp-section">
@@ -685,8 +807,13 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           ${shipBpRows.length
             ? `<table><tbody>${shipBpRows.map(([id, qty]) => {
               let name = id
-              try { name = getBlueprint(id).name } catch { /* */ }
-              return `<tr class="${onIndustry ? xferClass(qty).trim() : ''}"${onIndustry ? xferAttrs('ship', 'blueprint', id, qty) : ''}><td>${escapeHtml(name)}</td><td>×${qty}</td></tr>`
+              let kind = 'ship'
+              try {
+                const bp = getBlueprint(id)
+                name = bp.name
+                kind = bp.kind || 'ship'
+              } catch { /* */ }
+              return `<tr class="${onIndustry ? xferClass(qty).trim() : ''}"${onIndustry ? xferAttrs('ship', 'blueprint', id, qty) : ''}><td>${itemNameCell(itemIcon('blueprint', { blueprintKind: kind }), name)}</td><td>×${qty}</td></tr>`
             }).join('')}</tbody></table>`
             : '<div class="empty">None (1-shot; not sellable)</div>'}
         </div>
@@ -710,6 +837,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       })
     }
 
+    wireDiscardButtons(holdsSideEl)
     if (canXfer) {
       wireXferItems(holdsSideEl)
       // Drop station → ship.
@@ -856,12 +984,12 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
             if (g.id === SURVEY_DATA_GOOD_ID) {
               if (held <= 0) return ''
               return `<tr>
-                <td>${g.name}</td><td>${price}cr</td><td>—</td><td>${held}</td>
+                <td>${itemNameCell(goodIcon(g.id), g.name)}</td><td>${price}cr</td><td>—</td><td>${held}</td>
                 <td><button class="sell" data-good="${g.id}" data-price="${price}" data-held="${held}">Sell</button></td>
               </tr>`
             }
             return `<tr>
-              <td>${g.name}</td><td>${price}cr</td><td>${available}</td><td>${held}</td>
+              <td>${itemNameCell(goodIcon(g.id), g.name)}</td><td>${price}cr</td><td>${available}</td><td>${held}</td>
               <td>
                 <button class="buy" data-good="${g.id}" data-price="${price}" data-available="${available}" ${available < 1 ? 'disabled' : ''}>Buy</button>
                 <button class="sell" data-good="${g.id}" data-price="${price}" data-held="${held}">Sell</button>
@@ -870,13 +998,13 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           }).join('')}</tbody>
         </table>
         ${currentBody.hasShipParts ? `
-        <h3>Ship Parts</h3>
+        <h3>${itemNameCell(itemIcon('parts'), 'Ship Parts')}</h3>
         <p>Bought parts go to station storage. Transfer to ship for repairs (I).</p>
         <button class="buy-parts" data-price="${getPrice(gameState, currentBody.id, SHIP_PARTS_GOOD_ID)}">Buy</button>` : ''}
       `
     } else {
       bodyHtml = `
-        <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy and sell use <strong>station ore storage</strong> — transfer ore on the Industry tab. Selling restocks the bay.</p>
+        <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy and sell use <strong>station ore storage</strong> — transfer ore on Storage or Industry. Selling restocks the bay.</p>
         <div class="credits">Station ore bay · Credits: ${credits}cr · Ship ore: ${miningUsed}/${effectiveMiningCapacity(ship, shipClass)}</div>
         <table>
           <thead><tr><th>Ore</th><th>Price</th><th>Available</th><th>Stored</th><th></th></tr></thead>
@@ -886,7 +1014,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
             const held = stationOre[goodId] ?? 0
             const available = getMarketAvailable(gameState, currentBody.id, goodId)
             return `<tr>
-              <td>${good.name}</td><td>${price}cr</td><td>${available}</td><td>${held}</td>
+              <td>${itemNameCell(goodIcon(goodId), good.name)}</td><td>${price}cr</td><td>${available}</td><td>${held}</td>
               <td>
                 <button class="buy-ore" data-good="${goodId}" data-price="${price}" data-available="${available}" ${available < 1 ? 'disabled' : ''}>Buy</button>
                 <button class="sell-ore" data-good="${goodId}" data-price="${price}" data-held="${held}">Sell</button>
@@ -1044,7 +1172,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     }
     const bays = Math.max(0, Math.floor(Number(shipClass?.droneBays) || 0))
     if (bays > 0) {
-      lines.push(`${bays} combat drone bay${bays === 1 ? '' : 's'} (Asp Light Combat)`)
+      lines.push(`${bays} combat drone bay${bays === 1 ? '' : 's'} (drones sold separately in Armoury)`)
     }
     return lines
   }
@@ -1106,9 +1234,12 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     const selectedClass = getShipClass(selectedShipClassId)
     const storageWeapons = gameState.stationStorage[currentBody.id]?.weapons ?? {}
     const storageAccessories = gameState.stationStorage[currentBody.id]?.accessories ?? {}
+    const storageDrones = gameState.stationStorage[currentBody.id]?.drones ?? {}
     const spareWeapons = ship.spareWeapons ?? {}
     const accSlots = accessorySlotCount(activeClass)
     const equippedAcc = Array.isArray(ship.equippedAccessories) ? ship.equippedAccessories : []
+    const droneBays = droneBayCount(activeClass)
+    const shipDrones = ship.drones ?? []
 
     const roleLabel = selectedClass.role
       ? selectedClass.role.charAt(0).toUpperCase() + selectedClass.role.slice(1)
@@ -1200,11 +1331,49 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       `
     }
 
+    let droneBlocks = ''
+    if (droneBays <= 0) {
+      droneBlocks = ''
+    } else {
+      const freeBays = freeDroneBayCount(ship, activeClass)
+      droneBlocks = `
+        <div class="stat" style="opacity:0.75;font-size:11px;margin:12px 0 6px;letter-spacing:1px;text-transform:uppercase">Drone bays (${shipDrones.length}/${droneBays})</div>
+        ${Array.from({ length: droneBays }, (_, bay) => {
+          const d = shipDrones[bay]
+          if (d) {
+            let name = d.typeId || DEFAULT_DRONE_ID
+            try { name = getDrone(d.typeId).name } catch { /* */ }
+            const status = d.destroyed || d.hull <= 0 ? ' (destroyed)' : ''
+            return `
+              <div class="hp-block">
+                <div class="stat">Bay ${bay + 1}: ${escapeHtml(name)}${status}</div>
+                <button type="button" class="unequip-drone" data-bay="${bay}">Stow to storage</button>
+              </div>`
+          }
+          // Empty bay — install from storage if any.
+          const options = [
+            `<option value="">— empty —</option>`,
+            ...DRONES.map((def) => {
+              const st = storageDrones[def.id] ?? 0
+              return `<option value="${def.id}" ${st < 1 ? 'disabled' : ''}>${def.name}${st > 0 ? ` (${st} st)` : ''}</option>`
+            })
+          ].join('')
+          return `
+            <div class="hp-block">
+              <div class="stat">Bay ${bay + 1}: empty</div>
+              <select class="equip-drone" data-bay="${bay}" ${freeBays < 1 ? 'disabled' : ''}>${options}</select>
+            </div>`
+        }).join('')}
+        <div class="stat" style="opacity:0.55;font-size:10px;margin-top:4px">Buy drones in Armoury, then equip here.</div>
+      `
+    }
+
     loadoutSideEl.innerHTML = `
       <h3>Loadout</h3>
       <div class="stat" style="opacity:0.65;margin-bottom:8px;font-size:11px">${escapeHtml(ship.instanceName)} (${activeClass.name})</div>
       ${weaponBlocks}
       ${accessoryBlocks}
+      ${droneBlocks}
     `
     loadoutSideEl.querySelectorAll('.equip-select').forEach((select) =>
       select.addEventListener('change', async () => {
@@ -1222,6 +1391,28 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           equipAccessory(gameState, currentBody.id, Number(select.dataset.slot), select.value || null)
         } catch (err) {
           await showNotice('Equip failed', err.message)
+        }
+        renderShipyard()
+      })
+    )
+    loadoutSideEl.querySelectorAll('.equip-drone').forEach((select) =>
+      select.addEventListener('change', async () => {
+        const droneId = select.value
+        if (!droneId) return
+        try {
+          equipDrone(gameState, currentBody.id, droneId)
+        } catch (err) {
+          await showNotice('Equip failed', err.message)
+        }
+        renderShipyard()
+      })
+    )
+    loadoutSideEl.querySelectorAll('.unequip-drone').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        try {
+          unequipDrone(gameState, currentBody.id, Number(btn.dataset.bay))
+        } catch (err) {
+          await showNotice('Cannot stow drone', err.message)
         }
         renderShipyard()
       })
@@ -1273,7 +1464,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
               const sellPrice = Math.round(c.price * 0.5)
               return `
               <tr data-class="${c.id}" class="${c.id === selectedShipClassId ? 'selected' : ''}">
-                <td>${c.name}</td><td>${c.role}</td><td>${accessorySlotCount(c)}</td><td>${c.price}cr</td>
+                <td>${itemNameCell(itemIcon('ship', { alien: !!c.alien }), c.name)}</td><td>${c.role}</td><td>${accessorySlotCount(c)}</td><td>${c.price}cr</td>
                 <td>${stored}</td>
                 <td><button class="buy-ship" data-class="${c.id}">Buy</button></td>
                 <td>${stored > 0
@@ -1289,13 +1480,15 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
                 <tbody>${storedShips.map((s, i) => {
                   let className = s.classId
                   let sellPrice = 0
+                  let alien = false
                   try {
                     const sc = getShipClass(s.classId)
                     className = sc.name
                     sellPrice = Math.round(sc.price * 0.5)
+                    alien = !!sc.alien
                   } catch { /* */ }
                   return `<tr>
-                    <td>${escapeHtml(s.instanceName)}</td>
+                    <td>${itemNameCell(itemIcon('ship', { alien }), s.instanceName)}</td>
                     <td>${escapeHtml(className)}</td>
                     <td><button class="sell-ship" data-index="${i}">Sell (${sellPrice}cr)</button></td>
                   </tr>`
@@ -1304,26 +1497,93 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
             : ''}`
       } else if (sub === 'armoury') {
         const spareWeapons = ship.spareWeapons ?? {}
+        const storageDrones = gameState.stationStorage[currentBody.id]?.drones ?? {}
+        const shipDrones = ship.drones ?? []
+        const freeBays = freeDroneBayCount(ship)
+
+        const weaponRow = (w) => {
+          const st = storageWeapons[w.id] ?? 0
+          const sal = spareWeapons[w.id] ?? 0
+          const unitSell = Math.round(w.price * 0.5)
+          const canBuy = !w.alien && w.price > 0
+          return `
+            <tr>
+              <td>${itemNameCell(itemIcon('weapon', { weaponCategory: w.category }), w.name)}${w.alien ? ' <span style="color:#9bff4a">◆</span>' : ''}</td>
+              <td>${w.damage}</td>
+              <td>${w.alien ? '—' : `${w.price}cr`}</td>
+              <td>${st}</td>
+              <td class="armoury-actions">${canBuy
+                ? `<button type="button" class="buy-weapon" data-weapon="${w.id}" data-price="${w.price}">Buy</button>`
+                : '<span style="opacity:0.4">—</span>'}</td>
+              <td class="armoury-actions">
+                ${st > 0
+                  ? `<button type="button" class="sell-weapon" data-weapon="${w.id}" data-held="${st}" data-src="storage" data-price="${unitSell}">Sell</button>`
+                  : ''}
+                ${sal > 0
+                  ? `<button type="button" class="sell-weapon" data-weapon="${w.id}" data-held="${sal}" data-src="spare" data-price="${unitSell}">Sell salv</button>`
+                  : ''}
+                ${st < 1 && sal < 1 ? '<span style="opacity:0.35">—</span>' : ''}
+              </td>
+            </tr>`
+        }
+
+        const listWeapons = (category) =>
+          WEAPONS.filter(
+            (w) =>
+              w.category === category &&
+              (!w.alien || (storageWeapons[w.id] ?? 0) > 0 || (spareWeapons[w.id] ?? 0) > 0)
+          )
+
+        const turrets = listWeapons('laser')
+        const launchers = listWeapons('missile')
+
+        const weaponTable = (rows) =>
+          rows.length
+            ? `<table>
+                <thead><tr><th>Weapon</th><th>Dmg</th><th>Price</th><th>St</th><th>Buy</th><th>Sell</th></tr></thead>
+                <tbody>${rows.map(weaponRow).join('')}</tbody>
+              </table>`
+            : '<p class="empty" style="opacity:0.5">None listed</p>'
+
         catalogHtml = `
-          <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy into station storage. Sell column sells from storage (salvaged weapons listed separately).</p>
+          <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy into station storage. Sell from storage (or salvage). Equip from Loadout (left).</p>
+          <h3 class="armoury-section-title">Turrets</h3>
+          <p style="opacity:0.55;font-size:11px;margin:0 0 8px">Laser hardpoints</p>
+          ${weaponTable(turrets)}
+          <h3 class="armoury-section-title">Launchers</h3>
+          <p style="opacity:0.55;font-size:11px;margin:0 0 8px">Missile hardpoints</p>
+          ${weaponTable(launchers)}
+          <h3 class="armoury-section-title">Combat drones</h3>
+          <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Hulls with drone bays start empty. Buy here, Install into a free bay (or equip from Loadout).</p>
           <table>
-            <thead><tr><th>Weapon</th><th>Cat</th><th>Dmg</th><th>Price</th><th>St</th><th>Buy</th><th>Sell</th></tr></thead>
-            <tbody>${WEAPONS.filter((w) => !w.alien || (storageWeapons[w.id] ?? 0) > 0 || (spareWeapons[w.id] ?? 0) > 0).map((w) => {
-              const st = storageWeapons[w.id] ?? 0
-              const sal = spareWeapons[w.id] ?? 0
-              const unitSell = Math.round(w.price * 0.5)
+            <thead><tr><th>Drone</th><th>S/A/H</th><th>Price</th><th>St</th><th>On ship</th><th>Buy</th><th>Install</th><th>Sell</th></tr></thead>
+            <tbody>${DRONES.map((d) => {
+              const st = storageDrones[d.id] ?? 0
+              const onShip = shipDrones.filter((x) => (x.typeId || DEFAULT_DRONE_ID) === d.id).length
+              const unitSell = Math.round((d.price ?? 0) * 0.5)
+              const canBuy = (d.price ?? 0) > 0
+              const canInstall = st > 0 && freeBays > 0
               return `
               <tr>
-                <td>${w.name}${w.alien ? ' <span style="color:#9bff4a">◆</span>' : ''}</td><td>${w.category}</td><td>${w.damage}</td><td>${w.alien ? '—' : `${w.price}cr`}</td>
+                <td>${itemNameCell(itemIcon('drone'), d.name)}</td>
+                <td>${d.shields}/${d.armor}/${d.hull}</td>
+                <td>${d.price}cr</td>
                 <td>${st}</td>
-                <td>${w.alien || w.price <= 0 ? '' : `<button class="buy-weapon" data-weapon="${w.id}" data-price="${w.price}">Buy</button>`}</td>
-                <td>
+                <td>${onShip}</td>
+                <td class="armoury-actions">${canBuy
+                  ? `<button type="button" class="buy-drone" data-drone="${d.id}" data-price="${d.price}">Buy</button>`
+                  : '<span style="opacity:0.4">—</span>'}</td>
+                <td class="armoury-actions">${canInstall
+                  ? `<button type="button" class="install-drone" data-drone="${d.id}">Install</button>`
+                  : '<span style="opacity:0.35">—</span>'}</td>
+                <td class="armoury-actions">
                   ${st > 0
-                    ? `<button class="sell-weapon" data-weapon="${w.id}" data-held="${st}" data-src="storage" data-price="${unitSell}">Sell</button>`
+                    ? `<button type="button" class="sell-drone" data-drone="${d.id}" data-held="${st}" data-src="storage" data-price="${unitSell}">Sell</button>`
                     : ''}
-                  ${sal > 0
-                    ? `<button class="sell-weapon" data-weapon="${w.id}" data-held="${sal}" data-src="spare" data-price="${unitSell}">Sell salv</button>`
+                  ${onShip > 0
+                    ? `<button type="button" class="sell-drone" data-drone="${d.id}" data-held="${onShip}" data-src="ship" data-price="${unitSell}">Sell ship</button>`
                     : ''}
+                  ${st < 1 && onShip < 1 ? '<span style="opacity:0.35">—</span>' : ''}
                 </td>
               </tr>`
             }).join('')}</tbody>
@@ -1338,7 +1598,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
               return `
               <tr>
                 <td>
-                  <div>${a.name}</div>
+                  <div>${itemNameCell(itemIcon('accessory'), a.name)}</div>
                   <div class="acc-desc">${escapeHtml(a.description)}</div>
                 </td>
                 <td>${a.price}cr</td>
@@ -1552,6 +1812,82 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         renderShipyard()
       })
     )
+    contentEl.querySelectorAll('.buy-drone').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const droneId = btn.dataset.drone
+        const price = Number(btn.dataset.price)
+        const d = getDrone(droneId)
+        const maxBuy = price > 0 ? Math.floor(gameState.player.credits / price) : 0
+        const qty = await planTradeQty({
+          side: 'buy',
+          label: d.name,
+          unitPrice: price,
+          maxQty: maxBuy,
+          credits: gameState.player.credits
+        })
+        if (qty < 1) return
+        try {
+          buyDrone(gameState, currentBody.id, droneId, qty)
+          await showNotice(
+            'Drone purchased',
+            `${qty}× ${d.name} in station storage. Equip from Loadout (left) or Install if a bay is free.`
+          )
+        } catch (err) {
+          await showNotice('Purchase failed', err.message)
+        }
+        renderShipyard()
+      })
+    )
+    contentEl.querySelectorAll('.install-drone').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        try {
+          equipDrone(gameState, currentBody.id, btn.dataset.drone)
+          await showNotice('Drone installed', 'Drone fitted into a free bay. Launch with G in flight.')
+        } catch (err) {
+          await showNotice('Install failed', err.message)
+        }
+        renderShipyard()
+      })
+    )
+    contentEl.querySelectorAll('.sell-drone').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const droneId = btn.dataset.drone
+        const held = Number(btn.dataset.held)
+        const src = btn.dataset.src
+        const d = getDrone(droneId)
+        const unit = Math.round((d.price ?? 0) * 0.5)
+        if (src === 'ship') {
+          // Sell one installed unit of this type (first matching bay).
+          const ship = gameState.player.ship
+          const bay = (ship.drones ?? []).findIndex((x) => (x.typeId || DEFAULT_DRONE_ID) === droneId)
+          if (bay < 0) {
+            await showNotice('Sale failed', 'No matching drone on ship')
+            return
+          }
+          try {
+            sellShipDrone(gameState, bay)
+          } catch (err) {
+            await showNotice('Sale failed', err.message)
+          }
+          renderShipyard()
+          return
+        }
+        const qty = await planTradeQty({
+          side: 'sell',
+          label: d.name,
+          unitPrice: unit,
+          maxQty: held,
+          credits: gameState.player.credits
+        })
+        if (qty < 1) return
+        try {
+          sellStoredDrone(gameState, currentBody.id, droneId, qty)
+        } catch (err) {
+          await showNotice('Sale failed', err.message)
+        }
+        renderShipyard()
+      })
+    )
     renderSidePanel()
   }
 
@@ -1569,6 +1905,14 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     if (s.ships?.length) {
       bits.push(
         `${s.ships.length} ship(s): ${s.ships.map((sh) => escapeHtml(sh.instanceName)).join(', ')}`
+      )
+    }
+    const droneRows = Object.entries(s.drones ?? {}).filter(([, q]) => q > 0)
+    if (droneRows.length) {
+      bits.push(
+        `Drones: ${droneRows.map(([id, q]) => {
+          try { return `${q} ${getDrone(id).name}` } catch { return `${q} ${id}` }
+        }).join(', ')}`
       )
     }
     const weaponRows = Object.entries(s.weapons ?? {}).filter(([, q]) => q > 0)
@@ -1604,23 +1948,34 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       }
       storage.blueprints ??= {}
       storage.accessories ??= {}
+      storage.miningHold ??= {}
+      storage.cargo ??= {}
       const cargoRows = Object.entries(storage.cargo).filter(([, qty]) => qty > 0)
       const cargoStored = cargoRows.reduce((a, [, qty]) => a + qty, 0)
+      const oreRows = Object.entries(storage.miningHold).filter(([, qty]) => qty > 0)
+      const oreStored = oreRows.reduce((a, [, qty]) => a + qty, 0)
       const stationParts = storage.shipParts ?? 0
       bodyHtml = `
-        <p class="xfer-hint">Drag cargo or ship parts from <strong>Your ship</strong> into this bay (or reverse). Ore &amp; blueprints: Industry tab only.</p>
+        <p class="xfer-hint">Drag cargo, ore, or ship parts from <strong>Your ship</strong> into this bay (or reverse). Blueprints: Industry tab.</p>
         <h3>Cargo</h3>
         <div class="credits">${cargoStored} unit${cargoStored === 1 ? '' : 's'} stored</div>
         ${cargoRows.length
           ? `<table><tbody>${cargoRows.map(([id, qty]) =>
-              `<tr class="${xferClass(qty).trim()}"${xferAttrs('station', 'cargo', id, qty)}><td>${getGood(id).name}</td><td>${qty}</td></tr>`
+              `<tr class="${xferClass(qty).trim()}"${xferAttrs('station', 'cargo', id, qty)}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('station', 'cargo', id, qty)}</td></tr>`
             ).join('')}</tbody></table>`
           : '<p class="empty" style="opacity:0.5">Empty</p>'}
+        <h3>Ore</h3>
+        <div class="credits">${oreStored} unit${oreStored === 1 ? '' : 's'} stored</div>
+        ${oreRows.length
+          ? `<table><tbody>${oreRows.map(([id, qty]) =>
+              `<tr class="${xferClass(qty).trim()}"${xferAttrs('station', 'ore', id, qty)}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('station', 'ore', id, qty)}</td></tr>`
+            ).join('')}</tbody></table>`
+          : '<p class="empty" style="opacity:0.5">Empty — drag from ship or buy on Trade → Ore</p>'}
         <h3>Ship Parts</h3>
         ${stationParts > 0
-          ? `<div class="credits xfer-parts${xferClass(stationParts)}"${xferAttrs('station', 'parts', 'ship_parts', stationParts)}>${stationParts} in bay</div>`
+          ? `<div class="credits xfer-parts${xferClass(stationParts)}"${xferAttrs('station', 'parts', 'ship_parts', stationParts)}>${itemNameCell(itemIcon('parts'), `${stationParts} in bay`)}</div>`
           : '<div class="credits">0 in bay</div>'}
-        <p style="opacity:0.6;font-size:11px;margin-top:14px">Weapons &amp; accessories: buy/sell on Shipyard. Ore &amp; blueprints: Industry.</p>
+        <p style="opacity:0.6;font-size:11px;margin-top:14px">Weapons &amp; accessories: buy/sell on Shipyard. Blueprints: Industry. ✕ jettisons permanently.</p>
       `
     } else {
       const remoteEntries = Object.entries(gameState.stationStorage ?? {})
@@ -1656,10 +2011,13 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         renderStorage()
       })
     )
-    if (sub === 'local' && xferEnabled()) {
-      wireXferItems(contentEl)
-      // Drop ship → station bay (cargo / parts only).
-      wireDropZone(contentEl, 'ship', 'toStation')
+    if (sub === 'local') {
+      wireDiscardButtons(contentEl)
+      if (xferEnabled()) {
+        wireXferItems(contentEl)
+        // Drop ship → station bay (cargo / ore / parts).
+        wireDropZone(contentEl, 'ship', 'toStation')
+      }
     }
     renderSidePanel()
   }
@@ -1771,10 +2129,11 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       <p class="xfer-hint">Drag ore from Your ship here (or reverse). Used by Assemble.</p>
       ${oreRows.length
         ? `<table><tbody>${oreRows.map(([id, qty]) =>
-            `<tr class="${xferClass(qty).trim()}"${xferAttrs('station', 'ore', id, qty)}><td>${getGood(id).name}</td><td>${qty}</td></tr>`
+            `<tr class="${xferClass(qty).trim()}"${xferAttrs('station', 'ore', id, qty)}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('station', 'ore', id, qty)}</td></tr>`
           ).join('')}</tbody></table>`
         : '<div class="empty">Empty — drag from ship or buy on Trade → Ore</div>'}
     `
+    wireDiscardButtons(oreSideEl)
     if (xferEnabled()) {
       wireXferItems(oreSideEl)
       wireDropZone(oreSideEl, 'ship', 'toStation')
@@ -1827,8 +2186,14 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
             <thead><tr><th>Blueprint</th><th>Qty</th><th>Ore</th><th>Fee</th><th>Time</th><th></th></tr></thead>
             <tbody>${rows
               .map(([id, qty, bp]) => {
-                const cost = oreCostForBlueprint(id)
-                const fee = creditCostForBlueprint(id)
+                let industryMult = 1
+                try {
+                  industryMult = playerSkillBonuses(gameState).industryMult
+                } catch {
+                  industryMult = 1
+                }
+                const cost = scaleOreCost(oreCostForBlueprint(id), industryMult)
+                const fee = Math.max(0, Math.round(creditCostForBlueprint(id) * industryMult))
                 const dur = craftDurationS(id)
                 const enoughOre = Object.entries(cost).every(
                   ([oid, need]) => (storage.miningHold[oid] ?? 0) >= need
@@ -1836,7 +2201,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
                 const canAssemble = enoughOre && credits >= fee
                 return `
               <tr class="${xferClass(qty).trim()}"${xferAttrs('station', 'blueprint', id, qty)}>
-                <td>${escapeHtml(bp.itemName)}</td>
+                <td>${itemNameCell(itemIcon('blueprint', { blueprintKind: key }), bp.itemName)}</td>
                 <td>${qty}</td>
                 <td style="font-size:10px;opacity:0.85">${formatOreCost(cost)}</td>
                 <td>${fee}cr</td>

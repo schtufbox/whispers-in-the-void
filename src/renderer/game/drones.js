@@ -1,6 +1,7 @@
 import { getDrone, droneBayCount, DEFAULT_DRONE_ID } from '../data/drones.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { getWeapon } from '../data/weapons.js'
+import { playerSkillBonuses } from './skills.js'
 
 // Combat drones are **player-only**. NPCs never summon, carry, or fire drones —
 // even if they fly a hull class that has droneBays for the player shipyard.
@@ -22,7 +23,8 @@ const KEEP_DIST = 70
 const FIRE_CONE = 0.72 // ~44° — slightly forgiving while strafing
 
 /**
- * Ensure *player* ship.drones matches bay count (create missing, drop extras).
+ * Ensure *player* ship.drones respects bay capacity (trim extras, reindex).
+ * Does **not** auto-spawn drones — buy/install from Shipyard → Armoury.
  * Destroyed drones stay listed until repaired at a station.
  * Never call this for NPC ships.
  */
@@ -36,22 +38,64 @@ export function ensureDrones(ship, shipClass = null) {
   const cls = shipClass ?? getShipClass(ship.classId)
   const bays = droneBayCount(cls)
   ship.drones ??= []
+  // Drop invalid entries and any past bay capacity (no free refill).
+  ship.drones = ship.drones.filter((d) => d && typeof d === 'object')
   if (ship.drones.length > bays) ship.drones.length = bays
-  for (let i = 0; i < bays; i++) {
-    if (ship.drones[i]) {
-      ship.drones[i].bayIndex = i
-      ship.drones[i].mode ??= ship.drones[i].deployed ? 'escort' : 'bay'
-      continue
-    }
-    const def = getDrone(DEFAULT_DRONE_ID)
-    ship.drones[i] = makeDroneState(def, i)
+  for (let i = 0; i < ship.drones.length; i++) {
+    ship.drones[i].bayIndex = i
+    ship.drones[i].mode ??= ship.drones[i].deployed ? 'escort' : 'bay'
+    ship.drones[i].typeId ??= DEFAULT_DRONE_ID
   }
   return ship.drones
 }
 
-function makeDroneState(def, bayIndex) {
+/** Empty bay slots remaining on this hull (bays − installed drones). */
+export function freeDroneBayCount(ship, shipClass = null) {
+  if (!ship) return 0
+  const cls = shipClass ?? getShipClass(ship.classId)
+  const bays = droneBayCount(cls)
+  ensureDrones(ship, cls)
+  return Math.max(0, bays - ship.drones.length)
+}
+
+/**
+ * Install one drone unit onto the ship (from purchase/equip).
+ * @returns {object} the new drone state
+ */
+export function installDroneOnShip(ship, typeId = DEFAULT_DRONE_ID, shipClass = null) {
+  if (!ship) throw new Error('No ship')
+  const cls = shipClass ?? getShipClass(ship.classId)
+  const bays = droneBayCount(cls)
+  if (bays < 1) throw new Error('No drone bays on this hull')
+  ensureDrones(ship, cls)
+  if (ship.drones.length >= bays) throw new Error('All drone bays are full')
+  const def = getDrone(typeId)
+  const d = makeDroneState(def, ship.drones.length)
+  ship.drones.push(d)
+  return d
+}
+
+/**
+ * Remove one installed drone (by bay index) and return its typeId for storage/sale.
+ * Must be stowed (not deployed).
+ */
+export function removeDroneFromShip(ship, bayIndex) {
+  if (!ship) throw new Error('No ship')
+  ensureDrones(ship)
+  const idx = Math.floor(Number(bayIndex))
+  const d = ship.drones[idx]
+  if (!d) throw new Error('No drone in that bay')
+  if (d.deployed && d.mode !== 'bay') throw new Error('Recall drones before removing them')
+  const typeId = d.typeId || DEFAULT_DRONE_ID
+  ship.drones.splice(idx, 1)
+  ensureDrones(ship)
+  return typeId
+}
+
+export function makeDroneState(def, bayIndex) {
+  const idSuffix = `${bayIndex}-${Math.random().toString(36).slice(2, 7)}`
   return {
-    id: `drone-${bayIndex}`,
+    id: `drone-${idSuffix}`,
     typeId: def.id,
     bayIndex,
     hull: def.hull,
@@ -124,6 +168,9 @@ export function summonDrones(gameState) {
   ensureDrones(ship, cls)
   const bays = droneBayCount(cls)
   if (bays < 1) return { ok: false, reason: 'No drone bays on this hull' }
+  if (ship.drones.length === 0) {
+    return { ok: false, reason: 'No drones installed — buy from Shipyard → Armoury' }
+  }
 
   let launched = 0
   const q = ship.quaternion
@@ -306,6 +353,12 @@ export function updateDrones(gameState, dt, hooks = {}) {
   const simTime = gameState.simTime ?? 0
   const shipPos = ship.position
   const shipQuat = ship.quaternion
+  let droneMult = 1
+  try {
+    droneMult = playerSkillBonuses(gameState).droneMult
+  } catch {
+    droneMult = 1
+  }
 
   for (const d of ship.drones) {
     if (d.destroyed || !d.deployed) continue
@@ -423,10 +476,11 @@ export function updateDrones(gameState, dt, hooks = {}) {
     const dir = distDes > 1e-4 ? scale3(toDes, 1 / distDes) : forwardFromQuat(d.quaternion)
     // Match player speed when escorting; push hard in combat.
     const shipSpeed = len3(ship.velocity ?? [0, 0, 0])
-    const maxSpeed = targetPos
-      ? Math.max(def.speed, 160)
-      : Math.max(def.speed, shipSpeed + 30, 90)
-    const speed = Math.min(maxSpeed, distDes * 4 + (targetPos ? 40 : 18))
+    const maxSpeed =
+      (targetPos
+        ? Math.max(def.speed, 160)
+        : Math.max(def.speed, shipSpeed + 30, 90)) * droneMult
+    const speed = Math.min(maxSpeed, (distDes * 4 + (targetPos ? 40 : 18)) * droneMult)
     d.velocity = scale3(dir, speed)
     d.position = add3(d.position, scale3(d.velocity, dt))
 

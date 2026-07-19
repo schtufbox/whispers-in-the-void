@@ -113,6 +113,9 @@ export function supercruiseApproachFactor(dist, arrivalRange, cruiseTopSpeed) {
 // arrivalRange is the distance-to-target center that counts as "there"
 // (main.js sizes this off the waypoint body's collision shell).
 // bodies / shipRadius / destinationBodyId retained for API compat (no skirting).
+/**
+ * @param {object|null} skillOpts player-only: { speedMult, cruiseMult, turnMult }
+ */
 export function updateSupercruise(
   shipState,
   shipClass,
@@ -121,7 +124,8 @@ export function updateSupercruise(
   arrivalRange = DEFAULT_ARRIVAL_RANGE,
   bodies = null,
   shipRadius = 0,
-  destinationBodyId = null
+  destinationBodyId = null,
+  skillOpts = null
 ) {
   const shipPos = new THREE.Vector3().fromArray(shipState.position)
   const targetPos = new THREE.Vector3(...targetPosition)
@@ -140,6 +144,10 @@ export function updateSupercruise(
     arrivalRange
   )
 
+  const turnMult = skillOpts?.turnMult ?? 1
+  const speedMult = skillOpts?.speedMult ?? 1
+  const cruiseMult = skillOpts?.cruiseMult ?? 1
+
   const quat = new THREE.Quaternion().fromArray(shipState.quaternion)
   // Matrix4.lookAt follows the camera convention (local +Z points away from
   // the target), but our ships' forward is +Z, so eye/target are swapped —
@@ -147,7 +155,10 @@ export function updateSupercruise(
   const targetQuat = new THREE.Quaternion().setFromRotationMatrix(
     new THREE.Matrix4().lookAt(aimPos, shipPos, new THREE.Vector3(0, 1, 0))
   )
-  quat.slerp(targetQuat, Math.min(1, shipClass.stats.turnRate * STEER_RATE_MULTIPLIER * dt))
+  quat.slerp(
+    targetQuat,
+    Math.min(1, shipClass.stats.turnRate * turnMult * STEER_RATE_MULTIPLIER * dt)
+  )
 
   const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat)
   const velocity = new THREE.Vector3().fromArray(shipState.velocity)
@@ -156,7 +167,9 @@ export function updateSupercruise(
   shipState.supercruiseElapsed = (shipState.supercruiseElapsed ?? 0) + dt
   const rampUp = supercruiseRampUpFactor(shipState.supercruiseElapsed)
 
-  const cruiseTop = shipClass.stats.speed * SUPERCRUISE_MULTIPLIER
+  // Thrust skill: base max-v mult + dedicated supercruise mult (player only).
+  const cruiseTop =
+    shipClass.stats.speed * speedMult * SUPERCRUISE_MULTIPLIER * cruiseMult
   const approach = supercruiseApproachFactor(dist, arrivalRange, cruiseTop)
   const maxSpeed = cruiseTop * rampUp * approach
 

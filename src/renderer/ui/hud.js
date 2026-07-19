@@ -600,17 +600,15 @@ export function createHud(container) {
       armorValue.textContent = `${armorPct.toFixed(0)}%`
       hullValue.textContent = `${hullPct.toFixed(0)}%`
 
-      // Drones in bay (stowed / ready) — under hull whenever the hull has bays.
+      // Installed drones / bay capacity — under hull whenever the hull has bays.
       const dronesBayRow = hud.querySelector('.drones-bay')
       const dronesBayCount = hud.querySelector('.drones-bay-count')
       const bayCount = Math.max(0, Math.floor(Number(shipClass?.droneBays) || 0))
       if (dronesBayRow && dronesBayCount) {
         if (bayCount > 0) {
           dronesBayRow.style.display = 'block'
-          const inBay = (shipState.drones ?? []).filter(
-            (d) => !d.destroyed && d.hull > 0 && (!d.deployed || d.mode === 'bay')
-          ).length
-          dronesBayCount.textContent = String(inBay)
+          const installed = (shipState.drones ?? []).length
+          dronesBayCount.textContent = `${installed}/${bayCount}`
         } else {
           dronesBayRow.style.display = 'none'
         }
