@@ -1,7 +1,7 @@
 {
   "name": "whispers-in-the-void",
   "productName": "Whispers In The Void",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "description": "Procedurally generated 3D space trading/combat/exploration game",
   "main": "./out/main/index.js",
   "author": "Laughing In Purgatory",
