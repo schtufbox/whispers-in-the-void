@@ -94,7 +94,14 @@ import {
 import { pruneWrecks, lootWreck } from './game/wrecks.js'
 import { updateCraftingJobs, ensureBlueprintMaps } from './game/crafting.js'
 import { getBlueprint } from './data/blueprints.js'
-import { markBodyVisited, markBodyProbed, updateMissionProgress, missionMarkedBodyIds, resolveInvestigationProbe } from './game/missions.js'
+import {
+  markBodyVisited,
+  markBodyProbed,
+  updateMissionProgress,
+  missionMarkedBodyIds,
+  resolveInvestigationProbe,
+  setMissionCompletedHandler
+} from './game/missions.js'
 import {
   launchProbe,
   canProbeBody,
@@ -1336,10 +1343,11 @@ function maybeSpawnMiningPirateAmbush() {
 
 const deathScreen = createDeathScreen(appEl, () => returnToMenu())
 const menu = createMenu(appEl, {
-  onNewGame: ({ characterName, shipInstanceName }) => {
+  onNewGame: ({ characterName, shipInstanceName, portraitDataUrl }) => {
     const gameState = createGameState({
       characterName,
       shipInstanceName,
+      portraitDataUrl: portraitDataUrl || null,
       shipClassId: STARTER_SHIP_CLASS_ID,
       seed: Math.floor(Math.random() * 1e9)
     })
@@ -1449,6 +1457,7 @@ function clearSession() {
   resetChaseZoom()
   resetChaseCameraState()
   docked = false
+  hud?.setDocked(false)
   paused = false
   navMapOpen = false
   inventoryOpen = false
@@ -1644,7 +1653,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
       audio.playCraftStart()
     },
     // Bought ships only become active via Storage activate — rebuild the
-    // visual hull so a Corsair doesn't keep looking like a Bravia.
+    // visual hull so a class swap doesn't keep looking like the previous ship.
     onPlayerShipChanged: () => rebuildPlayerShipMesh()
   })
   pauseMenu = createPauseMenu(appEl, {
@@ -2118,6 +2127,17 @@ function flashToast(text, durationS = MINING_TOAST_DURATION_S) {
   miningToastUntil = gameState.simTime + durationS
 }
 
+// Missions pay out on objective complete (no station turn-in).
+setMissionCompletedHandler((info) => {
+  audio.playMissionComplete()
+  const title = info?.title || 'Contract'
+  const where = info?.giverBodyName
+    ? `${info.giverBodyName}${info.giverSystemName ? ` · ${info.giverSystemName}` : ''}`
+    : 'mission board'
+  const reward = Math.max(0, Math.floor(Number(info?.reward) || 0))
+  flashToast(`Mission complete: ${title} · +${reward}cr · from ${where}`, 5.5)
+})
+
 function showCraftToast(text, durationMs = 5500) {
   if (!craftToastEl) return
   setHudGlitchText(craftToastEl, text)
@@ -2471,25 +2491,13 @@ function finishProbeResults(body, attemptNumber = null, missionTargetAtLaunch = 
   if (missionFirstProbe) {
     if (investigation?.kind === 'intel') {
       const giver = findBody(gameState.galaxy, investigation.mission.giverStationId)
-      messages.push(`Investigation data recovered. Return to ${giver?.name ?? 'the mission giver'} to turn it in.`)
+      messages.push('Investigation data recovered — contract complete.')
     } else if (investigation?.kind === 'hostile') {
       messages.push('Probe stirred a hostile contact! Eliminate them to finish the investigation.')
     } else if (investigation?.kind === 'lead') {
       messages.push(`The signal traces further — new fix on ${investigation.bodyName} in ${investigation.systemName}.`)
-    } else {
-      // Probe / exploration survey contracts complete via markBodyProbed.
-      const surveyMission = body.kind !== 'star' && gameState.missions.active.find(
-        (m) =>
-          (m.type === 'probe' || m.type === 'exploration') &&
-          String(m.target?.bodyId) === String(body.id) &&
-          m.objectiveComplete
-      )
-      if (surveyMission) {
-        const giver = findBody(gameState.galaxy, surveyMission.giverStationId)
-        const label = surveyMission.type === 'exploration' ? 'Exploration survey' : 'Survey mission'
-        messages.push(`${label} complete! Return to ${giver?.name ?? 'the mission giver'} to turn it in.`)
-      }
     }
+    // Probe / exploration auto-complete (toast handled by setMissionCompletedHandler).
   }
 
   // Standard loot lines (any attempt, including 2nd/3rd after mission is done).
@@ -3002,7 +3010,30 @@ function dock(body) {
     gameState.player.dockedApproachDir = dockedApproach.approachDir.toArray()
   }
   dockPromptEl.style.display = 'none'
+  applyDockedHud(body)
   dockingUI.show(body, () => beginUndocking())
+}
+
+/** Flight HUD off; top-left system + bay name while parked. */
+function applyDockedHud(body = null) {
+  if (!hud) return
+  if (!docked) {
+    hud.setDocked(false)
+    return
+  }
+  const bay =
+    body ||
+    (gameState?.player?.dockedBodyId
+      ? findBody(gameState.galaxy, gameState.player.dockedBodyId)
+      : null)
+  const sys = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (sys) ensureSystemSecurity(sys)
+  hud.setDocked(true, {
+    systemName: sys?.name ?? null,
+    locationName: bay?.name ?? null,
+    securityRating: getSystemSecurity(sys)
+  })
+  systemOverview?.hide()
 }
 
 function clearDockedSaveFields() {
@@ -3067,7 +3098,7 @@ function restoreSessionLocation() {
       if (playerMesh) syncMeshToEntity(playerMesh, gameState.player.ship)
       exitFlightMode()
       flightModeWanted = false
-      dock(body)
+      dock(body) // sets docked HUD (system + bay name top-left)
       return
     }
     // Stale dock id — fall through to free flight at saved pose.
@@ -3193,6 +3224,7 @@ function beginDocking(body) {
 function beginUndocking() {
   if (!dockedApproach) {
     docked = false
+    hud?.setDocked(false)
     return
   }
   const { approachDir, body } = dockedApproach
@@ -3375,6 +3407,8 @@ function updateDockEffect(dt) {
       docked = false
       dockedApproach = null
       clearDockedSaveFields()
+      hud?.setDocked(false)
+      systemOverview?.show()
       // Re-place reticle immediately on the bolt path (don't wait a frame).
       if (flightMode) updateCrosshair()
     }
@@ -4502,6 +4536,7 @@ function animate() {
     motionFx.hide()
     if (targetDirEl) targetDirEl.style.display = 'none'
     updateStarfieldMotion(starfield, 0, false)
+    applyDockedHud()
     // Keep the hangar alive behind station services (loaders, drones, lights).
     if (interiorMesh?.parent) {
       updateStationInterior(interiorMesh, dt)

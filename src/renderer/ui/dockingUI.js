@@ -39,11 +39,12 @@ import { ACCESSORIES, getAccessory, accessorySlotCount, effectiveMiningCapacity 
 import { EXPLORER_PROBE_LOOT_BONUS } from '../game/probe.js'
 import { playerSkillBonuses, scaleOreCost } from '../game/skills.js'
 import { findBody, findSystemOfBody } from '../procgen/galaxy.js'
-import { acceptMission, turnInMission } from '../game/missions.js'
+import { acceptMission } from '../game/missions.js'
 import { refillMissionsIfExhausted } from '../data/missionTemplates.js'
 import { escapeHtml } from './escapeHtml.js'
 import { gameNotice, gamePrompt } from './gameDialog.js'
 import { goodIcon, itemIcon, itemNameCell, ITEM_ICON_CSS } from './itemIcons.js'
+import { createShipyardPreview } from './shipyardPreview.js'
 
 const STYLE = `
 ${ITEM_ICON_CSS}
@@ -79,7 +80,7 @@ ${ITEM_ICON_CSS}
   display: flex; flex-direction: column; gap: 12px; width: 260px; flex-shrink: 0;
   max-height: calc(100vh - 6vh - 2vh); overflow-y: auto; min-height: 0;
 }
-#docking-ui .side-column.shipyard-left-column { width: 230px; }
+#docking-ui .side-column.shipyard-left-column { width: 240px; }
 /* Industry: ore box closer to main panel, 60px inset from left screen side */
 #docking-ui.industry-layout .docked-layout {
   gap: 8px; /* default is 16px */
@@ -89,9 +90,129 @@ ${ITEM_ICON_CSS}
   margin-left: 60px;
   box-sizing: border-box;
 }
+/* Shipyard: loadout on the right column, above holds / stored ships */
+#docking-ui.shipyard-layout .side-column.dock-right-column {
+  width: 280px;
+}
 #docking-ui .side-panel { width: 100%; max-height: none; box-sizing: border-box; }
+#docking-ui .side-panel.preview-side {
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: none;
+  border-left: none;
+  box-shadow: none;
+  clip-path: none;
+  max-height: none;
+}
 #docking-ui .side-panel.ships-side { max-height: none; }
 #docking-ui .side-panel.jobs-side { max-height: none; }
+#docking-ui .side-panel.loadout-side {
+  max-height: min(48vh, calc(100vh - 6vh - 2vh - 120px));
+  overflow-y: auto;
+}
+/* Loadout rows — same vocabulary as holds / inventory / HUD status rows */
+#docking-ui .side-panel.loadout-side .lo-ship {
+  font-size: 12px; color: #7fe6ff; margin: 0 0 10px 0;
+  letter-spacing: 0.3px;
+  text-shadow: 0 0 6px rgba(79,195,217,0.35);
+}
+#docking-ui .side-panel.loadout-side .lo-class {
+  opacity: 0.65; font-size: 11px; margin-left: 4px;
+}
+#docking-ui .side-panel.loadout-side .lo-section {
+  margin: 12px 0 6px; padding-top: 8px;
+  border-top: 1px solid rgba(111,216,242,0.2);
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #7fe6ff; opacity: 0.9;
+  text-shadow: 0 0 6px rgba(79,195,217,0.45);
+}
+#docking-ui .side-panel.loadout-side .lo-section:first-of-type {
+  margin-top: 4px; padding-top: 0; border-top: none;
+}
+#docking-ui .side-panel.loadout-side .lo-row {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: rgba(79,195,217,0.05);
+  border-left: 2px solid rgba(111,216,242,0.35);
+}
+#docking-ui .side-panel.loadout-side .lo-row:last-child { margin-bottom: 0; }
+#docking-ui .side-panel.loadout-side .lo-row-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; margin-bottom: 5px;
+  font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
+  opacity: 0.75; color: #8fb3d9;
+}
+#docking-ui .side-panel.loadout-side .lo-row-head .lo-mount {
+  color: #7fe6ff; opacity: 0.9;
+}
+#docking-ui .side-panel.loadout-side .lo-row-head .lo-tag {
+  font-size: 9px; letter-spacing: 1px; opacity: 0.7;
+  color: #7fa8c9;
+}
+#docking-ui .side-panel.loadout-side .lo-equipped {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #cfe3ff; margin-bottom: 6px;
+  line-height: 1.3;
+}
+#docking-ui .side-panel.loadout-side .lo-equipped .lo-meta {
+  font-size: 10px; opacity: 0.6; margin-left: auto; white-space: nowrap;
+}
+#docking-ui .side-panel.loadout-side .lo-empty-slot {
+  font-size: 11px; opacity: 0.5; margin-bottom: 6px;
+}
+#docking-ui .side-panel.loadout-side .lo-hint {
+  font-size: 11px; opacity: 0.6; line-height: 1.4; margin: 6px 0 0;
+}
+#docking-ui .side-panel.loadout-side .lo-badge {
+  display: inline-block; font-size: 9px; letter-spacing: 0.8px;
+  text-transform: uppercase; padding: 1px 5px; margin-left: 4px;
+  border: 1px solid rgba(111,216,242,0.35); color: #7fe6ff;
+  opacity: 0.85;
+}
+#docking-ui .side-panel.loadout-side .lo-badge.warn {
+  border-color: rgba(224,90,90,0.45); color: #ffb3b3;
+}
+#docking-ui .side-panel.loadout-side select.equip-select,
+#docking-ui .side-panel.loadout-side select.equip-accessory,
+#docking-ui .side-panel.loadout-side select.equip-drone {
+  width: 100%; max-width: 100%; box-sizing: border-box;
+  background: rgba(8,14,26,0.92);
+  border: 1px solid rgba(111,216,242,0.4);
+  color: #cfe3ff;
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
+}
+#docking-ui .side-panel.loadout-side select.equip-select:focus,
+#docking-ui .side-panel.loadout-side select.equip-accessory:focus,
+#docking-ui .side-panel.loadout-side select.equip-drone:focus {
+  outline: none;
+  border-color: #6fd8f2;
+  box-shadow: 0 0 10px rgba(79,195,217,0.25);
+}
+#docking-ui .side-panel.loadout-side select:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+#docking-ui .side-panel.loadout-side button.unequip-drone {
+  width: 100%; box-sizing: border-box;
+  background: rgba(111,216,242,0.1);
+  border: 1px solid rgba(111,216,242,0.4);
+  color: #cfe3ff;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#docking-ui .side-panel.loadout-side button.unequip-drone:hover {
+  background: rgba(111,216,242,0.22);
+  box-shadow: 0 0 10px rgba(79,195,217,0.35);
+}
 #docking-ui .side-panel.ore-side {
   max-height: min(52vh, calc(100vh - 6vh - 2vh - 100px)); overflow-y: auto;
 }
@@ -192,36 +313,62 @@ ${ITEM_ICON_CSS}
 #docking-ui td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
 #docking-ui tbody tr:hover td { background: rgba(111,216,242,0.05); }
 #docking-ui .credits { margin-bottom: 10px; opacity: 0.85; font-size: 12px; letter-spacing: 0.5px; }
-/* Bottom-right action stack, clear of cockpit corner braces (inset ~44px). */
+/* Lower-center action row. */
 #docking-ui .dock-actions {
-  position: fixed; bottom: 52px; right: 52px; z-index: 55;
-  display: flex; flex-direction: column; gap: 10px; align-items: stretch;
+  position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%); z-index: 55;
+  display: flex; flex-direction: row; gap: 14px; align-items: center; justify-content: center;
   pointer-events: auto;
 }
 #docking-ui button.services-btn {
-  background: rgba(255,210,70,0.16); border: 1px solid rgba(255,210,70,0.65); color: #ffe08a;
-  padding: 12px 22px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
-  font-size: 13px; text-transform: uppercase;
-  box-shadow: 0 0 18px rgba(255,210,70,0.22), 0 2px 8px rgba(0,0,0,0.45);
-  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+  background: linear-gradient(180deg, rgba(255,210,70,0.42), rgba(180,120,20,0.55));
+  border: 2px solid #ffe08a;
+  color: #fff6c8;
+  padding: 13px 26px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
+  font-size: 13px; font-weight: 600; text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 10px rgba(255,210,70,0.55);
+  box-shadow:
+    0 0 20px rgba(255,210,70,0.45),
+    0 3px 10px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.25);
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease, filter 0.12s ease;
 }
 #docking-ui button.services-btn:hover {
-  background: rgba(255,210,70,0.28); box-shadow: 0 0 22px rgba(255,210,70,0.4), 0 2px 10px rgba(0,0,0,0.5);
+  background: linear-gradient(180deg, rgba(255,220,90,0.58), rgba(210,150,30,0.65));
+  box-shadow:
+    0 0 28px rgba(255,210,70,0.65),
+    0 4px 12px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,255,255,0.35);
   transform: translateY(-1px);
+  filter: brightness(1.06);
 }
 #docking-ui.services-open button.services-btn {
-  background: rgba(255,210,70,0.28); box-shadow: 0 0 16px rgba(255,210,70,0.35);
+  background: linear-gradient(180deg, rgba(255,220,100,0.55), rgba(200,140,25,0.62));
+  box-shadow:
+    0 0 24px rgba(255,210,70,0.55),
+    0 2px 8px rgba(0,0,0,0.5),
+    inset 0 0 12px rgba(255,210,70,0.2);
 }
 #docking-ui button.undock-btn {
-  background: rgba(224,90,90,0.16); border: 1px solid rgba(224,90,90,0.55); color: #ffb3b3;
-  padding: 12px 28px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
-  font-size: 13px; text-transform: uppercase;
-  box-shadow: 0 0 18px rgba(224,90,90,0.22), 0 2px 8px rgba(0,0,0,0.45);
-  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+  background: linear-gradient(180deg, rgba(224,90,90,0.45), rgba(140,30,30,0.62));
+  border: 2px solid #ff9a9a;
+  color: #ffe0e0;
+  padding: 13px 28px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
+  font-size: 13px; font-weight: 600; text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 10px rgba(255,100,100,0.45);
+  box-shadow:
+    0 0 20px rgba(224,90,90,0.45),
+    0 3px 10px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.2);
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease, filter 0.12s ease;
 }
 #docking-ui button.undock-btn:hover {
-  background: rgba(224,90,90,0.28); box-shadow: 0 0 22px rgba(224,90,90,0.4), 0 2px 10px rgba(0,0,0,0.5);
+  background: linear-gradient(180deg, rgba(240,110,110,0.58), rgba(170,40,40,0.7));
+  box-shadow:
+    0 0 28px rgba(224,90,90,0.65),
+    0 4px 12px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,255,255,0.28);
   transform: translateY(-1px);
+  filter: brightness(1.06);
 }
 #docking-ui button.buy, #docking-ui button.sell, #docking-ui button.buy-ore, #docking-ui button.sell-ore,
 #docking-ui button.buy-parts, #docking-ui button.buy-ship, #docking-ui button.accept-mission, #docking-ui button.turnin,
@@ -352,8 +499,7 @@ ${ITEM_ICON_CSS}
 }
 #docking-ui .remote-asset .location .sys { color: #ffe08a; }
 #docking-ui .remote-asset .assets { font-size: 12px; line-height: 1.45; }
-#docking-ui .side-panel.stats-side .stat,
-#docking-ui .side-panel.loadout-side .stat { font-size: 12px; margin-bottom: 4px; opacity: 0.9; }
+#docking-ui .side-panel.stats-side .stat { font-size: 12px; margin-bottom: 4px; opacity: 0.9; }
 #docking-ui .side-panel.stats-side .stat-section {
   margin-top: 12px; padding-top: 8px;
   border-top: 1px solid rgba(111,216,242,0.2);
@@ -364,14 +510,16 @@ ${ITEM_ICON_CSS}
   color: #a8e6c8; opacity: 0.95; padding-left: 2px;
 }
 #docking-ui .side-panel.stats-side .stat.bonus-none { opacity: 0.45; font-size: 11px; }
-#docking-ui .side-panel.loadout-side .hp-block { margin-bottom: 10px; }
-#docking-ui .side-panel.loadout-side .hp-block:last-child { margin-bottom: 0; }
-#docking-ui select.equip-select {
-  width: 100%; max-width: 100%; box-sizing: border-box;
-  background: rgba(8,14,26,0.9); border: 1px solid rgba(111,216,242,0.4);
-  color: #cfe3ff; padding: 4px 6px; font-family: monospace; font-size: 11px;
+#docking-ui .side-panel.stats-side .stat.hardpoint-line {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 5px; opacity: 0.95;
 }
-#docking-ui select.equip-select option:disabled { color: #4a5a75; }
+#docking-ui .side-panel.stats-side .stat.hardpoint-line .hp-id {
+  font-size: 11px; opacity: 0.65; letter-spacing: 0.2px;
+}
+#docking-ui select.equip-select option:disabled,
+#docking-ui select.equip-accessory option:disabled,
+#docking-ui select.equip-drone option:disabled { color: #4a5a75; }
 `
 
 export function createDockingUI(container, gameState, rng, hooks = {}) {
@@ -386,7 +534,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     <div class="docked-layout">
       <div class="side-column shipyard-left-column" style="display:none">
         <div class="side-panel stats-side"></div>
-        <div class="side-panel loadout-side"></div>
+        <div class="side-panel preview-side" style="display:none"></div>
         <div class="side-panel ore-side" style="display:none"></div>
       </div>
       <div class="panel">
@@ -403,7 +551,8 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         </div>
         <div class="tab-content"></div>
       </div>
-      <div class="side-column">
+      <div class="side-column dock-right-column">
+        <div class="side-panel loadout-side" style="display:none"></div>
         <div class="side-panel holds-side"></div>
         <div class="side-panel ships-side" style="display:none"></div>
         <div class="side-panel jobs-side" style="display:none"></div>
@@ -415,6 +564,9 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     </div>
   `
   container.appendChild(root)
+
+  const previewSideEl = root.querySelector('.preview-side')
+  const shipPreview = createShipyardPreview(previewSideEl)
 
   const bodyNameEl = root.querySelector('.body-name')
   const headerCreditsEl = root.querySelector('.header-credits')
@@ -977,8 +1129,10 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         <div class="credits">Station cargo bay · Credits: ${credits}cr · Ship hold: ${cargoUsed}/${shipClass.stats.cargoCapacity}</div>
         <table>
           <thead><tr><th>Good</th><th>Price</th><th>Available</th><th>Stored</th><th></th></tr></thead>
-          <tbody>${GOODS.filter((g) => isTradeListGood(g.id)).map((g) => {
-            const price = getPrice(gameState, currentBody.id, g.id)
+          <tbody>${GOODS.filter((g) => isTradeListGood(g.id))
+            .map((g) => ({ g, price: getPrice(gameState, currentBody.id, g.id) }))
+            .sort((a, b) => (a.price - b.price) || a.g.name.localeCompare(b.g.name))
+            .map(({ g, price }) => {
             const held = stationCargo[g.id] ?? 0
             const available = getMarketAvailable(gameState, currentBody.id, g.id)
             if (g.id === SURVEY_DATA_GOOD_ID) {
@@ -1008,9 +1162,14 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         <div class="credits">Station ore bay · Credits: ${credits}cr · Ship ore: ${miningUsed}/${effectiveMiningCapacity(ship, shipClass)}</div>
         <table>
           <thead><tr><th>Ore</th><th>Price</th><th>Available</th><th>Stored</th><th></th></tr></thead>
-          <tbody>${MINED_ORE_GOOD_IDS.map((goodId) => {
-            const good = getGood(goodId)
-            const price = getPrice(gameState, currentBody.id, goodId)
+          <tbody>${MINED_ORE_GOOD_IDS
+            .map((goodId) => ({
+              goodId,
+              good: getGood(goodId),
+              price: getPrice(gameState, currentBody.id, goodId)
+            }))
+            .sort((a, b) => (a.price - b.price) || a.good.name.localeCompare(b.good.name))
+            .map(({ goodId, good, price }) => {
             const held = stationOre[goodId] ?? 0
             const available = getMarketAvailable(gameState, currentBody.id, goodId)
             return `<tr>
@@ -1163,6 +1322,14 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     ['speed', 'Speed'], ['turnRate', 'Turn Rate'], ['accel', 'Acceleration']
   ]
 
+  /** Capitalise words for shipyard list labels (roles, class titles). */
+  function capitalizeLabel(s) {
+    return String(s ?? '')
+      .split(/(\s+)/)
+      .map((part) => (/^\s+$/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+      .join('')
+  }
+
   /** Hull/role bonuses shown under shipyard stats (not accessory loadout). */
   function shipRoleBonusLines(shipClass) {
     const lines = []
@@ -1170,9 +1337,11 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       const pct = Math.round(EXPLORER_PROBE_LOOT_BONUS * 100)
       lines.push(`+${pct}% chance of good loot when probing`)
     }
-    const bays = Math.max(0, Math.floor(Number(shipClass?.droneBays) || 0))
-    if (bays > 0) {
-      lines.push(`${bays} combat drone bay${bays === 1 ? '' : 's'} (drones sold separately in Armoury)`)
+    if (shipClass?.role === 'miner') {
+      const ore = Math.floor(Number(shipClass.stats?.miningCapacity) || 0)
+      const cargo = Math.floor(Number(shipClass.stats?.cargoCapacity) || 0)
+      lines.push(`Mining specialist — ore hold ${ore} (cargo max ${cargo})`)
+      lines.push('Low defences & speed — not built for combat')
     }
     return lines
   }
@@ -1196,27 +1365,33 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     shipyardLeftCol.style.display = 'none'
     shipyardLeftCol.classList.remove('industry-ore-col')
     root.classList.remove('industry-layout')
+    root.classList.remove('shipyard-layout')
     statsSideEl.style.display = 'none'
     loadoutSideEl.style.display = 'none'
+    previewSideEl.style.display = 'none'
     oreSideEl.style.display = 'none'
     statsSideEl.innerHTML = ''
     loadoutSideEl.innerHTML = ''
     oreSideEl.innerHTML = ''
+    shipPreview.hide()
   }
 
   function hideShipyardSideBoxes() {
-    // Keep industry ore box if that tab is active; otherwise clear the whole left column.
+    // Keep industry ore box if that tab is active; otherwise clear side boxes.
     if (currentTab === 'industry') {
       statsSideEl.style.display = 'none'
       loadoutSideEl.style.display = 'none'
+      previewSideEl.style.display = 'none'
       statsSideEl.innerHTML = ''
       loadoutSideEl.innerHTML = ''
+      root.classList.remove('shipyard-layout')
+      shipPreview.hide()
       return
     }
     hideLeftSideBoxes()
   }
 
-  /** Stats + Loadout sit outside the main panel (same chrome as cargo/jobs). */
+  /** Stats + preview left; loadout on the right (same chrome as cargo/jobs). */
   function renderShipyardSideBoxes() {
     if (!currentBody?.hasShipyard || currentTab !== 'shipyard') {
       hideShipyardSideBoxes()
@@ -1224,9 +1399,11 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     }
     shipyardLeftCol.classList.remove('industry-ore-col')
     root.classList.remove('industry-layout')
+    root.classList.add('shipyard-layout')
     oreSideEl.style.display = 'none'
     oreSideEl.innerHTML = ''
     statsSideEl.style.display = 'block'
+    previewSideEl.style.display = 'block'
     loadoutSideEl.style.display = 'block'
     const ship = gameState.player.ship
     const activeClass = getShipClass(ship.classId)
@@ -1241,17 +1418,75 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     const droneBays = droneBayCount(activeClass)
     const shipDrones = ship.drones ?? []
 
-    const roleLabel = selectedClass.role
-      ? selectedClass.role.charAt(0).toUpperCase() + selectedClass.role.slice(1)
-      : '—'
+    const roleLabel = selectedClass.role ? capitalizeLabel(selectedClass.role) : '—'
     const bonusLines = shipRoleBonusLines(selectedClass)
+    const selectedHps = Array.isArray(selectedClass.hardpoints) ? selectedClass.hardpoints : []
+    let turretCount = 0
+    let launcherCount = 0
+    for (const hp of selectedHps) {
+      if (hp?.type === 'missile') launcherCount++
+      else turretCount++
+    }
+    const viewingActive = selectedShipClassId === ship.classId
+    const hardpointLines = selectedHps.length
+      ? selectedHps.map((hp, i) => {
+          const mountType = hp.type === 'missile' ? 'missile' : 'laser'
+          const mountLabel = mountType === 'missile' ? 'Launcher' : 'Turret'
+          let equippedBit = ''
+          if (viewingActive) {
+            const baseIds = selectedClass.alien ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
+            const equippedId = ship.equippedWeapons?.[hp.id] ?? baseIds[mountType]
+            try {
+              const w = getWeapon(equippedId)
+              equippedBit = ` · ${w.name}`
+            } catch {
+              equippedBit = equippedId ? ` · ${equippedId}` : ''
+            }
+          }
+          return `<div class="stat hardpoint-line">${itemNameCell(itemIcon('weapon', { weaponCategory: mountType }), `${mountLabel} ${i + 1}`)}<span class="hp-id">${escapeHtml(hp.id)}${escapeHtml(equippedBit)}</span></div>`
+        }).join('')
+      : '<div class="stat bonus-none">None</div>'
+
+    const selectedDroneBays = Math.max(0, Math.floor(Number(selectedClass.droneBays) || 0))
+    let droneBayLines = ''
+    if (selectedDroneBays > 0) {
+      const activeDrones = viewingActive ? (ship.drones ?? []) : []
+      droneBayLines = `
+        <div class="stat-section">Drone bays (${selectedDroneBays})</div>
+        ${Array.from({ length: selectedDroneBays }, (_, bay) => {
+          let status = 'Empty — buy in Armoury'
+          if (viewingActive) {
+            const d = activeDrones[bay]
+            if (d) {
+              let name = d.typeId || DEFAULT_DRONE_ID
+              try { name = getDrone(d.typeId).name } catch { /* */ }
+              const destroyed = d.destroyed || d.hull <= 0
+              status = destroyed ? `${name} (destroyed)` : name
+            } else {
+              status = 'Empty'
+            }
+          }
+          return `<div class="stat hardpoint-line">${itemNameCell(itemIcon('drone'), `Bay ${bay + 1}`)}<span class="hp-id">${escapeHtml(status)}</span></div>`
+        }).join('')}
+      `
+    }
+
+    // Active hull with a custom instance name → show that instead of the model.
+    const modelName = selectedClass.name
+    const instanceName = String(ship.instanceName ?? '').trim()
+    const hasCustomShipName =
+      viewingActive && instanceName.length > 0 && instanceName !== modelName
+    const statsTitle = hasCustomShipName ? instanceName : capitalizeLabel(modelName)
+
     shipyardLeftCol.style.display = 'flex'
     statsSideEl.innerHTML = `
       <h3>Ship stats</h3>
-      <div class="stat" style="font-size:13px;color:#7fe6ff;margin-bottom:8px">${escapeHtml(selectedClass.name)}</div>
+      <div class="stat" style="font-size:13px;color:#7fe6ff;margin-bottom:8px">${escapeHtml(statsTitle)}</div>
       <div class="stat">Role: ${escapeHtml(roleLabel)}</div>
       <div class="stat">Price: ${selectedClass.price}cr</div>
       <div class="stat">Accessory slots: ${accessorySlotCount(selectedClass)}</div>
+      <div class="stat">Hardpoints: ${selectedHps.length}${selectedHps.length ? ` <span style="opacity:0.6">(${turretCount} turret${turretCount === 1 ? '' : 's'}, ${launcherCount} launcher${launcherCount === 1 ? '' : 's'})</span>` : ''}</div>
+      ${selectedDroneBays > 0 ? `<div class="stat">Drone bays: ${selectedDroneBays}</div>` : ''}
       ${SHIP_STAT_ROWS.map(([key, label]) => {
         let val = selectedClass.stats[key]
         // When viewing your active hull, show live mining capacity with accessories.
@@ -1263,13 +1498,17 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         }
         return `<div class="stat">${label}: ${val}</div>`
       }).join('')}
+      <div class="stat-section">Weapon hardpoints</div>
+      ${hardpointLines}
+      ${droneBayLines}
       <div class="stat-section">Bonus</div>
       ${bonusLines.length
         ? bonusLines.map((line) => `<div class="stat bonus">${escapeHtml(line)}</div>`).join('')
         : '<div class="stat bonus-none">None</div>'}
     `
-    const weaponBlocks = activeClass.hardpoints.map((hp) => {
+    const weaponBlocks = activeClass.hardpoints.map((hp, hpIndex) => {
       const mountType = hp.type === 'missile' ? 'missile' : 'laser'
+      const mountLabel = mountType === 'missile' ? 'Launcher' : 'Turret'
       const baseIds = activeClass.alien ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
       const equippedId = ship.equippedWeapons?.[hp.id] ?? baseIds[mountType]
       // Shop list is human-only; equip list includes owned/equipped alien tech.
@@ -1279,6 +1518,15 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         const onShip = spareWeapons[w.id] ?? 0
         return w.id === equippedId || inStorage > 0 || onShip > 0
       })
+      let equippedName = equippedId
+      let equippedMeta = ''
+      let equippedAlien = false
+      try {
+        const ew = getWeapon(equippedId)
+        equippedName = ew.name
+        equippedAlien = !!ew.alien
+        equippedMeta = `Dmg ${ew.damage}`
+      } catch { /* */ }
       const options = catalog.map((w) => {
         const isEquipped = w.id === equippedId
         const inStorage = storageWeapons[w.id] ?? 0
@@ -1289,23 +1537,44 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         if (inStorage > 0) bits.push(`${inStorage} st`)
         if (onShip > 0) bits.push(`${onShip} sal`)
         const label = bits.length ? `${w.name} (${bits.join(', ')})` : `${w.name}`
-        return `<option value="${w.id}" ${isEquipped ? 'selected' : ''} ${!owned ? 'disabled' : ''}>${label}</option>`
+        return `<option value="${w.id}" ${isEquipped ? 'selected' : ''} ${!owned ? 'disabled' : ''}>${escapeHtml(label)}</option>`
       }).join('')
       return `
-        <div class="hp-block">
-          <div class="stat">${hp.id} · ${mountType}</div>
-          <select class="equip-select" data-hardpoint="${hp.id}">${options}</select>
+        <div class="lo-row">
+          <div class="lo-row-head">
+            <span class="lo-mount">${escapeHtml(mountLabel)} ${hpIndex + 1}</span>
+            <span class="lo-tag">${escapeHtml(hp.id)}</span>
+          </div>
+          <div class="lo-equipped">
+            ${itemNameCell(itemIcon('weapon', { weaponCategory: mountType, alien: equippedAlien }), equippedName)}
+            ${equippedAlien ? '<span class="lo-badge">Alien</span>' : ''}
+            ${equippedMeta ? `<span class="lo-meta">${escapeHtml(equippedMeta)}</span>` : ''}
+          </div>
+          <select class="equip-select" data-hardpoint="${hp.id}" aria-label="${escapeHtml(mountLabel)} ${hpIndex + 1}">${options}</select>
         </div>`
     }).join('')
 
     let accessoryBlocks = ''
     if (accSlots <= 0) {
-      accessoryBlocks = `<div class="stat" style="opacity:0.5;font-size:11px;margin-top:10px">No accessory slots on this hull.</div>`
+      accessoryBlocks = `
+        <div class="lo-section">Accessories</div>
+        <div class="empty">No accessory slots on this hull</div>`
     } else {
       accessoryBlocks = `
-        <div class="stat" style="opacity:0.75;font-size:11px;margin:12px 0 6px;letter-spacing:1px;text-transform:uppercase">Accessories</div>
+        <div class="lo-section">Accessories (${accSlots})</div>
         ${Array.from({ length: accSlots }, (_, slot) => {
           const equippedId = equippedAcc[slot] ?? null
+          let equippedName = null
+          let equippedDesc = ''
+          if (equippedId) {
+            try {
+              const acc = getAccessory(equippedId)
+              equippedName = acc.name
+              equippedDesc = acc.description || ''
+            } catch {
+              equippedName = equippedId
+            }
+          }
           const options = [
             `<option value="" ${!equippedId ? 'selected' : ''}>— empty —</option>`,
             ...ACCESSORIES.map((a) => {
@@ -1319,13 +1588,21 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
               if (fittedElsewhere) bits.push('fitted')
               const label = bits.length ? `${a.name} (${bits.join(', ')})` : a.name
               const disabled = !owned || fittedElsewhere
-              return `<option value="${a.id}" ${isEquippedHere ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${label}</option>`
+              return `<option value="${a.id}" ${isEquippedHere ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${escapeHtml(label)}</option>`
             })
           ].join('')
           return `
-            <div class="hp-block">
-              <div class="stat">Slot ${slot + 1}</div>
-              <select class="equip-accessory" data-slot="${slot}">${options}</select>
+            <div class="lo-row">
+              <div class="lo-row-head">
+                <span class="lo-mount">Slot ${slot + 1}</span>
+                <span class="lo-tag">Accessory</span>
+              </div>
+              ${equippedName
+                ? `<div class="lo-equipped" title="${escapeHtml(equippedDesc)}">
+                    ${itemNameCell(itemIcon('accessory'), equippedName)}
+                  </div>`
+                : '<div class="lo-empty-slot">Empty</div>'}
+              <select class="equip-accessory" data-slot="${slot}" aria-label="Accessory slot ${slot + 1}">${options}</select>
             </div>`
         }).join('')}
       `
@@ -1337,16 +1614,29 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     } else {
       const freeBays = freeDroneBayCount(ship, activeClass)
       droneBlocks = `
-        <div class="stat" style="opacity:0.75;font-size:11px;margin:12px 0 6px;letter-spacing:1px;text-transform:uppercase">Drone bays (${shipDrones.length}/${droneBays})</div>
+        <div class="lo-section">Drone bays (${shipDrones.length}/${droneBays})</div>
         ${Array.from({ length: droneBays }, (_, bay) => {
           const d = shipDrones[bay]
           if (d) {
             let name = d.typeId || DEFAULT_DRONE_ID
-            try { name = getDrone(d.typeId).name } catch { /* */ }
-            const status = d.destroyed || d.hull <= 0 ? ' (destroyed)' : ''
+            let meta = ''
+            try {
+              const def = getDrone(d.typeId)
+              name = def.name
+              meta = `S${def.shields} A${def.armor} H${def.hull}`
+            } catch { /* */ }
+            const destroyed = d.destroyed || d.hull <= 0
             return `
-              <div class="hp-block">
-                <div class="stat">Bay ${bay + 1}: ${escapeHtml(name)}${status}</div>
+              <div class="lo-row">
+                <div class="lo-row-head">
+                  <span class="lo-mount">Bay ${bay + 1}</span>
+                  <span class="lo-tag">Drone</span>
+                </div>
+                <div class="lo-equipped">
+                  ${itemNameCell(itemIcon('drone'), name)}
+                  ${destroyed ? '<span class="lo-badge warn">Destroyed</span>' : ''}
+                  ${meta && !destroyed ? `<span class="lo-meta">${escapeHtml(meta)}</span>` : ''}
+                </div>
                 <button type="button" class="unequip-drone" data-bay="${bay}">Stow to storage</button>
               </div>`
           }
@@ -1355,23 +1645,29 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
             `<option value="">— empty —</option>`,
             ...DRONES.map((def) => {
               const st = storageDrones[def.id] ?? 0
-              return `<option value="${def.id}" ${st < 1 ? 'disabled' : ''}>${def.name}${st > 0 ? ` (${st} st)` : ''}</option>`
+              return `<option value="${def.id}" ${st < 1 ? 'disabled' : ''}>${escapeHtml(def.name)}${st > 0 ? ` (${st} st)` : ''}</option>`
             })
           ].join('')
           return `
-            <div class="hp-block">
-              <div class="stat">Bay ${bay + 1}: empty</div>
-              <select class="equip-drone" data-bay="${bay}" ${freeBays < 1 ? 'disabled' : ''}>${options}</select>
+            <div class="lo-row">
+              <div class="lo-row-head">
+                <span class="lo-mount">Bay ${bay + 1}</span>
+                <span class="lo-tag">Empty</span>
+              </div>
+              <div class="lo-empty-slot">No drone installed</div>
+              <select class="equip-drone" data-bay="${bay}" ${freeBays < 1 ? 'disabled' : ''} aria-label="Drone bay ${bay + 1}">${options}</select>
             </div>`
         }).join('')}
-        <div class="stat" style="opacity:0.55;font-size:10px;margin-top:4px">Buy drones in Armoury, then equip here.</div>
+        <p class="lo-hint">Buy drones in Armoury, then equip here. Launch with G / recall with H in flight.</p>
       `
     }
 
     loadoutSideEl.innerHTML = `
+      <div class="panel-kicker">Your ship</div>
       <h3>Loadout</h3>
-      <div class="stat" style="opacity:0.65;margin-bottom:8px;font-size:11px">${escapeHtml(ship.instanceName)} (${activeClass.name})</div>
-      ${weaponBlocks}
+      <div class="lo-ship">${escapeHtml(ship.instanceName)}<span class="lo-class">· ${escapeHtml(activeClass.name)}</span></div>
+      <div class="lo-section">Hardpoints (${activeClass.hardpoints.length})</div>
+      ${weaponBlocks || '<div class="empty">No hardpoints</div>'}
       ${accessoryBlocks}
       ${droneBlocks}
     `
@@ -1419,6 +1715,23 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     )
   }
 
+  function updateShipPreview() {
+    // Preview under stats while Shipyard is open (any sub-tab uses selected hull).
+    const open = root.classList.contains('services-open')
+    if (
+      open &&
+      currentTab === 'shipyard' &&
+      currentBody?.hasShipyard &&
+      selectedShipClassId
+    ) {
+      previewSideEl.style.display = 'block'
+      shipPreview.show(selectedShipClassId)
+    } else {
+      previewSideEl.style.display = 'none'
+      shipPreview.hide()
+    }
+  }
+
   function renderShipyard() {
     const shipClass = getShipClass(gameState.player.ship.classId)
     const ship = gameState.player.ship
@@ -1443,6 +1756,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     if (!currentBody.hasShipyard) {
       hideShipyardSideBoxes()
       contentEl.innerHTML = `${repairSection}<p>No shipyard at this location.</p>`
+      shipPreview.hide()
     } else {
       const sub = shipyardSubTab === 'armoury' || shipyardSubTab === 'accessories' ? shipyardSubTab : 'ships'
       shipyardSubTab = sub
@@ -1464,7 +1778,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
               const sellPrice = Math.round(c.price * 0.5)
               return `
               <tr data-class="${c.id}" class="${c.id === selectedShipClassId ? 'selected' : ''}">
-                <td>${itemNameCell(itemIcon('ship', { alien: !!c.alien }), c.name)}</td><td>${c.role}</td><td>${accessorySlotCount(c)}</td><td>${c.price}cr</td>
+                <td>${itemNameCell(itemIcon('ship', { alien: !!c.alien }), capitalizeLabel(c.name))}</td><td>${escapeHtml(capitalizeLabel(c.role))}</td><td>${accessorySlotCount(c)}</td><td>${c.price}cr</td>
                 <td>${stored}</td>
                 <td><button class="buy-ship" data-class="${c.id}">Buy</button></td>
                 <td>${stored > 0
@@ -1483,7 +1797,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
                   let alien = false
                   try {
                     const sc = getShipClass(s.classId)
-                    className = sc.name
+                    className = capitalizeLabel(sc.name)
                     sellPrice = Math.round(sc.price * 0.5)
                     alien = !!sc.alien
                   } catch { /* */ }
@@ -1533,6 +1847,8 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
               w.category === category &&
               (!w.alien || (storageWeapons[w.id] ?? 0) > 0 || (spareWeapons[w.id] ?? 0) > 0)
           )
+            .slice()
+            .sort((a, b) => (a.price - b.price) || a.name.localeCompare(b.name))
 
         const turrets = listWeapons('laser')
         const launchers = listWeapons('missile')
@@ -1557,7 +1873,9 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Hulls with drone bays start empty. Buy here, Install into a free bay (or equip from Loadout).</p>
           <table>
             <thead><tr><th>Drone</th><th>S/A/H</th><th>Price</th><th>St</th><th>On ship</th><th>Buy</th><th>Install</th><th>Sell</th></tr></thead>
-            <tbody>${DRONES.map((d) => {
+            <tbody>${DRONES.slice()
+              .sort((a, b) => ((a.price ?? 0) - (b.price ?? 0)) || a.name.localeCompare(b.name))
+              .map((d) => {
               const st = storageDrones[d.id] ?? 0
               const onShip = shipDrones.filter((x) => (x.typeId || DEFAULT_DRONE_ID) === d.id).length
               const unitSell = Math.round((d.price ?? 0) * 0.5)
@@ -1593,7 +1911,9 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Buy and sell use station storage.</p>
           <table>
             <thead><tr><th>Accessory</th><th>Price</th><th>St</th><th>Buy</th><th>Sell</th></tr></thead>
-            <tbody>${ACCESSORIES.map((a) => {
+            <tbody>${ACCESSORIES.slice()
+              .sort((a, b) => (a.price - b.price) || a.name.localeCompare(b.name))
+              .map((a) => {
               const st = storageAccessories[a.id] ?? 0
               return `
               <tr>
@@ -1630,6 +1950,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       `
       renderShipyardSideBoxes()
     }
+    updateShipPreview()
     contentEl.querySelector('.repair-btn')?.addEventListener('click', async () => {
       try {
         repairShip(gameState, currentBody)
@@ -1656,14 +1977,27 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     )
     contentEl.querySelectorAll('tr[data-class]').forEach((row) =>
       row.addEventListener('click', () => {
-        selectedShipClassId = row.dataset.class
-        renderShipyard()
+        const classId = row.dataset.class
+        if (!classId || classId === selectedShipClassId) {
+          // Still refresh preview if same row re-clicked after tab weirdness.
+          if (classId) updateShipPreview()
+          return
+        }
+        selectedShipClassId = classId
+        // Update selection highlight in-place — do not rebuild the table
+        // (that would reset scroll position in the catalog).
+        contentEl.querySelectorAll('tr[data-class]').forEach((r) => {
+          r.classList.toggle('selected', r.dataset.class === selectedShipClassId)
+        })
+        renderShipyardSideBoxes()
+        updateShipPreview()
       })
     )
     contentEl.querySelectorAll('.buy-ship').forEach((btn) =>
       btn.addEventListener('click', async (e) => {
         e.stopPropagation()
         const classId = btn.dataset.class
+        selectedShipClassId = classId
         const shipClassBought = getShipClass(classId)
         try {
           purchaseShip(gameState, currentBody.id, classId, shipClassBought.name)
@@ -2024,8 +2358,9 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
 
   /**
    * @param {{ tryRefill?: boolean }} [opts]
-   * tryRefill: only after turn-in / when opening the tab — never after Accept
+   * tryRefill: when opening the tab after boards clear — never after Accept
    * (accepting must not restock the board while contracts are still open).
+   * Missions auto-complete on objective (no turn-in).
    */
   function renderMissions(opts = {}) {
     const tryRefill = opts.tryRefill !== false
@@ -2034,13 +2369,9 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     }
     const bodyId = String(currentBody.id)
     const boardMissions = gameState.missions.available.filter((m) => String(m.giverStationId) === bodyId)
-    const activeHere = gameState.missions.active.filter((m) => String(m.giverStationId) === bodyId)
-    const sub = missionsSubTab === 'turnin' ? 'turnin' : 'available'
-    missionsSubTab = sub
 
-    const bodyHtml =
-      sub === 'available'
-        ? `
+    contentEl.innerHTML = `
+      <p style="opacity:0.7;font-size:12px;margin:0 0 10px">Accept contracts here. Objectives complete automatically when finished (reward paid immediately) — track active work with <strong>J</strong>.</p>
       <table>
         <thead><tr><th>Type</th><th>Title</th><th>Reward</th><th></th></tr></thead>
         <tbody>${boardMissions.length
@@ -2050,32 +2381,8 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
             <td><button class="accept-mission" data-id="${m.id}">Accept</button></td>
           </tr>`).join('')
           : '<tr><td colspan="4" style="opacity:0.5">No contracts available.</td></tr>'}</tbody>
-      </table>`
-        : `
-      <table>
-        <thead><tr><th>Title</th><th>Status</th><th></th></tr></thead>
-        <tbody>${activeHere.length
-          ? activeHere.map((m) => `
-          <tr>
-            <td>${m.title}</td><td>${m.objectiveComplete ? 'Ready' : 'In progress'}</td>
-            <td>${m.objectiveComplete ? `<button class="turnin" data-id="${m.id}">Turn In</button>` : ''}</td>
-          </tr>`).join('')
-          : '<tr><td colspan="3" style="opacity:0.5">No active contracts from this bay.</td></tr>'}</tbody>
-      </table>`
-
-    contentEl.innerHTML = `
-      <div class="svc-subtabs">
-        <button type="button" class="svc-subtab ${sub === 'available' ? 'active' : ''}" data-subtab="available">Available</button>
-        <button type="button" class="svc-subtab ${sub === 'turnin' ? 'active' : ''}" data-subtab="turnin">Turn In</button>
-      </div>
-      ${bodyHtml}
+      </table>
     `
-    contentEl.querySelectorAll('.svc-subtab').forEach((btn) =>
-      btn.addEventListener('click', () => {
-        missionsSubTab = btn.dataset.subtab
-        renderMissions({ tryRefill: false })
-      })
-    )
     contentEl.querySelectorAll('.accept-mission').forEach((btn) =>
       btn.addEventListener('click', () => {
         try {
@@ -2085,17 +2392,6 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           return
         }
         renderMissions({ tryRefill: false })
-      })
-    )
-    contentEl.querySelectorAll('.turnin').forEach((btn) =>
-      btn.addEventListener('click', async () => {
-        try {
-          turnInMission(gameState, btn.dataset.id)
-        } catch (err) {
-          await showNotice('Turn-in failed', err.message)
-          return
-        }
-        renderMissions({ tryRefill: true })
       })
     )
     renderSidePanel()
@@ -2118,11 +2414,14 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
 
     statsSideEl.style.display = 'none'
     loadoutSideEl.style.display = 'none'
+    previewSideEl.style.display = 'none'
     statsSideEl.innerHTML = ''
     loadoutSideEl.innerHTML = ''
+    shipPreview.hide()
     shipyardLeftCol.style.display = 'flex'
     shipyardLeftCol.classList.add('industry-ore-col')
     root.classList.add('industry-layout')
+    root.classList.remove('shipyard-layout')
     oreSideEl.style.display = 'block'
     oreSideEl.innerHTML = `
       <h3>Ore in storage</h3>
@@ -2290,6 +2589,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       currentTab = btn.dataset.tab
       tabButtons.forEach((b) => b.classList.toggle('active', b === btn))
       renderCurrentTab()
+      updateShipPreview()
     })
   )
 
@@ -2304,6 +2604,8 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     if (servicesOpen) {
       updateHeaderCredits()
       renderCurrentTab()
+    } else {
+      shipPreview.hide()
     }
   }
 
@@ -2313,6 +2615,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
 
   root.querySelector('.undock-btn').addEventListener('click', () => {
     setServicesOpen(false)
+    shipPreview.hide()
     root.style.display = 'none'
     onUndock?.()
   })
@@ -2341,6 +2644,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     },
     hide() {
       setServicesOpen(false)
+      shipPreview.hide()
       root.style.display = 'none'
     },
     element: root

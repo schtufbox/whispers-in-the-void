@@ -1,5 +1,6 @@
 import { ensureBountyNpcsForSystem, updateMissionProgress } from './missions.js'
-import { getShipClass } from '../data/shipClasses.js'
+import { getShipClass, resolveShipClassId, SHIP_CLASSES, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
+import { resolveDroneId } from '../data/drones.js'
 import { defaultLoadoutFor } from '../data/weapons.js'
 import { defaultAccessoriesFor, normalizeAccessories } from '../data/accessories.js'
 import { ensureBlueprintMaps, updateCraftingJobs } from './crafting.js'
@@ -8,6 +9,104 @@ import { ensureDrones } from './drones.js'
 import { ensureLawStanding } from './security.js'
 import { ensureSystemSecurity, getSystem } from '../procgen/galaxy.js'
 import { ensureSkills } from './skills.js'
+
+/** Remap qty map keys through a resolver, merging collisions. */
+function remapCountMap(map, resolveKey) {
+  if (!map || typeof map !== 'object') return map
+  const next = {}
+  for (const [key, qty] of Object.entries(map)) {
+    const n = Number(qty) || 0
+    if (n <= 0) continue
+    const k = resolveKey(key) ?? key
+    next[k] = (next[k] ?? 0) + n
+  }
+  return next
+}
+
+function resolveBlueprintId(blueprintId) {
+  if (!blueprintId || typeof blueprintId !== 'string') return blueprintId
+  if (!blueprintId.startsWith('ship:')) return blueprintId
+  const oldId = blueprintId.slice(5)
+  const newId = resolveShipClassId(oldId)
+  return newId !== oldId ? `ship:${newId}` : blueprintId
+}
+
+/**
+ * Rewrite renamed ship / drone ids so older saves load after roster renames.
+ * getShipClass / getDrone also accept aliases; this persists the new ids on next save.
+ */
+/** Rewrite class ids that no longer exist (renames + re-rolled gen roster). */
+function coerceShipClassId(classId) {
+  if (classId == null || classId === '') return classId
+  const resolved = resolveShipClassId(classId)
+  if (SHIP_CLASSES.some((c) => c.id === resolved)) return resolved
+  // Orphaned gen_* from a previous roster seed → stable fallback.
+  try {
+    return getShipClass(resolved).id
+  } catch {
+    return STARTER_SHIP_CLASS_ID
+  }
+}
+
+function migrateLegacyIds(gameState) {
+  const ship = gameState.player?.ship
+  if (ship) {
+    if (ship.classId) ship.classId = coerceShipClassId(ship.classId)
+    if (Array.isArray(ship.drones)) {
+      for (const d of ship.drones) {
+        if (d?.typeId) d.typeId = resolveDroneId(d.typeId)
+      }
+    }
+    if (ship.blueprints) ship.blueprints = remapCountMap(ship.blueprints, resolveBlueprintId)
+  }
+
+  for (const storage of Object.values(gameState.stationStorage ?? {})) {
+    if (!storage) continue
+    const parkedShips = Array.isArray(storage.ships) ? storage.ships : []
+    for (const parked of parkedShips) {
+      if (parked?.classId) parked.classId = coerceShipClassId(parked.classId)
+      if (Array.isArray(parked?.drones)) {
+        for (const d of parked.drones) {
+          if (d?.typeId) d.typeId = resolveDroneId(d.typeId)
+        }
+      }
+      if (parked?.blueprints) parked.blueprints = remapCountMap(parked.blueprints, resolveBlueprintId)
+    }
+    if (storage.drones) storage.drones = remapCountMap(storage.drones, resolveDroneId)
+    if (storage.blueprints) storage.blueprints = remapCountMap(storage.blueprints, resolveBlueprintId)
+  }
+
+  const jobs = Array.isArray(gameState.craftingJobs) ? gameState.craftingJobs : []
+  for (const job of jobs) {
+    if (job?.blueprintId) job.blueprintId = resolveBlueprintId(job.blueprintId)
+  }
+
+  // missions is { available, active }, not a flat array.
+  const missionLists = []
+  if (Array.isArray(gameState.missions?.available)) missionLists.push(gameState.missions.available)
+  if (Array.isArray(gameState.missions?.active)) missionLists.push(gameState.missions.active)
+  if (Array.isArray(gameState.missions)) missionLists.push(gameState.missions)
+  for (const list of missionLists) {
+    for (const mission of list) {
+      if (!mission || typeof mission !== 'object') continue
+      if (mission.targetShipClassId) {
+        mission.targetShipClassId = resolveShipClassId(mission.targetShipClassId)
+      }
+      if (mission.shipClassId) {
+        mission.shipClassId = resolveShipClassId(mission.shipClassId)
+      }
+      // Bounty missions store the hull under target.shipClassId
+      if (mission.target?.shipClassId) {
+        mission.target.shipClassId = resolveShipClassId(mission.target.shipClassId)
+      }
+      const objectives = Array.isArray(mission.objectives) ? mission.objectives : []
+      for (const obj of objectives) {
+        if (obj?.shipClassId) obj.shipClassId = resolveShipClassId(obj.shipClassId)
+        if (obj?.targetShipClassId) obj.targetShipClassId = resolveShipClassId(obj.targetShipClassId)
+      }
+    }
+  }
+}
 
 export function serializeGameState(gameState) {
   // Snapshot clock at save so load can apply offline wall time.
@@ -59,6 +158,8 @@ export function deserializeGameState(data) {
   // miningHold falls back to {} for saves written before mining existed.
   gameState.player.ship.miningHold ??= {}
   gameState.player.ship.shipParts ??= 0
+  // Rename ship/drone ids from pre-roster-rename saves (e.g. odyssey → far_reach).
+  migrateLegacyIds(gameState)
   // equippedWeapons falls back for saves written before weapons were
   // swappable — every hardpoint just defaults to its category's free base
   // weapon, matching how it already behaved.

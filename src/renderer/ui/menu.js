@@ -1,5 +1,7 @@
 import { STARTER_SHIP_CLASS_ID, getShipClass } from '../data/shipClasses.js'
 import { SETTINGS_VIEW_CSS, settingsViewHTML, bindSettingsView } from './settingsView.js'
+import { escapeHtml } from './escapeHtml.js'
+import { isPortraitImageFile, resizeImageToDataUrl } from './portrait.js'
 
 const STYLE = `
 /* Light dark halo for legibility over the sun — keep it modest so type stays bright. */
@@ -192,11 +194,106 @@ const STYLE = `
   display: flex; flex-direction: column; gap: 4px; font-size: 13px; text-align: left;
   text-shadow: 0 1px 2px rgba(0,0,0,0.75), 0 2px 5px rgba(0,0,0,0.45);
 }
-#main-menu input {
+#main-menu input[type="text"],
+#main-menu input:not([type]) {
   background: #10182a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 8px; font-family: monospace;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-#main-menu input:focus { outline: none; border-color: #4fc3d9; box-shadow: 0 0 8px rgba(79,195,217,0.4); }
+#main-menu input[type="text"]:focus,
+#main-menu input:not([type]):focus { outline: none; border-color: #4fc3d9; box-shadow: 0 0 8px rgba(79,195,217,0.4); }
+
+/* Create Pilot — portrait upload (matches Character sheet). */
+#main-menu .new-game-view {
+  width: min(480px, 92vw);
+  padding: 28px 32px;
+  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.88));
+  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
+  box-shadow: 0 0 30px rgba(79,195,217,0.25), inset 0 0 26px rgba(79,195,217,0.05);
+}
+#main-menu .new-game-view h2 {
+  margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px;
+  text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 10px rgba(79,195,217,0.7);
+}
+#main-menu .new-game-layout {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 16px 20px;
+  align-items: start;
+  width: 100%;
+}
+@media (max-width: 480px) {
+  #main-menu .new-game-layout { grid-template-columns: 1fr; justify-items: center; }
+  #main-menu .new-game-fields { width: 100%; }
+}
+#main-menu .new-game-identity {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+#main-menu .new-game-portrait {
+  width: 120px; height: 120px;
+  border: 1px solid rgba(111,216,242,0.5);
+  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 14px rgba(0,0,0,0.4);
+  background: rgba(8,12,22,0.9);
+  overflow: hidden; position: relative;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+#main-menu .new-game-portrait img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+#main-menu .new-game-portrait .placeholder {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  font-size: 42px; color: #4a6a88; letter-spacing: 0;
+}
+#main-menu .new-game-portrait-actions {
+  display: flex; flex-direction: column; gap: 5px; width: 120px;
+}
+#main-menu .new-game-view button.upload-btn,
+#main-menu .new-game-view button.clear-portrait {
+  background: rgba(79,195,217,0.1); border: 1px solid rgba(111,216,242,0.4);
+  color: #b8e8f8; padding: 5px 8px; cursor: pointer; font-family: monospace;
+  font-size: 10px; letter-spacing: 0.5px; width: 100%;
+  opacity: 1 !important; transform: none !important;
+}
+#main-menu .new-game-view button.upload-btn:hover,
+#main-menu .new-game-view button.clear-portrait:hover {
+  background: rgba(79,195,217,0.2); box-shadow: 0 0 10px rgba(79,195,217,0.3);
+  transform: none !important;
+}
+#main-menu .new-game-view button.clear-portrait {
+  border-color: rgba(224,90,90,0.45); color: #ffb3b3; background: rgba(224,90,90,0.08);
+}
+#main-menu .new-game-view button.clear-portrait:hover {
+  background: rgba(224,90,90,0.18); box-shadow: 0 0 10px rgba(224,90,90,0.3);
+}
+#main-menu .new-game-view input[type=file] { display: none; }
+#main-menu .new-game-fields {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; width: 100%;
+}
+#main-menu .new-game-actions {
+  display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 4px;
+}
+#main-menu .new-game-view .upload-err {
+  font-size: 10px; color: #ff9a7a; max-width: 120px; text-align: center; margin-top: 2px;
+}
+#main-menu .new-game-view .portrait-hint {
+  font-size: 10px; opacity: 0.55; margin: 0; letter-spacing: 0.3px; text-align: center;
+  max-width: 120px; line-height: 1.3;
+}
+/* Nested controls are not panel > button — force visible (riseIn only hits direct kids). */
+#main-menu .new-game-view button {
+  opacity: 1 !important; transform: none !important;
+}
+#main-menu .new-game-view button.confirm-new-game,
+#main-menu .new-game-view button.back {
+  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  padding: 11px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
+  width: 100%; box-sizing: border-box;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+#main-menu .new-game-view button.confirm-new-game:hover,
+#main-menu .new-game-view button.back:hover {
+  background: rgba(111,216,242,0.22); box-shadow: 0 0 14px rgba(79,195,217,0.35);
+  transform: none !important;
+}
 
 #main-menu button {
   background: #16223a; border: 1px solid #2a3a55; color: #cfe3ff; padding: 12px; cursor: pointer; font-family: monospace;
@@ -360,10 +457,27 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     </div>
     <div class="panel new-game-view" style="display:none">
       <h2>Create Pilot</h2>
-      <label>Character Name <input class="char-name" value="Pilot" /></label>
-      <label>Ship Name <input class="ship-name" value="${starterShip.name}" /></label>
-      <button class="confirm-new-game">Launch</button>
-      <button class="back">Back</button>
+      <div class="new-game-layout">
+        <div class="new-game-identity">
+          <div class="new-game-portrait">
+            <div class="placeholder">P</div>
+          </div>
+          <div class="new-game-portrait-actions">
+            <button type="button" class="upload-btn">Upload photo</button>
+            <button type="button" class="clear-portrait" style="display:none">Clear</button>
+          </div>
+          <input type="file" class="portrait-file" accept="image/png,image/jpeg,image/jpg,.png,.jpg,.jpeg" />
+          <p class="portrait-hint">Optional PNG / JPG</p>
+        </div>
+        <div class="new-game-fields">
+          <label>Character Name <input type="text" class="char-name" value="Pilot" maxlength="32" spellcheck="false" autocomplete="off" /></label>
+          <label>Ship Name <input type="text" class="ship-name" value="${starterShip.name}" maxlength="32" spellcheck="false" autocomplete="off" /></label>
+          <div class="new-game-actions">
+            <button type="button" class="confirm-new-game">Launch</button>
+            <button type="button" class="back">Back</button>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="panel settings-view" style="display:none">
       ${settingsViewHTML()}
@@ -375,11 +489,47 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
   const newGameView = root.querySelector('.new-game-view')
   const settingsView = root.querySelector('.settings-view')
   const loadBtn = root.querySelector('.load-game')
+  const portraitFrame = root.querySelector('.new-game-portrait')
+  const portraitFile = root.querySelector('.portrait-file')
+  const uploadPortraitBtn = root.querySelector('.upload-btn')
+  const clearPortraitBtn = root.querySelector('.clear-portrait')
+  const charNameInput = root.querySelector('.char-name')
+  const identityCol = root.querySelector('.new-game-identity')
+
+  /** @type {string|null} */
+  let pendingPortraitDataUrl = null
 
   function replayEntrance() {
     root.classList.remove('reveal')
     void root.offsetWidth
     root.classList.add('reveal')
+  }
+
+  function renderCreatePortrait() {
+    if (pendingPortraitDataUrl) {
+      portraitFrame.innerHTML = `<img alt="Pilot portrait" src="${pendingPortraitDataUrl}" />`
+      clearPortraitBtn.style.display = 'block'
+    } else {
+      const initial = (charNameInput.value || 'P').trim().charAt(0).toUpperCase() || 'P'
+      portraitFrame.innerHTML = `<div class="placeholder">${escapeHtml(initial)}</div>`
+      clearPortraitBtn.style.display = 'none'
+    }
+  }
+
+  function portraitNotice(msg) {
+    identityCol.querySelector('.upload-err')?.remove()
+    const el = document.createElement('div')
+    el.className = 'upload-err'
+    el.textContent = msg
+    identityCol.appendChild(el)
+    setTimeout(() => el.remove(), 2500)
+  }
+
+  function resetNewGameForm() {
+    pendingPortraitDataUrl = null
+    charNameInput.value = 'Pilot'
+    root.querySelector('.ship-name').value = starterShip.name
+    renderCreatePortrait()
   }
 
   function showMain() {
@@ -397,18 +547,47 @@ export function createMenu(container, { onNewGame, onLoadGame }) {
     replayEntrance()
   }
 
-  root.querySelector('.new-game').addEventListener('click', () => {
+  function showNewGame() {
     mainView.style.display = 'none'
     settingsView.style.display = 'none'
     newGameView.style.display = 'flex'
+    resetNewGameForm()
     replayEntrance()
-  })
+  }
+
+  root.querySelector('.new-game').addEventListener('click', () => showNewGame())
   root.querySelector('.back').addEventListener('click', () => showMain())
+
+  charNameInput.addEventListener('input', () => {
+    if (!pendingPortraitDataUrl) renderCreatePortrait()
+  })
+  uploadPortraitBtn.addEventListener('click', () => portraitFile.click())
+  clearPortraitBtn.addEventListener('click', () => {
+    pendingPortraitDataUrl = null
+    renderCreatePortrait()
+  })
+  portraitFile.addEventListener('change', async () => {
+    const file = portraitFile.files?.[0]
+    portraitFile.value = ''
+    if (!file) return
+    if (!isPortraitImageFile(file)) {
+      portraitNotice('Use a PNG or JPG image')
+      return
+    }
+    try {
+      pendingPortraitDataUrl = await resizeImageToDataUrl(file)
+      renderCreatePortrait()
+    } catch {
+      portraitNotice('Could not load that image')
+    }
+  })
+
   root.querySelector('.confirm-new-game').addEventListener('click', () => {
-    const characterName = root.querySelector('.char-name').value.trim() || 'Pilot'
+    const characterName = charNameInput.value.trim() || 'Pilot'
     const shipInstanceName = root.querySelector('.ship-name').value.trim() || starterShip.name
+    const portraitDataUrl = pendingPortraitDataUrl
     hide()
-    onNewGame({ characterName, shipInstanceName })
+    onNewGame({ characterName, shipInstanceName, portraitDataUrl })
   })
   loadBtn.addEventListener('click', () => {
     hide()

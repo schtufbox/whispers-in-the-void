@@ -391,6 +391,15 @@ export function playSaveChime() {
   tone({ type: 'sine', freq: 1760, duration: 0.28, peak: 0.06, delay: 0.28 })
 }
 
+/** Mission contract completed — distinct success fanfare (auto-complete payout). */
+export function playMissionComplete() {
+  tone({ type: 'sine', freq: 494, duration: 0.12, peak: 0.14 })
+  tone({ type: 'sine', freq: 622, duration: 0.14, peak: 0.15, delay: 0.1 })
+  tone({ type: 'triangle', freq: 740, duration: 0.18, peak: 0.14, delay: 0.2 })
+  tone({ type: 'sine', freq: 988, duration: 0.28, peak: 0.12, delay: 0.32 })
+  tone({ type: 'sine', freq: 1245, duration: 0.35, peak: 0.08, delay: 0.42 })
+}
+
 /** Nav waypoint set — short two-tone ping (clear / distinct from save). */
 export function playWaypointSet() {
   tone({ type: 'sine', freq: 880, duration: 0.08, peak: 0.12 })

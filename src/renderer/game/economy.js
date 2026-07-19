@@ -26,6 +26,7 @@ import {
   freeDroneBayCount
 } from './drones.js'
 import { getDrone, DEFAULT_DRONE_ID } from '../data/drones.js'
+import { noteTradePurchase, noteTradeSale } from './missions.js'
 
 const TRADE_PRICE_NUDGE_FACTOR = 0.002
 /** At full rim (coreFraction 1), rare ores are this fraction cheaper. */
@@ -208,6 +209,7 @@ export function buyGood(gameState, bodyId, goodId, quantity) {
   const storage = storageFor(gameState, bodyId)
   storage.cargo[goodId] = (storage.cargo[goodId] ?? 0) + qty
   nudgePrice(gameState, bodyId, goodId, qty)
+  noteTradePurchase(gameState, bodyId, goodId, qty)
 }
 
 // Sell from station storage cargo (haul goods off the ship first via Storage).
@@ -225,6 +227,7 @@ export function sellGood(gameState, bodyId, goodId, quantity) {
   gameState.player.credits += proceeds
   restockMarket(gameState, bodyId, goodId, qty)
   nudgePrice(gameState, bodyId, goodId, -qty)
+  noteTradeSale(gameState, bodyId, goodId, qty)
 }
 
 /**
@@ -323,12 +326,12 @@ export function buyMinedOre(gameState, bodyId, goodId, quantity) {
 // regenShields) — only hull and armor persist damage indefinitely, so
 // repairing just tops those back up. Cost scales with both how damaged the
 // ship is (missing points) and how big it is (hull.length relative to the
-// starter ship, so a Hauler costs meaningfully more per point than a Bravia
-// Mk2) — a flat per-point rate treated every ship class alike, which didn't
+// starter ship, so a Hold Runner costs meaningfully more per point than a Light Runner)
+// — a flat per-point rate treated every ship class alike, which didn't
 // hold up once ship sizes started to vary a lot. Settlements charge a surcharge
 // on top since their parts supply is more limited than a full station's.
 const REPAIR_COST_PER_POINT = 5
-const REPAIR_SIZE_REFERENCE_LENGTH = 22 // bravia_mk2's hull.length — keeps its rate at exactly the old flat 5cr/point
+const REPAIR_SIZE_REFERENCE_LENGTH = 15 // light_runner hull.length — size factor vs starter
 const SETTLEMENT_REPAIR_SURCHARGE = 0.05
 
 export function repairCost(gameState, body = null) {

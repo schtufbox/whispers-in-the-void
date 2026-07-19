@@ -1,13 +1,19 @@
 import { pick, intRange } from '../procgen/prng.js'
-import { systemsWithinJumps } from '../procgen/galaxy.js'
+import { systemsWithinJumps, getSystem } from '../procgen/galaxy.js'
 import { spawnPointNearBody } from '../game/spawner.js'
+import { GOODS, getGood, isBuyableTradeGood } from './goods.js'
+import { maxShipCargoCapacity } from './shipClasses.js'
 
 let missionCounter = 0
 
-const BOUNTY_TARGET_CLASSES = ['raider_mk1', 'interceptor', 'corvette', 'scout']
+const BOUNTY_TARGET_CLASSES = ['raider_mk1', 'needle_dart', 'gun_barge', 'light_runner']
 // A mission planted in a different system than where it's picked up should
 // still be a reasonable trip, not an arbitrary trek across the galaxy.
 const MAX_MISSION_JUMP_DISTANCE = 4
+/** Trade hauls must be at least this many hyperspace jumps from origin. */
+const MIN_TRADE_JUMPS = 4
+/** Cap search radius so trade destinations stay in a playable neighborhood. */
+const MAX_TRADE_JUMPS = 10
 
 // Bounty targets always spawn in the giver's own system, so accepting one
 // never requires a hyperspace jump just to reach the fight. Exploration and
@@ -17,6 +23,33 @@ function pickTargetSystem(rng, galaxy, giverSystem) {
   if (rng() < 0.5) return giverSystem
   const reachable = systemsWithinJumps(galaxy, giverSystem.id, MAX_MISSION_JUMP_DISTANCE)
   return pick(rng, reachable)
+}
+
+/** Systems at jump distance ∈ [minJumps, maxJumps] from origin (excludes closer). */
+function systemsAtLeastJumps(galaxy, originSystemId, minJumps, maxJumps) {
+  const tooClose = new Set(
+    systemsWithinJumps(galaxy, originSystemId, Math.max(0, minJumps - 1)).map((s) => s.id)
+  )
+  return systemsWithinJumps(galaxy, originSystemId, maxJumps).filter((s) => !tooClose.has(s.id))
+}
+
+function tradeFacilityBodies(system) {
+  return (system?.bodies ?? []).filter((b) => b.kind === 'station' || b.kind === 'settlement')
+}
+
+/** Tag-only unit price (no scarcity / player skill) for mission route viability. */
+function tagUnitPrice(body, goodId) {
+  const good = getGood(goodId)
+  let price = good.basePrice
+  for (const tag of body?.economyTags ?? []) {
+    const mult = good.tagMultipliers?.[tag]
+    if (mult) price *= 1 + mult
+  }
+  return Math.max(1, Math.round(price))
+}
+
+function buyableTradeGoodIds() {
+  return GOODS.map((g) => g.id).filter((id) => isBuyableTradeGood(id))
 }
 
 export function generateBountyMission(rng, galaxy, giverSystemId, giverStationId) {
@@ -122,7 +155,86 @@ export function generateProbeMission(rng, galaxy, giverSystemId, giverStationId)
   }
 }
 
-const GENERATORS = [generateBountyMission, generateExplorationMission, generateInvestigationMission, generateProbeMission]
+/**
+ * Buy goods at origin (own credits), haul ≥4 jumps, sell at destination where
+ * the bay pays more than origin buy cost. Turn in at destination (not origin).
+ * Reward scales with quantity × price margin.
+ */
+export function generateTradeMission(rng, galaxy, giverSystemId, giverStationId) {
+  const originSystem = getSystem(galaxy, giverSystemId) ?? galaxy.systems.find((s) => s.id === giverSystemId)
+  if (!originSystem) return null
+  const originBody =
+    originSystem.bodies.find((b) => b.id === giverStationId) ??
+    tradeFacilityBodies(originSystem)[0]
+  if (!originBody) return null
+
+  const destSystems = systemsAtLeastJumps(galaxy, originSystem.id, MIN_TRADE_JUMPS, MAX_TRADE_JUMPS)
+  if (!destSystems.length) return null
+
+  const goods = buyableTradeGoodIds()
+  if (!goods.length) return null
+
+  // Try several random origin→dest×good pairs until margin is positive.
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const destSystem = pick(rng, destSystems)
+    const destFacilities = tradeFacilityBodies(destSystem)
+    if (!destFacilities.length) continue
+    const destBody = pick(rng, destFacilities)
+    const goodId = pick(rng, goods)
+    const originBuy = tagUnitPrice(originBody, goodId)
+    const destSell = tagUnitPrice(destBody, goodId)
+    if (destSell <= originBuy) continue
+
+    // Hauls span light-trader loads up to the largest freighter hold in the game.
+    const maxCargo = maxShipCargoCapacity()
+    const minHaul = 50
+    const quantity = intRange(rng, minHaul, Math.max(minHaul, maxCargo))
+    const unitMargin = destSell - originBuy
+    // Contract bonus scales with haul size and arbitrage margin.
+    const reward = Math.max(
+      800,
+      Math.round(quantity * unitMargin * 0.85 + quantity * 12)
+    )
+    const goodName = getGood(goodId).name
+    return {
+      id: `m-${missionCounter++}`,
+      type: 'trade',
+      title: `Haul ${quantity} ${goodName} to ${destSystem.name}`,
+      giverStationId,
+      giverSystemId,
+      reward,
+      status: 'available',
+      objectiveComplete: false,
+      trade: {
+        goodId,
+        quantity,
+        originBodyId: originBody.id,
+        originSystemId: originSystem.id,
+        destBodyId: destBody.id,
+        destSystemId: destSystem.id,
+        originBuyPrice: originBuy,
+        destSellPrice: destSell,
+        purchased: 0,
+        sold: 0
+      },
+      // Nav target starts at origin buy bay; missions.js advances after purchase.
+      target: {
+        kind: 'body',
+        systemId: originSystem.id,
+        bodyId: originBody.id
+      }
+    }
+  }
+  return null
+}
+
+const GENERATORS = [
+  generateBountyMission,
+  generateExplorationMission,
+  generateInvestigationMission,
+  generateProbeMission,
+  generateTradeMission
+]
 
 /** Post a fresh batch of board contracts for one station/settlement. */
 export function generateMissionsForBody(rng, galaxy, systemId, bodyId, count = null) {

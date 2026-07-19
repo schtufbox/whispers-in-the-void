@@ -2,12 +2,12 @@
 // NPCs never receive, summon, or operate drones (even on hulls that list droneBays).
 // Hulls with droneBays do NOT include drones — buy from Shipyard → Armoury.
 
-export const DEFAULT_DRONE_ID = 'asp_light'
+export const DEFAULT_DRONE_ID = 'stinger_light'
 
 export const DRONES = [
   {
-    id: 'asp_light',
-    name: 'Asp Light Combat',
+    id: 'stinger_light',
+    name: 'Stinger Light Combat',
     // Compact escort fighter stats (pulse laser only).
     shields: 50,
     armor: 50,
@@ -29,8 +29,19 @@ export function purchasableDrones() {
   return DRONES.filter((d) => (d.price ?? 0) > 0)
 }
 
+/** Saves may still store pre-rename drone type ids. */
+export const DRONE_ID_ALIASES = {
+  asp_light: 'stinger_light'
+}
+
+export function resolveDroneId(id) {
+  if (id == null || id === '') return id
+  return DRONE_ID_ALIASES[id] ?? id
+}
+
 export function getDrone(id = DEFAULT_DRONE_ID) {
-  const d = DRONES.find((x) => x.id === id)
+  const resolved = resolveDroneId(id)
+  const d = DRONES.find((x) => x.id === resolved)
   if (!d) throw new Error(`Unknown drone: ${id}`)
   return d
 }

@@ -1,5 +1,5 @@
 // Buyable ship accessories — fitted into optional accessory slots (not
-// hardpoints). Starter Bravia has zero slots; other hulls may have up to 4.
+// hardpoints). Starter Light Runner has one slot; other hulls may have up to 4.
 // Further accessory types can be added here later.
 
 export const MAX_ACCESSORY_SLOTS = 4

@@ -47,6 +47,16 @@ const STYLE = `
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 #pause-menu button:hover { background: rgba(111,216,242,0.22); box-shadow: 0 0 14px rgba(79,195,217,0.35); }
+#pause-menu button.quit-title {
+  background: rgba(255,180,60,0.12);
+  border-color: rgba(255,190,70,0.55);
+  color: #ffe08a;
+  text-shadow: 0 0 8px rgba(255,180,60,0.35);
+}
+#pause-menu button.quit-title:hover {
+  background: rgba(255,190,70,0.22);
+  box-shadow: 0 0 14px rgba(255,180,60,0.4);
+}
 #pause-menu button.quit { background: rgba(224,90,90,0.12); border-color: rgba(224,90,90,0.5); color: #ffb3b3; }
 #pause-menu button.quit:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 14px rgba(224,90,90,0.35); }
 ${SETTINGS_VIEW_CSS}
@@ -81,7 +91,7 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
       <button class="save">Save Game</button>
       <button class="controls">Show Controls</button>
       <button class="settings">Settings</button>
-      <button class="restart">Restart</button>
+      <button class="quit-title">Quit to Title</button>
       <button class="quit">Quit to Desktop</button>
     </div>
     <div class="panel controls-view" style="display:none;">
@@ -137,7 +147,7 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
   root.querySelector('.controls').addEventListener('click', () => showControls())
   root.querySelector('.controls-back').addEventListener('click', () => showMain())
   root.querySelector('.settings').addEventListener('click', () => showSettings())
-  root.querySelector('.restart').addEventListener('click', () => onRestart())
+  root.querySelector('.quit-title').addEventListener('click', () => onRestart())
   root.querySelector('.quit').addEventListener('click', () => onQuit())
 
   return {

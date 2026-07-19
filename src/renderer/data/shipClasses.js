@@ -1,19 +1,22 @@
 import { mulberry32 } from '../procgen/prng.js'
-import { generateShipClassRoster, computeMiningCapacity } from '../procgen/shipRoster.js'
+import {
+  generateShipClassRoster,
+  computeMiningCapacity,
+  balancePurchasableShipsByRole
+} from '../procgen/shipRoster.js'
 
 const HAND_CRAFTED_SHIP_CLASSES = [
   {
     id: 'bravia_mk2',
-    name: 'Bravia Mk2',
+    name: 'Bravia',
     role: 'trader',
     price: 12000,
     stats: { hull: 100, shields: 50, armor: 20, cargoCapacity: 40, speed: 120, turnRate: 1.8, accel: 30 },
     // Forward hardpoint on the industrial prow.
     hardpoints: [{ id: 'fwd1', position: [0, 0.25, 8.2], type: 'laser' }],
-    // Starter has no accessory bay — upgrade hull for Autopilot etc.
-    accessorySlots: 0,
+    accessorySlots: 1,
     hull: {
-      // Compact industrial starter frigate: angular prow, rugged plating,
+      // Compact industrial frigate: angular prow, rugged plating,
       // twin aft drives — utilitarian rather than sleek.
       length: 18,
       // 12 stations aft→nose: broad engine bus → tall mid → sharp wedge prow.
@@ -70,8 +73,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'hauler',
-    name: 'Hauler',
+    id: 'hold_runner',
+    name: 'Hold Runner',
     role: 'trader',
     price: 20000,
     stats: { hull: 150, shields: 30, armor: 40, cargoCapacity: 120, speed: 70, turnRate: 0.9, accel: 15 },
@@ -111,8 +114,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'interceptor',
-    name: 'Interceptor',
+    id: 'needle_dart',
+    name: 'Needle Dart',
     role: 'fighter',
     price: 35000,
     stats: { hull: 70, shields: 80, armor: 10, cargoCapacity: 10, speed: 220, turnRate: 2.8, accel: 55 },
@@ -152,8 +155,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'corvette',
-    name: 'Corvette',
+    id: 'gun_barge',
+    name: 'Gun Barge',
     role: 'fighter',
     price: 45000,
     stats: { hull: 130, shields: 100, armor: 50, cargoCapacity: 25, speed: 140, turnRate: 2.0, accel: 35 },
@@ -197,8 +200,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'scout',
-    name: 'Scout',
+    id: 'light_runner',
+    name: 'Light Runner',
     role: 'explorer',
     price: 8500,
     stats: { hull: 50, shields: 40, armor: 5, cargoCapacity: 15, speed: 180, turnRate: 2.5, accel: 45 },
@@ -234,7 +237,7 @@ const HAND_CRAFTED_SHIP_CLASSES = [
   },
   {
     id: 'raider_mk1',
-    name: 'Raider Mk1',
+    name: 'Raider',
     role: 'fighter',
     price: 28000,
     npcOnly: true,
@@ -292,14 +295,17 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     ],
     accessorySlots: 0,
     hull: {
-      length: 22,
-      stationWidths: [0.14, 0.38, 0.7, 1.05, 1.25, 1.2, 1.15, 1.3, 1.2, 0.8, 0.4, 0.16],
-      stationHeights: [0.1, 0.28, 0.48, 0.62, 0.72, 0.7, 0.68, 0.75, 0.7, 0.45, 0.24, 0.12],
-      crossSectionSides: 12,
-      superellipseExponent: 2.3,
+      // Broader patrol gunship vs Pathfinder/Surveyor explorers.
+      length: 26,
+      stationWidths: [0.25, 0.55, 0.9, 1.25, 1.55, 1.6, 1.5, 1.35, 1.1, 0.75, 0.4, 0.18],
+      stationHeights: [0.18, 0.38, 0.58, 0.78, 0.92, 0.95, 0.88, 0.75, 0.58, 0.4, 0.22, 0.12],
+      crossSectionSides: 10,
+      superellipseExponent: 2.8,
       wings: [
-        { atStation: 6, span: 6.5, sweep: 0.85, thickness: 0.2, side: 'both', tipOffsetY: -0.1, chordScale: 1.05 },
-        { atStation: 2, span: 2.0, sweep: -0.3, thickness: 0.16, side: 'top', chordScale: 0.85 }
+        { atStation: 5, span: 7.2, sweep: 0.55, thickness: 0.28, side: 'both', tipOffsetY: -0.2, chordScale: 1.15 },
+        { atStation: 3, span: 2.4, sweep: 0.1, thickness: 0.18, side: 'both', chordScale: 0.85 },
+        { atStation: 1, span: 2.6, sweep: -0.35, thickness: 0.2, side: 'top', chordScale: 0.9 },
+        { atStation: 6, span: 1.8, sweep: 0.25, thickness: 0.16, side: 'bottom', chordScale: 0.8 }
       ],
       // Bright white hull; black panels + light bar applied in shipMesh police livery.
       color: '#f4f7fb',
@@ -319,8 +325,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'clipper',
-    name: 'Clipper',
+    id: 'swift_keel',
+    name: 'Swift Keel',
     role: 'explorer',
     price: 18000,
     stats: { hull: 80, shields: 50, armor: 15, cargoCapacity: 60, speed: 150, turnRate: 1.6, accel: 28 },
@@ -397,20 +403,23 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     ],
     accessorySlots: 2,
     hull: {
-      length: 24,
-      stationWidths: [0.2, 0.5, 0.85, 1.15, 1.35, 1.4, 1.3, 1.1, 0.85, 0.55, 0.3, 0.15],
-      stationHeights: [0.14, 0.35, 0.58, 0.78, 0.9, 0.92, 0.85, 0.7, 0.5, 0.32, 0.18, 0.1],
-      crossSectionSides: 14,
-      superellipseExponent: 2.3,
+      // Probe-saucer explorer — wider mid disk, stub wings vs Pathfinder slim spine.
+      length: 20,
+      stationWidths: [0.35, 0.7, 1.15, 1.55, 1.75, 1.7, 1.4, 1.0, 0.65, 0.4, 0.25, 0.14],
+      stationHeights: [0.22, 0.4, 0.55, 0.65, 0.7, 0.68, 0.55, 0.4, 0.28, 0.18, 0.12, 0.08],
+      crossSectionSides: 16,
+      superellipseExponent: 2.0,
       wings: [
-        { atStation: 5, span: 5.0, sweep: 0.4, thickness: 0.18, side: 'both', chordScale: 1.05 },
-        { atStation: 2, span: 1.8, sweep: -0.25, thickness: 0.14, side: 'top', chordScale: 0.85 }
+        { atStation: 4, span: 3.2, sweep: 0.15, thickness: 0.2, side: 'both', chordScale: 1.1 },
+        { atStation: 6, span: 2.0, sweep: 0.55, thickness: 0.12, side: 'both', chordScale: 0.7 },
+        { atStation: 2, span: 2.2, sweep: -0.1, thickness: 0.16, side: 'top', chordScale: 0.9 },
+        { atStation: 5, span: 1.5, sweep: 0.2, thickness: 0.14, side: 'bottom', tipAerial: true, chordScale: 0.85 }
       ],
-      color: '#5a8a7a',
+      color: '#4a7a6a',
       style: {
-        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
+        asymmetric: false, bridgeSide: 0, engineLayout: 'single', hasRadiator: true,
         hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
-        radarDishes: ['top', 'side', 'bottom'], hasDockingRing: false, detailDensity: 2.1
+        radarDishes: ['top', 'side', 'bottom'], hasDockingRing: true, detailDensity: 2.3
       }
     }
   },
@@ -445,8 +454,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'odyssey',
-    name: 'Odyssey',
+    id: 'far_reach',
+    name: 'Far Reach',
     role: 'explorer',
     price: 52000,
     droneBays: 2,
@@ -506,8 +515,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'viper_mk3',
-    name: 'Viper Mk3',
+    id: 'fang_mk3',
+    name: 'Fang',
     role: 'fighter',
     price: 40000,
     droneBays: 1,
@@ -518,27 +527,29 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     ],
     accessorySlots: 1,
     hull: {
-      length: 21,
-      stationWidths: [0.12, 0.35, 0.65, 0.95, 1.15, 1.1, 1.05, 1.2, 1.15, 0.75, 0.4, 0.15],
-      stationHeights: [0.1, 0.25, 0.42, 0.55, 0.6, 0.58, 0.55, 0.6, 0.58, 0.4, 0.22, 0.1],
-      crossSectionSides: 12,
-      superellipseExponent: 2.15,
+      // Longer arrow-fighter vs Needle Dart's needle — distinct mid swell + triple engines.
+      length: 24,
+      stationWidths: [0.18, 0.42, 0.72, 1.05, 1.35, 1.45, 1.25, 1.0, 0.75, 0.5, 0.28, 0.12],
+      stationHeights: [0.14, 0.3, 0.48, 0.62, 0.72, 0.75, 0.65, 0.52, 0.4, 0.28, 0.16, 0.08],
+      crossSectionSides: 10,
+      superellipseExponent: 2.55,
       wings: [
-        { atStation: 6, span: 6.2, sweep: 0.9, thickness: 0.18, side: 'both', chordScale: 1.05 },
-        { atStation: 9, span: 1.4, sweep: 0.4, thickness: 0.1, side: 'both', chordScale: 0.7 },
-        { atStation: 2, span: 1.9, sweep: -0.3, thickness: 0.14, side: 'top', chordScale: 0.85 }
+        { atStation: 5, span: 7.4, sweep: 1.15, thickness: 0.22, side: 'both', tipOffsetY: 0.2, chordScale: 1.15 },
+        { atStation: 3, span: 2.8, sweep: 0.2, thickness: 0.14, side: 'both', chordScale: 0.8 },
+        { atStation: 1, span: 2.4, sweep: -0.45, thickness: 0.18, side: 'top', chordScale: 0.9 },
+        { atStation: 7, span: 1.8, sweep: 0.5, thickness: 0.12, side: 'bottom', chordScale: 0.75 }
       ],
-      color: '#a0a8b4',
+      color: '#8896a8',
       style: {
-        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
-        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        asymmetric: false, bridgeSide: 0, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'bottom',
         radarDishes: ['top', 'side'], hasDockingRing: false, detailDensity: 2.0
       }
     }
   },
   {
-    id: 'raptor',
-    name: 'Raptor',
+    id: 'skyhook',
+    name: 'Skyhook',
     role: 'fighter',
     price: 48000,
     droneBays: 1,
@@ -568,8 +579,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'freighter_mk1',
-    name: 'Freighter Mk1',
+    id: 'bulk_tender',
+    name: 'Bulk Tender',
     role: 'trader',
     price: 28000,
     droneBays: 1,
@@ -594,8 +605,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'bulk_hauler',
-    name: 'Bulk Hauler',
+    id: 'vault_barge',
+    name: 'Vault Barge',
     role: 'trader',
     price: 36000,
     droneBays: 1,
@@ -653,8 +664,8 @@ const HAND_CRAFTED_SHIP_CLASSES = [
     }
   },
   {
-    id: 'argosy',
-    name: 'Argosy',
+    id: 'caravan_king',
+    name: 'Caravan King',
     role: 'trader',
     price: 62000,
     droneBays: 2,
@@ -681,22 +692,319 @@ const HAND_CRAFTED_SHIP_CLASSES = [
         radarDishes: ['top', 'bottom'], hasDockingRing: true, detailDensity: 1.85
       }
     }
+  },
+
+  // --- Mining hulls (role: miner) — huge ore holds, tiny cargo, weak combat ---
+  // miningCapacity set explicitly (200 → 2000). cargoCapacity is final (no scale
+  // pass); max 40. Small hulls: 0 accessory slots; larger: 1. Slow and fragile.
+  // Prices scale super-linearly with hold size — big rigs are late-game buys.
+  {
+    id: 'ore_skiff',
+    name: 'Ore Skiff',
+    role: 'miner',
+    price: 14000,
+    droneBays: 0,
+    stats: {
+      hull: 48, shields: 16, armor: 8, cargoCapacity: 12, miningCapacity: 200,
+      speed: 58, turnRate: 0.72, accel: 12
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.2, 7.5], type: 'laser' }],
+    accessorySlots: 0,
+    hull: {
+      // Compact tug-skiff: fat rear drive, skinny scoop nose.
+      length: 15,
+      stationWidths: [1.15, 1.4, 1.55, 1.35, 1.1, 0.95, 0.85, 0.75, 0.65, 0.55, 0.4, 0.28],
+      stationHeights: [0.95, 1.15, 1.25, 1.1, 0.9, 0.78, 0.7, 0.62, 0.55, 0.45, 0.32, 0.22],
+      crossSectionSides: 6,
+      superellipseExponent: 2.4,
+      wings: [
+        { atStation: 2, span: 1.9, sweep: -0.25, thickness: 0.32, side: 'both', chordScale: 0.85 },
+        { atStation: 6, span: 1.1, sweep: 0.35, thickness: 0.18, side: 'bottom', chordScale: 0.75 }
+      ],
+      color: '#b89858',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'single', hasRadiator: false,
+        hasCargoPods: false, hasSensorMast: false, cockpitMount: 'top',
+        radarDishes: ['top'], hasDockingRing: false, detailDensity: 1.6,
+        miningRig: true, visualKit: 2, platingStyle: 'sparse', archetype: 'skiff'
+      }
+    }
+  },
+  {
+    id: 'lode_seeker',
+    name: 'Lode Seeker',
+    role: 'miner',
+    price: 28000,
+    droneBays: 0,
+    stats: {
+      hull: 58, shields: 18, armor: 10, cargoCapacity: 16, miningCapacity: 450,
+      speed: 52, turnRate: 0.65, accel: 11
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.25, 8.5], type: 'laser' }],
+    accessorySlots: 0,
+    hull: {
+      // Needle-prospector: long thin survey profile with side vanes.
+      length: 22,
+      stationWidths: [0.55, 0.75, 0.95, 1.15, 1.35, 1.45, 1.4, 1.2, 0.95, 0.7, 0.45, 0.25],
+      stationHeights: [0.5, 0.65, 0.8, 0.95, 1.1, 1.2, 1.15, 1.0, 0.8, 0.55, 0.35, 0.2],
+      crossSectionSides: 10,
+      superellipseExponent: 1.9,
+      wings: [
+        { atStation: 5, span: 2.6, sweep: 0.55, thickness: 0.22, side: 'both', chordScale: 1.1 },
+        { atStation: 3, span: 1.4, sweep: -0.3, thickness: 0.18, side: 'top', chordScale: 0.8 },
+        { atStation: 8, span: 1.0, sweep: 0.2, thickness: 0.15, side: 'both', chordScale: 0.7 }
+      ],
+      color: '#6a8a78',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'bottom'], hasDockingRing: false, detailDensity: 2.0,
+        miningRig: true, visualKit: 9, platingStyle: 'ribs', archetype: 'prospector'
+      }
+    }
+  },
+  {
+    id: 'claim_jumper',
+    name: 'Claim Jumper',
+    role: 'miner',
+    price: 48000,
+    droneBays: 0,
+    stats: {
+      hull: 68, shields: 20, armor: 12, cargoCapacity: 20, miningCapacity: 700,
+      speed: 48, turnRate: 0.58, accel: 10
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.3, 9.5], type: 'laser' }],
+    accessorySlots: 0,
+    hull: {
+      // Asymmetric claim-runner: offset bridge, chunky mid hopper.
+      length: 23,
+      stationWidths: [0.9, 1.3, 1.8, 2.2, 2.55, 2.5, 2.1, 1.7, 1.3, 0.95, 0.65, 0.4],
+      stationHeights: [0.7, 1.0, 1.35, 1.7, 2.0, 1.95, 1.6, 1.25, 0.95, 0.7, 0.48, 0.3],
+      crossSectionSides: 8,
+      superellipseExponent: 3.4,
+      stationOffsetsX: [0, 0.05, 0.12, 0.18, 0.22, 0.2, 0.14, 0.08, 0.04, 0, 0, 0],
+      wings: [
+        { atStation: 4, span: 2.8, sweep: 0.2, thickness: 0.4, side: 'left', chordScale: 1.05 },
+        { atStation: 5, span: 1.6, sweep: -0.1, thickness: 0.28, side: 'right', chordScale: 0.9 },
+        { atStation: 2, span: 1.5, sweep: -0.35, thickness: 0.25, side: 'top', chordScale: 0.85 }
+      ],
+      color: '#8a5a48',
+      style: {
+        asymmetric: true, bridgeSide: 1, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'bottom',
+        radarDishes: ['top', 'side'], hasDockingRing: false, detailDensity: 2.4,
+        miningRig: true, visualKit: 14, platingStyle: 'sponsons', archetype: 'claim'
+      }
+    }
+  },
+  {
+    id: 'rockhound',
+    name: 'Rockhound',
+    role: 'miner',
+    price: 75000,
+    droneBays: 0,
+    stats: {
+      hull: 78, shields: 22, armor: 14, cargoCapacity: 24, miningCapacity: 950,
+      speed: 45, turnRate: 0.52, accel: 9
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.3, 10.5], type: 'laser' }],
+    accessorySlots: 0,
+    hull: {
+      // Boxy ore-dog: squared cargo block, stub wings.
+      length: 26,
+      stationWidths: [1.4, 1.9, 2.4, 2.7, 2.85, 2.85, 2.7, 2.4, 1.9, 1.35, 0.85, 0.45],
+      stationHeights: [1.2, 1.55, 1.9, 2.15, 2.25, 2.25, 2.1, 1.85, 1.45, 1.0, 0.6, 0.35],
+      crossSectionSides: 4,
+      superellipseExponent: 4.5,
+      wings: [
+        { atStation: 3, span: 1.8, sweep: 0.05, thickness: 0.45, side: 'both', chordScale: 1.15 },
+        { atStation: 6, span: 2.2, sweep: 0.0, thickness: 0.5, side: 'bottom', chordScale: 1.2 },
+        { atStation: 1, span: 1.2, sweep: -0.4, thickness: 0.3, side: 'top', chordScale: 0.9 }
+      ],
+      color: '#5a6870',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'quad', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top'], hasDockingRing: true, detailDensity: 2.6,
+        miningRig: true, visualKit: 18, platingStyle: 'clamshell', archetype: 'boxer'
+      }
+    }
+  },
+  {
+    id: 'strip_miner',
+    name: 'Strip Miner',
+    role: 'miner',
+    price: 120000,
+    droneBays: 0,
+    stats: {
+      hull: 90, shields: 24, armor: 16, cargoCapacity: 28, miningCapacity: 1200,
+      speed: 42, turnRate: 0.48, accel: 8
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.35, 11.5], type: 'laser' }],
+    accessorySlots: 1,
+    hull: {
+      // Wide flat strip-barge: low height, broad mid, wing platforms.
+      length: 34,
+      stationWidths: [1.1, 1.7, 2.5, 3.2, 3.6, 3.7, 3.5, 3.0, 2.3, 1.6, 1.0, 0.55],
+      stationHeights: [0.7, 0.95, 1.2, 1.35, 1.4, 1.38, 1.3, 1.15, 0.95, 0.7, 0.45, 0.28],
+      crossSectionSides: 12,
+      superellipseExponent: 3.0,
+      wings: [
+        { atStation: 5, span: 4.2, sweep: 0.0, thickness: 0.35, side: 'both', chordScale: 1.25 },
+        { atStation: 4, span: 3.0, sweep: 0.15, thickness: 0.3, side: 'both', chordScale: 1.0 },
+        { atStation: 7, span: 2.0, sweep: 0.25, thickness: 0.25, side: 'bottom', chordScale: 0.9 }
+      ],
+      color: '#c4a060',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'twin', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'bottom'], hasDockingRing: true, detailDensity: 2.1,
+        miningRig: true, visualKit: 22, platingStyle: 'belts', archetype: 'strip'
+      }
+    }
+  },
+  {
+    id: 'deep_vein',
+    name: 'Deep Vein',
+    role: 'miner',
+    price: 185000,
+    droneBays: 0,
+    stats: {
+      hull: 100, shields: 26, armor: 18, cargoCapacity: 32, miningCapacity: 1500,
+      speed: 40, turnRate: 0.45, accel: 8
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.4, 12.5], type: 'laser' }],
+    accessorySlots: 1,
+    hull: {
+      // Tall vertical ore silo hull — height-dominant silhouette.
+      length: 33,
+      stationWidths: [1.0, 1.4, 1.9, 2.3, 2.55, 2.6, 2.45, 2.1, 1.65, 1.15, 0.75, 0.4],
+      stationHeights: [1.4, 1.9, 2.5, 3.0, 3.3, 3.35, 3.1, 2.6, 2.0, 1.4, 0.9, 0.5],
+      crossSectionSides: 8,
+      superellipseExponent: 2.6,
+      wings: [
+        { atStation: 4, span: 2.2, sweep: 0.4, thickness: 0.55, side: 'both', tipOffsetY: -0.4, chordScale: 0.95 },
+        { atStation: 6, span: 1.8, sweep: -0.2, thickness: 0.4, side: 'top', chordScale: 0.85 },
+        { atStation: 2, span: 2.5, sweep: -0.1, thickness: 0.45, side: 'bottom', chordScale: 1.05 }
+      ],
+      color: '#4a5a6a',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'triple', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'side'], hasDockingRing: false, detailDensity: 2.8,
+        miningRig: true, visualKit: 25, platingStyle: 'spine', archetype: 'silo'
+      }
+    }
+  },
+  {
+    id: 'extraction_rig',
+    name: 'Extraction Rig',
+    role: 'miner',
+    price: 280000,
+    droneBays: 1,
+    stats: {
+      hull: 115, shields: 28, armor: 20, cargoCapacity: 36, miningCapacity: 1750,
+      speed: 37, turnRate: 0.42, accel: 7
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.4, 13.5], type: 'laser' }],
+    accessorySlots: 1,
+    hull: {
+      // Modular stack: pinched waist between ore modules, offset boom.
+      length: 42,
+      stationWidths: [1.6, 2.4, 2.9, 2.2, 3.2, 3.6, 2.5, 3.4, 2.8, 1.8, 1.1, 0.6],
+      stationHeights: [1.2, 1.7, 2.1, 1.6, 2.3, 2.6, 1.8, 2.4, 2.0, 1.3, 0.8, 0.4],
+      crossSectionSides: 10,
+      superellipseExponent: 3.6,
+      stationOffsetsX: [0, -0.1, -0.15, 0.05, 0.2, 0.18, -0.1, -0.15, 0.05, 0.1, 0, 0],
+      wings: [
+        { atStation: 5, span: 3.8, sweep: 0.1, thickness: 0.5, side: 'left', chordScale: 1.1 },
+        { atStation: 7, span: 3.2, sweep: 0.25, thickness: 0.42, side: 'right', chordScale: 1.0 },
+        { atStation: 3, span: 2.0, sweep: -0.3, thickness: 0.35, side: 'top', chordScale: 0.9 },
+        { atStation: 6, span: 2.6, sweep: 0.05, thickness: 0.4, side: 'bottom', chordScale: 1.05 }
+      ],
+      color: '#7a4838',
+      style: {
+        asymmetric: true, bridgeSide: -1, engineLayout: 'quad', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'bottom',
+        radarDishes: ['top', 'bottom', 'side'], hasDockingRing: true, detailDensity: 2.9,
+        miningRig: true, visualKit: 28, platingStyle: 'lattice', archetype: 'rig'
+      }
+    }
+  },
+  {
+    id: 'motherlode',
+    name: 'Motherlode',
+    role: 'miner',
+    price: 420000,
+    droneBays: 1,
+    stats: {
+      hull: 130, shields: 30, armor: 22, cargoCapacity: 40, miningCapacity: 2000,
+      speed: 34, turnRate: 0.38, accel: 6
+    },
+    hardpoints: [{ id: 'fwd1', position: [0, 0.45, 14.5], type: 'laser' }],
+    accessorySlots: 1,
+    hull: {
+      // Mega barge: blunt cylinder with massive mid belly and aft thruster block.
+      length: 48,
+      stationWidths: [2.2, 2.8, 3.4, 3.9, 4.2, 4.25, 4.1, 3.7, 3.0, 2.1, 1.3, 0.7],
+      stationHeights: [1.6, 2.1, 2.6, 3.0, 3.25, 3.3, 3.15, 2.8, 2.2, 1.5, 0.95, 0.5],
+      crossSectionSides: 14,
+      superellipseExponent: 3.8,
+      wings: [
+        { atStation: 4, span: 5.0, sweep: -0.05, thickness: 0.6, side: 'both', chordScale: 1.3 },
+        { atStation: 6, span: 3.5, sweep: 0.1, thickness: 0.5, side: 'both', chordScale: 1.1 },
+        { atStation: 2, span: 2.8, sweep: -0.2, thickness: 0.45, side: 'top', chordScale: 0.95 },
+        { atStation: 7, span: 3.2, sweep: 0.15, thickness: 0.48, side: 'bottom', chordScale: 1.15 },
+        { atStation: 9, span: 1.8, sweep: 0.3, thickness: 0.3, side: 'both', chordScale: 0.8 }
+      ],
+      color: '#3a2e28',
+      style: {
+        asymmetric: false, bridgeSide: 0, engineLayout: 'quad', hasRadiator: true,
+        hasCargoPods: false, hasSensorMast: true, cockpitMount: 'top',
+        radarDishes: ['top', 'bottom', 'side'], hasDockingRing: true, detailDensity: 3.0,
+        miningRig: true, visualKit: 31, platingStyle: 'scales', archetype: 'mothership'
+      }
+    }
   }
 ]
 
-export const STARTER_SHIP_CLASS_ID = 'bravia_mk2'
+export const STARTER_SHIP_CLASS_ID = 'light_runner'
 // 3× prior (was 15) with the mining-hold triple pass — still below
 // computeMiningCapacity's floor so the starter stays the smallest hold.
 const STARTER_MINING_CAPACITY = 45
 
-for (const c of HAND_CRAFTED_SHIP_CLASSES) {
+for (let i = 0; i < HAND_CRAFTED_SHIP_CLASSES.length; i++) {
+  const c = HAND_CRAFTED_SHIP_CLASSES[i]
   c.droneBays ??= 0
-  c.stats.miningCapacity = c.id === STARTER_SHIP_CLASS_ID ? STARTER_MINING_CAPACITY : computeMiningCapacity(c.price, c.role)
+  // Explicit miningCapacity (miners, starter) is kept as authored.
+  if (c.stats.miningCapacity == null) {
+    c.stats.miningCapacity =
+      c.id === STARTER_SHIP_CLASS_ID
+        ? STARTER_MINING_CAPACITY
+        : computeMiningCapacity(c.price, c.role)
+  }
+  // Stable per-class visual kit so hand-crafted meshes don't share one detail layout.
+  c.hull.style ??= {}
+  if (c.hull.style.visualKit == null) {
+    // Spread across 0–31; role offset keeps same-role hulls from clustering kits.
+    const roleOff =
+      c.role === 'fighter' ? 3 : c.role === 'trader' ? 7 : c.role === 'explorer' ? 11 : c.role === 'miner' ? 17 : 0
+    c.hull.style.visualKit = (i * 5 + roleOff) % 32
+  }
+  if (c.hull.style.platingStyle == null) {
+    const platings = ['belts', 'sparse', 'spine', 'sponsons', 'scales', 'ribs', 'clamshell', 'lattice']
+    c.hull.style.platingStyle = platings[(i * 3 + (c.role?.length ?? 0)) % platings.length]
+  }
 }
 
 // Hand-crafted archetypes + drone-bay hulls; remainder generated to fill the roster.
-const SHIP_ROSTER_SEED = 918273645
-const GENERATED_SHIP_CLASSES = generateShipClassRoster(mulberry32(SHIP_ROSTER_SEED), 82)
+// Seed bump re-rolls gen silhouettes when uniqueness / archetype system changes.
+const SHIP_ROSTER_SEED = 918273731
+const GENERATED_SHIP_CLASSES = generateShipClassRoster(mulberry32(SHIP_ROSTER_SEED), 82, {
+  priorHulls: HAND_CRAFTED_SHIP_CLASSES.map((c) => c.hull),
+  // Keep generated display names unique against hand-crafted models.
+  priorNames: HAND_CRAFTED_SHIP_CLASSES.map((c) => c.name)
+})
 
 /**
  * Alien hulls — organic / non-human silhouettes. Never sold in shipyards
@@ -882,7 +1190,23 @@ export const ALIEN_SHIP_CLASSES = [
 
 for (const c of ALIEN_SHIP_CLASSES) {
   c.droneBays ??= 0
-  c.stats.miningCapacity = computeMiningCapacity(c.price, c.role)
+  if (c.stats.miningCapacity == null) {
+    c.stats.miningCapacity = computeMiningCapacity(c.price, c.role)
+  }
+}
+
+/**
+ * Scale cargo holds so large freighters gain the most (old 280 → ~700) while
+ * light fighters only step up modestly. Applied once after the roster is built.
+ * Curve: mult = 1.4 + (old/280)×1.1  →  1.4× … 2.5×.
+ * Mining hulls skip this — their tiny cargo (max 40) is authored as final.
+ */
+export function scaleCargoCapacity(old) {
+  const c = Math.max(0, Math.floor(Number(old) || 0))
+  if (c <= 0) return c
+  const t = Math.min(1, c / 280)
+  const mult = 1.4 + t * 1.1
+  return Math.max(1, Math.round(c * mult))
 }
 
 export const SHIP_CLASSES = [
@@ -891,10 +1215,81 @@ export const SHIP_CLASSES = [
   ...ALIEN_SHIP_CLASSES
 ]
 
+// One-shot cargo pass — hand-crafted, generated, and alien hulls (not miners).
+for (const c of SHIP_CLASSES) {
+  if (!c?.stats || c.role === 'miner') continue
+  c.stats.cargoCapacity = scaleCargoCapacity(c.stats.cargoCapacity)
+}
+
+// Within each role, expensive hulls must outclass cheaper ones (power score).
+// Runs after cargo scale so final shop stats are ordered by price.
+// A few passes clear residual inversions after scaling cascades.
+for (let pass = 0; pass < 4; pass++) {
+  balancePurchasableShipsByRole(SHIP_CLASSES)
+}
+
+// Re-sync mining holds for non-miners after any cargo/stat balance (price-based).
+for (const c of SHIP_CLASSES) {
+  if (!c?.stats || c.role === 'miner') continue
+  if (c.id === STARTER_SHIP_CLASS_ID) continue
+  // Starter hold is authored; other non-miners stay price-linked.
+  c.stats.miningCapacity = computeMiningCapacity(c.price, c.role)
+}
+
+/**
+ * Old display-name renames (EVE/Elite scrub + freighter/hauler).
+ * Saves / blueprints / missions may still store the previous ids.
+ */
+export const SHIP_CLASS_ID_ALIASES = {
+  hauler: 'hold_runner',
+  interceptor: 'needle_dart',
+  corvette: 'gun_barge',
+  scout: 'light_runner',
+  clipper: 'swift_keel',
+  odyssey: 'far_reach',
+  viper_mk3: 'fang_mk3',
+  raptor: 'skyhook',
+  freighter_mk1: 'bulk_tender',
+  bulk_hauler: 'vault_barge',
+  argosy: 'caravan_king',
+  prospector: 'lode_seeker'
+}
+
+/** Map a legacy or current class id to the live roster id. */
+export function resolveShipClassId(id) {
+  if (id == null || id === '') return id
+  return SHIP_CLASS_ID_ALIASES[id] ?? id
+}
+
+/** Fallback when a save references a generated hull from an older roster seed. */
+function fallbackShipClass(id) {
+  // Prefer a mid-tier trader so orphaned gen hulls remain usable.
+  return (
+    SHIP_CLASSES.find((c) => c.id === 'hold_runner') ||
+    SHIP_CLASSES.find((c) => c.role === 'trader' && !c.npcOnly && !c.alien) ||
+    SHIP_CLASSES.find((c) => !c.npcOnly && !c.alien) ||
+    SHIP_CLASSES[0]
+  )
+}
+
 export function getShipClass(id) {
-  const cls = SHIP_CLASSES.find((c) => c.id === id)
+  const resolved = resolveShipClassId(id)
+  let cls = SHIP_CLASSES.find((c) => c.id === resolved)
+  if (!cls && typeof id === 'string' && id.startsWith('gen_')) {
+    cls = fallbackShipClass(id)
+  }
   if (!cls) throw new Error(`Unknown ship class: ${id}`)
   return cls
+}
+
+/** Largest cargoCapacity among all ship classes (trade mission haul caps). */
+export function maxShipCargoCapacity() {
+  let max = 80
+  for (const c of SHIP_CLASSES) {
+    const n = Math.floor(Number(c?.stats?.cargoCapacity) || 0)
+    if (n > max) max = n
+  }
+  return max
 }
 
 export function isAlienShipClass(shipClassOrId) {
@@ -909,9 +1304,12 @@ export function isAlienShipClass(shipClassOrId) {
   return !!shipClassOrId.alien
 }
 
-/** Human/police market ships only — never alien tech. */
+/** Human/police market ships only — never alien tech. Sorted cheapest → dearest. */
 export function purchasableShipClasses() {
-  return SHIP_CLASSES.filter((c) => !c.npcOnly && !c.alien)
+  return SHIP_CLASSES
+    .filter((c) => !c.npcOnly && !c.alien)
+    .slice()
+    .sort((a, b) => (a.price - b.price) || a.name.localeCompare(b.name))
 }
 
 export function alienShipClasses() {

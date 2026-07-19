@@ -1,15 +1,82 @@
 import { spawnNpc, spawnNpcWithClass, clearPositionOfBodies } from './spawner.js'
 import { pick } from '../procgen/prng.js'
 import { coreFraction, findBody, getSystem } from '../procgen/galaxy.js'
+import { getGood } from '../data/goods.js'
 
 const PROBEABLE_KINDS = ['planet', 'moon', 'asteroidField']
 // ponytail: hard cap so a lead chain always terminates; raise only if trails feel short
 const MAX_INVESTIGATION_LEADS = 2
 const LEAD_REWARD_MULT = 1.05
 
+/** @type {null|((info: object) => void)} */
+let missionCompletedHandler = null
+
+/** UI/audio hook when a mission pays out (floating text + chime in main.js). */
+export function setMissionCompletedHandler(fn) {
+  missionCompletedHandler = typeof fn === 'function' ? fn : null
+}
+
 function pushMissionLog(mission, gameState, kind, text) {
   mission.log ??= []
   mission.log.push({ kind, text, simTime: gameState.simTime ?? 0 })
+}
+
+/**
+ * Pay out and remove an active mission immediately (no station turn-in).
+ * @returns {object|null} summary for toast/UI
+ */
+export function finishMission(gameState, mission) {
+  if (!gameState || !mission) return null
+  if (mission.status === 'complete' || mission.status === 'dropped') return null
+  if (!gameState.missions.active.some((m) => m.id === mission.id)) return null
+
+  mission.objectiveComplete = true
+  mission.status = 'complete'
+  gameState.missions.active = gameState.missions.active.filter((m) => m.id !== mission.id)
+  const reward = Math.max(0, Math.floor(Number(mission.reward) || 0))
+  gameState.player.credits += reward
+  gameState.player.reputation = (gameState.player.reputation ?? 0) + 1
+
+  // Drop waypoint if it was locked on this mission's target / free-space hunt.
+  const t = mission.target
+  if (
+    gameState.player.waypointBodyId != null &&
+    (gameState.player.waypointBodyId === t?.bodyId ||
+      gameState.player.waypointBodyId === mission.giverStationId ||
+      gameState.player.waypointBodyId === mission.trade?.destBodyId ||
+      gameState.player.waypointBodyId === mission.trade?.originBodyId)
+  ) {
+    gameState.player.waypointBodyId = null
+  }
+  if (Array.isArray(gameState.player.waypointPosition) && t?.kind === 'npcShip') {
+    gameState.player.waypointPosition = null
+  }
+
+  const giverBody = findBody(gameState.galaxy, mission.giverStationId)
+  const giverSystem = getSystem(gameState.galaxy, mission.giverSystemId)
+  const info = {
+    id: mission.id,
+    type: mission.type,
+    title: mission.title,
+    reward,
+    giverBodyName: giverBody?.name ?? 'mission board',
+    giverSystemName: giverSystem?.name ?? 'unknown system',
+    giverStationId: mission.giverStationId,
+    giverSystemId: mission.giverSystemId
+  }
+  try {
+    missionCompletedHandler?.(info)
+  } catch {
+    /* UI hook must not break sim */
+  }
+  return info
+}
+
+/** @deprecated Use finishMission — kept for older tests / callers. */
+export function turnInMission(gameState, missionId) {
+  const mission = gameState.missions.active.find((m) => m.id === missionId)
+  if (!mission) throw new Error('Mission not active')
+  return finishMission(gameState, mission)
 }
 
 /**
@@ -81,8 +148,95 @@ export function acceptMission(gameState, missionId, rng) {
     mission.target.npcId = npc.id
   }
 
+  if (mission.type === 'trade') {
+    mission.trade ??= {}
+    mission.trade.purchased = mission.trade.purchased ?? 0
+    mission.trade.sold = mission.trade.sold ?? 0
+    const q = mission.trade.quantity ?? 0
+    let goodName = mission.trade.goodId ?? 'goods'
+    try {
+      goodName = getGood(mission.trade.goodId).name
+    } catch {
+      /* keep id */
+    }
+    pushMissionLog(
+      mission,
+      gameState,
+      'intel',
+      `Buy ${q}× ${goodName} here with your credits, haul to the destination bay, then sell the cargo to complete the contract.`
+    )
+  }
+
   // Body already surveyed before accept — complete probe objectives immediately.
   updateMissionProgress(gameState)
+}
+
+function refreshTradeMissionComplete(mission, gameState) {
+  if (!mission || mission.type !== 'trade' || mission.status === 'complete') return false
+  const need = Math.max(0, Math.floor(Number(mission.trade?.quantity) || 0))
+  if (need < 1) return false
+  const purchased = Math.floor(Number(mission.trade.purchased) || 0)
+  const sold = Math.floor(Number(mission.trade.sold) || 0)
+  if (purchased < need || sold < need) return false
+  pushMissionLog(mission, gameState, 'intel', 'Trade cargo delivered and sold — contract complete')
+  finishMission(gameState, mission)
+  return true
+}
+
+/**
+ * Call after the player buys cargo at a bay — advances active trade missions.
+ */
+export function noteTradePurchase(gameState, bodyId, goodId, quantity) {
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0))
+  if (!gameState || !bodyId || !goodId || qty < 1) return
+  for (const mission of [...(gameState.missions?.active ?? [])]) {
+    if (mission.type !== 'trade' || mission.status === 'complete') continue
+    if (String(mission.trade?.originBodyId) !== String(bodyId)) continue
+    if (mission.trade?.goodId !== goodId) continue
+    mission.trade.purchased = (mission.trade.purchased ?? 0) + qty
+    const need = mission.trade.quantity ?? 0
+    const have = mission.trade.purchased
+    pushMissionLog(
+      mission,
+      gameState,
+      'intel',
+      `Purchased ${qty} at origin (${Math.min(have, need)}/${need})`
+    )
+    if (have >= need) {
+      // Point nav at destination sell bay.
+      mission.target = {
+        kind: 'body',
+        systemId: mission.trade.destSystemId,
+        bodyId: mission.trade.destBodyId
+      }
+      advanceMissionWaypoint(gameState, mission)
+    }
+    refreshTradeMissionComplete(mission, gameState)
+  }
+}
+
+/**
+ * Call after the player sells cargo at a bay — completes trade missions when
+ * enough has been bought at origin and sold at destination.
+ */
+export function noteTradeSale(gameState, bodyId, goodId, quantity) {
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0))
+  if (!gameState || !bodyId || !goodId || qty < 1) return
+  for (const mission of [...(gameState.missions?.active ?? [])]) {
+    if (mission.type !== 'trade' || mission.status === 'complete') continue
+    if (String(mission.trade?.destBodyId) !== String(bodyId)) continue
+    if (mission.trade?.goodId !== goodId) continue
+    mission.trade.sold = (mission.trade.sold ?? 0) + qty
+    const need = mission.trade.quantity ?? 0
+    const have = mission.trade.sold
+    pushMissionLog(
+      mission,
+      gameState,
+      'intel',
+      `Sold ${qty} at destination (${Math.min(have, need)}/${need})`
+    )
+    refreshTradeMissionComplete(mission, gameState)
+  }
 }
 
 // Re-materialize any incomplete mission with an npcShip target in this system
@@ -118,14 +272,16 @@ export function markBodyVisited(gameState, bodyId) {
     gameState.visitedBodyIds.push(id)
   }
   // Exploration contracts complete on visit (dock / proximity / probe).
+  const done = []
   for (const mission of gameState.missions.active) {
-    if (mission.objectiveComplete) continue
+    if (mission.objectiveComplete || mission.status === 'complete') continue
     if (mission.type !== 'exploration') continue
     if (String(mission.target?.bodyId) === id) {
-      mission.objectiveComplete = true
-      pushMissionLog(mission, gameState, 'intel', 'Survey site visited — return to the mission giver')
+      pushMissionLog(mission, gameState, 'intel', 'Survey site visited — contract complete')
+      done.push(mission)
     }
   }
+  for (const mission of done) finishMission(gameState, mission)
 }
 
 // Distinct from visitedBodyIds: a probe mission requires actually launching a
@@ -141,16 +297,18 @@ export function markBodyProbed(gameState, bodyId) {
   markBodyVisited(gameState, id)
   // Complete any matching open probe missions right here (don't rely solely on
   // a later updateMissionProgress call that can be skipped while menus/docked).
+  const done = []
   for (const mission of gameState.missions.active) {
-    if (mission.objectiveComplete) continue
+    if (mission.objectiveComplete || mission.status === 'complete') continue
     if (mission.type !== 'probe') continue
     const targetId = mission.target?.bodyId
     if (targetId != null && String(targetId) === id) {
-      mission.objectiveComplete = true
-      pushMissionLog(mission, gameState, 'intel', 'Survey complete — return to the mission giver')
+      pushMissionLog(mission, gameState, 'intel', 'Survey complete — contract complete')
+      done.push(mission)
     }
   }
-  // Catch-all in case logs/visit ordering left a probe open.
+  for (const mission of done) finishMission(gameState, mission)
+  // Catch-all for bounties / other progress while menus/docked.
   updateMissionProgress(gameState)
 }
 
@@ -266,62 +424,70 @@ export function resolveInvestigationProbe(gameState, bodyId, rng) {
     return { kind: 'hostile', mission, npcId: npc.id, position: [...position] }
   }
 
-  mission.objectiveComplete = true
-  pushMissionLog(mission, gameState, 'intel', 'Investigation data recovered — return to the mission giver')
-  advanceMissionWaypoint(gameState, mission)
+  pushMissionLog(mission, gameState, 'intel', 'Investigation data recovered — contract complete')
+  finishMission(gameState, mission)
   return { kind: 'intel', mission }
 }
 
 export function updateMissionProgress(gameState) {
   const probed = (gameState.probedBodyIds ?? []).map(String)
   const visited = (gameState.visitedBodyIds ?? []).map(String)
-  for (const mission of gameState.missions.active) {
-    const wasComplete = !!mission.objectiveComplete
+  const toFinish = []
+  // Snapshot — finishMission mutates active mid-loop.
+  for (const mission of [...(gameState.missions?.active ?? [])]) {
+    if (mission.status === 'complete' || mission.objectiveComplete) continue
     const prevBody = mission.target?.bodyId
     const prevNpc = mission.target?.npcId
-    if (!mission.objectiveComplete) {
-      if (mission.target?.kind === 'npcShip') {
-        const npc = gameState.npcs.find((n) => n.id === mission.target.npcId)
-        if (npc?.destroyed) mission.objectiveComplete = true
-      } else if (mission.type === 'probe') {
-        const bodyId = mission.target?.bodyId
-        if (bodyId != null && probed.includes(String(bodyId))) {
-          mission.objectiveComplete = true
-        }
-      } else if (mission.type === 'exploration') {
-        const bodyId = mission.target?.bodyId
-        // Visited OR probed both count as surveying the site.
-        if (bodyId != null && (visited.includes(String(bodyId)) || probed.includes(String(bodyId)))) {
-          mission.objectiveComplete = true
-        }
+    let justDone = false
+    if (mission.target?.kind === 'npcShip') {
+      const npc = gameState.npcs.find((n) => n.id === mission.target.npcId)
+      if (npc?.destroyed) justDone = true
+    } else if (mission.type === 'probe') {
+      const bodyId = mission.target?.bodyId
+      if (bodyId != null && probed.includes(String(bodyId))) justDone = true
+    } else if (mission.type === 'exploration') {
+      const bodyId = mission.target?.bodyId
+      if (bodyId != null && (visited.includes(String(bodyId)) || probed.includes(String(bodyId)))) {
+        justDone = true
       }
-      // investigation body phase: only resolveInvestigationProbe sets complete
     }
-    // When objective completes (or target moves), refresh waypoint → next stage / turn-in.
-    if (
-      (!wasComplete && mission.objectiveComplete) ||
-      prevBody !== mission.target?.bodyId ||
-      prevNpc !== mission.target?.npcId
-    ) {
+    // investigation body phase: only resolveInvestigationProbe finishes
+    // trade: only noteTradeSale → refreshTradeMissionComplete finishes
+    if (justDone) {
+      toFinish.push(mission)
+      continue
+    }
+    if (prevBody !== mission.target?.bodyId || prevNpc !== mission.target?.npcId) {
       advanceMissionWaypoint(gameState, mission)
     }
+  }
+  for (const mission of toFinish) {
+    if (mission.type === 'probe' || mission.type === 'exploration') {
+      pushMissionLog(mission, gameState, 'intel', 'Objective complete — contract finished')
+    } else if (mission.target?.kind === 'npcShip') {
+      pushMissionLog(mission, gameState, 'intel', 'Target eliminated — contract complete')
+    }
+    finishMission(gameState, mission)
   }
 }
 
 /**
- * Clear the old mission waypoint and point at the next objective or turn-in.
+ * Refresh waypoint when the objective target moves (lead / hostile retarget).
  * Only retargets if the player was tracking this mission (or has no waypoint).
  */
 export function advanceMissionWaypoint(gameState, mission) {
   if (!mission || !gameState?.player) return
+  if (mission.status === 'complete' || mission.objectiveComplete) return
   const wpBody = gameState.player.waypointBodyId
   const wpPos = gameState.player.waypointPosition
   const hadNoWaypoint = wpBody == null && (wpPos == null || !wpPos.length)
-  // Related if waypoint was on prior objective body / giver / free-space hunt.
+  // Related if waypoint was on prior objective body / free-space hunt.
   const related =
     hadNoWaypoint ||
     wpBody === mission.target?.bodyId ||
     wpBody === mission.giverStationId ||
+    wpBody === mission.trade?.originBodyId ||
+    wpBody === mission.trade?.destBodyId ||
     mission.target?.kind === 'npcShip' ||
     (Array.isArray(wpPos) && mission.target?.kind === 'npcShip')
   if (!related) return
@@ -332,17 +498,6 @@ export function advanceMissionWaypoint(gameState, mission) {
     gameState.player.waypointBodyId = null
     gameState.player.waypointPosition = null
   }
-}
-
-export function turnInMission(gameState, missionId) {
-  const mission = gameState.missions.active.find((m) => m.id === missionId)
-  if (!mission) throw new Error('Mission not active')
-  if (!mission.objectiveComplete) throw new Error('Mission objective not complete yet')
-
-  mission.status = 'complete'
-  gameState.missions.active = gameState.missions.active.filter((m) => m.id !== missionId)
-  gameState.player.credits += mission.reward
-  gameState.player.reputation += 1
 }
 
 /**
@@ -362,20 +517,32 @@ export function dropMission(gameState, missionId) {
   mission.status = 'dropped'
 }
 
-// Where the player should go next for an active mission: the objective
-// system/body while incomplete, or the giver station once ready to turn in.
+// Where the player should go next for an active mission (objective only —
+// completed contracts are removed immediately, no turn-in phase).
 // Bounty / investigation-hostile objectives have no body — only a system +
 // world position (live NPC if spawned, else the original locationHint).
 export function missionNavTarget(mission, gameState) {
-  if (mission.objectiveComplete) {
+  if (mission.type === 'trade' && mission.trade) {
+    const tr = mission.trade
+    const need = Math.max(0, Math.floor(Number(tr.quantity) || 0))
+    const purchased = Math.floor(Number(tr.purchased) || 0)
+    if (purchased < need) {
+      return {
+        phase: 'objective',
+        systemId: tr.originSystemId,
+        bodyId: tr.originBodyId,
+        position: null
+      }
+    }
     return {
-      phase: 'turnin',
-      systemId: mission.giverSystemId,
-      bodyId: mission.giverStationId,
+      phase: 'objective',
+      systemId: tr.destSystemId,
+      bodyId: tr.destBodyId,
       position: null
     }
   }
-  if (mission.target.kind === 'body') {
+
+  if (mission.target?.kind === 'body') {
     return {
       phase: 'objective',
       systemId: mission.target.systemId,
@@ -384,14 +551,14 @@ export function missionNavTarget(mission, gameState) {
     }
   }
   // npcShip (bounty or investigation hostile)
-  let position = mission.target.locationHint
-  if (mission.target.npcId && gameState.player.currentSystemId === mission.target.systemId) {
+  let position = mission.target?.locationHint
+  if (mission.target?.npcId && gameState.player.currentSystemId === mission.target.systemId) {
     const npc = gameState.npcs.find((n) => n.id === mission.target.npcId && !n.destroyed)
     if (npc) position = npc.position
   }
   return {
     phase: 'objective',
-    systemId: mission.target.systemId,
+    systemId: mission.target?.systemId,
     bodyId: null,
     position: position ? [...position] : null
   }
@@ -401,15 +568,17 @@ export function missionNavTarget(mission, gameState) {
 export function missionMarkedSystemIds(gameState) {
   const ids = new Set()
   for (const mission of gameState.missions.active) {
+    if (mission.status === 'complete') continue
     ids.add(missionNavTarget(mission, gameState).systemId)
   }
   return ids
 }
 
-// Body ids in a given system that are active mission markers (objective or turn-in).
+// Body ids in a given system that are active mission markers.
 export function missionMarkedBodyIds(gameState, systemId) {
   const ids = new Set()
   for (const mission of gameState.missions.active) {
+    if (mission.status === 'complete') continue
     const t = missionNavTarget(mission, gameState)
     if (t.systemId === systemId && t.bodyId) ids.add(t.bodyId)
   }

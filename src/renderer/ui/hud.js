@@ -116,6 +116,23 @@ const STYLE = `
   pointer-events: none; z-index: 6;
   text-align: center; padding: 6px 18px 7px;
 }
+/* Docked: strip flight chrome; location chip top-left. */
+#hud.docked .status-panel,
+#hud.docked .velocity-panel,
+#hud.docked .target-panel,
+#hud.docked #radar {
+  display: none !important;
+}
+#hud.docked .system-label {
+  left: 16px;
+  top: 16px;
+  transform: none;
+  text-align: left;
+  max-width: min(420px, 48vw);
+}
+#hud.docked .system-label .sys-tag { letter-spacing: 2px; }
+#hud.docked .system-label .nearest-body.visible { display: block; }
+#hud.docked .system-label .nearest-body .nb-tag { content: none; }
 #hud .system-label .sys-tag {
   display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
   color: #7fe6ff; opacity: 0.7;
@@ -654,7 +671,7 @@ export function createHud(container) {
               const s = pct(d.shields, d.maxShields || d.shields || 1)
               const a = pct(d.armor, d.maxArmor || d.armor || 1)
               return `<div class="row" style="margin-bottom:6px">
-                <div class="row-label"><span>Asp ${i + 1}</span><span class="value">S${s.toFixed(0)} A${a.toFixed(0)} H${h.toFixed(0)}</span></div>
+                <div class="row-label"><span>Drone ${i + 1}</span><span class="value">S${s.toFixed(0)} A${a.toFixed(0)} H${h.toFixed(0)}</span></div>
                 <div class="bar hull" style="height:5px"><div class="fill" style="width:${h}%"></div></div>
               </div>`
             })
@@ -779,6 +796,42 @@ export function createHud(container) {
     /** Sparse chromatic glitch on all HUD chrome while supercruising. */
     setCruiseGlitch(active) {
       hud.classList.toggle('cruise-glitch', !!active)
+    },
+    /**
+     * While docked: hide flight HUD (stats, velocity, radar, target).
+     * Keep system name + station/settlement on the top-left.
+     * @param {boolean} docked
+     * @param {{ systemName?: string|null, locationName?: string|null, securityRating?: number|null }} [info]
+     */
+    setDocked(docked, info = {}) {
+      hud.classList.toggle('docked', !!docked)
+      if (!docked) {
+        // Restore default nearest-body tag wording.
+        const tag = nearestBodyEl.querySelector('.nb-tag')
+        if (tag) tag.textContent = 'Nearest Body'
+        return
+      }
+      const tag = nearestBodyEl.querySelector('.nb-tag')
+      if (tag) tag.textContent = 'Docked'
+      const systemName = info.systemName ?? null
+      const securityRating = info.securityRating ?? null
+      const locationName = info.locationName ?? null
+      const sysKey = `${systemName ?? ''}|${securityRating ?? ''}|dock`
+      if (systemName != null && sysKey !== lastSystemLabelKey) {
+        lastSystemLabelKey = sysKey
+        systemNameEl.innerHTML = formatSystemLabel(systemName, securityRating)
+      }
+      const loc = locationName || null
+      if (loc !== lastNearestBodyName) {
+        lastNearestBodyName = loc
+        if (loc) {
+          nearestBodyNameEl.textContent = loc
+          nearestBodyEl.classList.add('visible')
+        } else {
+          nearestBodyNameEl.textContent = ''
+          nearestBodyEl.classList.remove('visible')
+        }
+      }
     },
     element: hud
   }

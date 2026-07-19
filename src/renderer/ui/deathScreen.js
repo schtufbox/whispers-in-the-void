@@ -95,7 +95,7 @@ const SPACE_PUNS = [
   'Congratulations: you’ve achieved escape velocity from the living.',
   'Your final status: permanently offline, still overdrawn on luck.',
   'That wasn’t a close shave — it was a full orbital haircut.',
-  'Remember: never bring a freighter to a plasma fight. Or… whatever you just did.',
+  'Remember: never bring a cargo barge to a plasma fight. Or… whatever you just did.',
   'Your ship has left the chat. Permanently.',
   'Rest in pieces. We’ll scatter the wreck along a nice elliptical orbit.',
   'Plot twist: the void was the real final boss. Also that pilot.',

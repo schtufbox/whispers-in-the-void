@@ -160,7 +160,7 @@ export function createNavMap(container, gameState) {
             <div class="route-list-wrap"></div>
           </div>
           <div class="map-legend" style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(111,216,242,0.2);font-size:11px;line-height:1.55;opacity:0.75;">
-            <div><span style="color:#ff8a3d;">○</span> Orange — mission objective / turn-in</div>
+            <div><span style="color:#ff8a3d;">○</span> Orange — mission objective</div>
             <div><span style="color:#50dc78;">○</span> Green — stored assets in another system</div>
           </div>
         </div>

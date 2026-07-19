@@ -1,7 +1,21 @@
 import { getShipClass } from '../data/shipClasses.js'
+import { accessorySlotCount, effectiveMiningCapacity } from '../data/accessories.js'
+import { droneBayCount } from '../data/drones.js'
 import { ensureLawStanding, MAX_LAW_STANDING } from '../game/security.js'
 import { SKILLS, MAX_SKILL_LEVEL, ensureSkills, skillLevel } from '../game/skills.js'
 import { escapeHtml } from './escapeHtml.js'
+import { isPortraitImageFile, resizeImageToDataUrl } from './portrait.js'
+
+const SHIP_STAT_ROWS = [
+  ['hull', 'Hull'],
+  ['shields', 'Shields'],
+  ['armor', 'Armour'],
+  ['cargoCapacity', 'Cargo'],
+  ['miningCapacity', 'Mining'],
+  ['speed', 'Speed'],
+  ['turnRate', 'Turn'],
+  ['accel', 'Accel']
+]
 
 const STYLE = `
 #character-ui {
@@ -130,45 +144,49 @@ const STYLE = `
 #character-ui .upload-err {
   font-size: 10px; color: #ff9a7a; max-width: 160px; text-align: center; margin-top: 2px;
 }
+/* Ship stats under portrait — compact read of current hull */
+#character-ui .ship-stats-panel {
+  width: 160px; box-sizing: border-box;
+  margin-top: 4px; padding: 8px 8px 7px;
+  background: rgba(8,12,22,0.55);
+  border: 1px solid rgba(111,216,242,0.22);
+  border-left: 2px solid rgba(111,216,242,0.5);
+}
+#character-ui .ship-stats-panel .ss-title {
+  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #7fe6ff; opacity: 0.9; margin: 0 0 6px;
+  text-shadow: 0 0 6px rgba(79,195,217,0.4);
+}
+#character-ui .ship-stats-panel .ss-name {
+  font-size: 11px; color: #eaffff; letter-spacing: 0.3px;
+  margin: 0 0 2px; line-height: 1.25;
+  word-break: break-word;
+}
+#character-ui .ship-stats-panel .ss-class {
+  font-size: 10px; color: #8fb3d9; opacity: 0.85; margin: 0 0 7px;
+}
+#character-ui .ship-stats-panel .ss-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 6px; font-size: 10px; line-height: 1.45;
+  border-bottom: 1px solid rgba(42,58,85,0.35);
+  padding: 1px 0;
+}
+#character-ui .ship-stats-panel .ss-row:last-child { border-bottom: none; }
+#character-ui .ship-stats-panel .ss-row .ss-label {
+  color: #7fa8c9; letter-spacing: 0.4px; text-transform: uppercase; font-size: 9px;
+}
+#character-ui .ship-stats-panel .ss-row .ss-val {
+  color: #cfe3ff; text-align: right; white-space: nowrap;
+}
+#character-ui .ship-stats-panel .ss-section {
+  margin-top: 6px; padding-top: 5px;
+  border-top: 1px solid rgba(111,216,242,0.2);
+  font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: #7fe6ff; opacity: 0.85; margin-bottom: 3px;
+}
 `
 
-const PORTRAIT_MAX_PX = 384
 const NAME_MAX_LEN = 32
-
-function resizeImageToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file)
-    const img = new Image()
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas')
-        const size = PORTRAIT_MAX_PX
-        canvas.width = size
-        canvas.height = size
-        const ctx = canvas.getContext('2d')
-        const sw = img.naturalWidth || img.width
-        const sh = img.naturalHeight || img.height
-        const scale = Math.max(size / sw, size / sh)
-        const dw = sw * scale
-        const dh = sh * scale
-        ctx.fillStyle = '#0a1018'
-        ctx.fillRect(0, 0, size, size)
-        ctx.drawImage(img, (size - dw) / 2, (size - dh) / 2, dw, dh)
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.88)
-        URL.revokeObjectURL(url)
-        resolve(dataUrl)
-      } catch (err) {
-        URL.revokeObjectURL(url)
-        reject(err)
-      }
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      reject(new Error('Could not load image'))
-    }
-    img.src = url
-  })
-}
 
 function lawClass(standing) {
   if (standing <= 2) return 'law-bad'
@@ -204,6 +222,7 @@ export function createCharacterUI(container, gameState) {
             <button type="button" class="clear-btn danger" style="display:none">Clear</button>
           </div>
           <input type="file" class="file-input" accept="image/png,image/jpeg,image/jpg,.png,.jpg,.jpeg" />
+          <div class="ship-stats-panel" aria-label="Current ship stats"></div>
         </div>
         <div class="stats">
           <div class="stat-row">
@@ -269,6 +288,7 @@ export function createCharacterUI(container, gameState) {
   const creditsEl = root.querySelector('.credits')
   const lawHintRow = root.querySelector('.law-hint-row')
   const skillsListEl = root.querySelector('.skills-list')
+  const shipStatsPanel = root.querySelector('.ship-stats-panel')
 
   let onClose = null
 
@@ -343,6 +363,65 @@ export function createCharacterUI(container, gameState) {
         return `<div>${escapeHtml(s.name)}: <strong style="color:#eaffff">${lv}</strong>/${MAX_SKILL_LEVEL}${bookBit}</div>`
       }).join('')
     }
+
+    if (shipStatsPanel && shipClass) {
+      const ship = gameState.player.ship
+      const hps = Array.isArray(shipClass.hardpoints) ? shipClass.hardpoints : []
+      let turrets = 0
+      let launchers = 0
+      for (const hp of hps) {
+        if (hp?.type === 'missile') launchers++
+        else turrets++
+      }
+      const accSlots = accessorySlotCount(shipClass)
+      const droneBays = droneBayCount(shipClass)
+      const role = shipClass.role
+        ? String(shipClass.role).charAt(0).toUpperCase() + String(shipClass.role).slice(1)
+        : '—'
+      const statLines = SHIP_STAT_ROWS.map(([key, label]) => {
+        let val = shipClass.stats[key]
+        if (key === 'miningCapacity') {
+          const live = effectiveMiningCapacity(ship, shipClass)
+          const base = shipClass.stats.miningCapacity
+          val = live !== base ? `${live}` : String(base)
+        } else if (key === 'turnRate') {
+          val = Number(val).toFixed(2)
+        } else {
+          val = String(val ?? '—')
+        }
+        // Live hull/shields/armour from the ship when damaged.
+        if (key === 'hull' || key === 'shields' || key === 'armor') {
+          const cur = Math.round(Number(ship[key]) || 0)
+          const max = Math.round(Number(shipClass.stats[key]) || 0)
+          val = `${cur}/${max}`
+        }
+        return `<div class="ss-row"><span class="ss-label">${label}</span><span class="ss-val">${escapeHtml(val)}</span></div>`
+      }).join('')
+
+      const hpSummary =
+        hps.length > 0
+          ? `${hps.length} (${turrets}T${launchers ? ` ${launchers}L` : ''})`
+          : '0'
+      // Custom instance name → show that alone; otherwise model only (not both).
+      const modelName = shipClass.name || '—'
+      const instanceName = String(ship.instanceName ?? '').trim()
+      const hasCustomName = instanceName.length > 0 && instanceName !== modelName
+      const displayName = hasCustomName ? instanceName : modelName
+      shipStatsPanel.innerHTML = `
+        <div class="ss-title">Ship stats</div>
+        <div class="ss-name">${escapeHtml(displayName)}</div>
+        <div class="ss-class">${escapeHtml(role)}</div>
+        ${statLines}
+        <div class="ss-section">Fit</div>
+        <div class="ss-row"><span class="ss-label">Hardpoints</span><span class="ss-val">${escapeHtml(hpSummary)}</span></div>
+        <div class="ss-row"><span class="ss-label">Accessories</span><span class="ss-val">${accSlots}</span></div>
+        ${droneBays > 0
+          ? `<div class="ss-row"><span class="ss-label">Drone bays</span><span class="ss-val">${droneBays}</span></div>`
+          : ''}
+      `
+    } else if (shipStatsPanel) {
+      shipStatsPanel.innerHTML = '<div class="ss-title">Ship stats</div><div class="ss-class">Unknown hull</div>'
+    }
   }
 
   function applyCharacterName() {
@@ -394,10 +473,7 @@ export function createCharacterUI(container, gameState) {
     const file = fileInput.files?.[0]
     fileInput.value = ''
     if (!file) return
-    const okType =
-      /image\/(png|jpeg|jpg)/i.test(file.type) ||
-      /\.(png|jpe?g)$/i.test(file.name || '')
-    if (!okType) {
+    if (!isPortraitImageFile(file)) {
       statusNotice('Use a PNG or JPG image')
       return
     }

@@ -4,7 +4,7 @@ import { buildGlowTexture, createPuffEmitter } from './thrusterParticles.js'
 import { getSurfaceTextures } from './textures.js'
 
 /**
- * Compact textured combat drone (Asp Light Combat).
+ * Compact textured combat drone (Stinger Light Combat).
  * Local +Z forward, thrusters at -Z.
  */
 export function buildDroneMesh(typeId = DEFAULT_DRONE_ID) {

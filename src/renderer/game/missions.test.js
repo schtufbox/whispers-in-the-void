@@ -9,8 +9,13 @@ import {
   updateMissionProgress,
   resolveInvestigationProbe,
   ensureBountyNpcsForSystem,
-  markBodyProbed
+  markBodyProbed,
+  noteTradePurchase,
+  noteTradeSale,
+  finishMission
 } from './missions.js'
+import { generateTradeMission } from '../data/missionTemplates.js'
+import { systemsWithinJumps } from '../procgen/galaxy.js'
 import { createGameState } from './state.js'
 import { STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { findBody } from '../procgen/galaxy.js'
@@ -31,9 +36,11 @@ function acceptInvestigation(gs) {
   return mission
 }
 
-test('missionNavTarget points at objective body, then giver on complete', () => {
+test('missionNavTarget points at objective body', () => {
   const gs = freshState()
-  const mission = gs.missions.available.find((m) => m.target?.kind === 'body')
+  const mission = gs.missions.available.find(
+    (m) => m.target?.kind === 'body' && m.type !== 'trade'
+  )
   assert.ok(mission, 'need a body-target mission in seed')
   acceptMission(gs, mission.id, Math.random)
 
@@ -41,26 +48,20 @@ test('missionNavTarget points at objective body, then giver on complete', () => 
   assert.equal(before.phase, 'objective')
   assert.equal(before.bodyId, mission.target.bodyId)
   assert.equal(before.systemId, mission.target.systemId)
-
-  mission.objectiveComplete = true
-  const after = missionNavTarget(mission, gs)
-  assert.equal(after.phase, 'turnin')
-  assert.equal(after.bodyId, mission.giverStationId)
-  assert.equal(after.systemId, mission.giverSystemId)
 })
 
-test('missionMarkedSystemIds follows objective then turn-in', () => {
+test('missionMarkedSystemIds follows active objective only', () => {
   const gs = freshState(9)
-  const mission = gs.missions.available.find((m) => m.target?.kind === 'body')
+  const mission = gs.missions.available.find(
+    (m) => m.target?.kind === 'body' && m.type !== 'trade'
+  )
+  assert.ok(mission, 'need a non-trade body mission')
   acceptMission(gs, mission.id, Math.random)
 
   assert.ok(missionMarkedSystemIds(gs).has(mission.target.systemId))
-  mission.objectiveComplete = true
+  finishMission(gs, mission)
   const ids = missionMarkedSystemIds(gs)
-  assert.ok(ids.has(mission.giverSystemId))
-  if (mission.target.systemId !== mission.giverSystemId) {
-    assert.equal(ids.has(mission.target.systemId), false)
-  }
+  assert.equal(ids.has(mission.target.systemId), false)
 })
 
 test('setWaypointForMission tracks body objectives', () => {
@@ -71,19 +72,8 @@ test('setWaypointForMission tracks body objectives', () => {
   assert.equal(gs.player.waypointBodyId, mission.target.bodyId)
   assert.equal(gs.player.waypointPosition, null)
 
-  // Force complete per type so turn-in waypoint flips
-  if (mission.type === 'probe') {
-    if (!gs.probedBodyIds.includes(mission.target.bodyId)) gs.probedBodyIds.push(mission.target.bodyId)
-  } else if (mission.type === 'investigation') {
-    mission.objectiveComplete = true
-  } else {
-    if (!gs.visitedBodyIds.includes(mission.target.bodyId)) gs.visitedBodyIds.push(mission.target.bodyId)
-  }
-  updateMissionProgress(gs)
-  if (mission.objectiveComplete) {
-    setWaypointForMission(gs, mission.id)
-    assert.equal(gs.player.waypointBodyId, mission.giverStationId)
-  }
+  // Waypoint stays on the body objective while the mission is active.
+  assert.equal(gs.player.waypointBodyId, mission.target.bodyId)
 })
 
 test('probe mission completes when target body is marked probed', () => {
@@ -91,9 +81,11 @@ test('probe mission completes when target body is marked probed', () => {
   const mission = gs.missions.available.find((m) => m.type === 'probe')
   assert.ok(mission, 'need a probe mission in seed')
   acceptMission(gs, mission.id, Math.random)
-  assert.equal(mission.objectiveComplete, false)
+  const creditsBefore = gs.player.credits
   markBodyProbed(gs, mission.target.bodyId)
-  assert.equal(mission.objectiveComplete, true, 'markBodyProbed should complete open probe contracts')
+  assert.equal(mission.status, 'complete', 'markBodyProbed should finish open probe contracts')
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
+  assert.ok(gs.player.credits > creditsBefore)
   assert.ok(gs.probedBodyIds.map(String).includes(String(mission.target.bodyId)))
 })
 
@@ -102,9 +94,9 @@ test('exploration survey completes when the target body is probed', () => {
   const mission = gs.missions.available.find((m) => m.type === 'exploration')
   assert.ok(mission, 'need an exploration mission in seed')
   acceptMission(gs, mission.id, Math.random)
-  assert.equal(mission.objectiveComplete, false)
   markBodyProbed(gs, mission.target.bodyId)
-  assert.equal(mission.objectiveComplete, true, 'probing the survey target should complete exploration')
+  assert.equal(mission.status, 'complete', 'probing the survey target should finish exploration')
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
 })
 
 test('investigation intel probe completes the objective', () => {
@@ -114,7 +106,8 @@ test('investigation intel probe completes the objective', () => {
   // Always intel: roll 0 with leads=0 → intel branch
   const result = resolveInvestigationProbe(gs, bodyId, () => 0)
   assert.equal(result.kind, 'intel')
-  assert.equal(mission.objectiveComplete, true)
+  assert.equal(mission.status, 'complete')
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
 })
 
 test('investigation hostile probe requires a kill', () => {
@@ -122,6 +115,8 @@ test('investigation hostile probe requires a kill', () => {
   const mission = acceptInvestigation(gs)
   const bodyId = mission.target.bodyId
   const body = findBody(gs.galaxy, bodyId)
+  // Match objective system so waypoint can bind to the hostile's world position.
+  gs.player.currentSystemId = mission.target.systemId
   // Place the player near the body so spawn direction is well-defined.
   gs.player.ship.position = [
     body.position[0] + (body.radius ?? 0) + 500,
@@ -154,7 +149,8 @@ test('investigation hostile probe requires a kill', () => {
 
   npc.destroyed = true
   updateMissionProgress(gs)
-  assert.equal(mission.objectiveComplete, true)
+  assert.equal(mission.status, 'complete')
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
 })
 
 test('investigation lead retargets to another probeable body', () => {
@@ -206,4 +202,42 @@ test('dropMission removes an active mission and its bounty NPC without paying ou
 test('dropMission rejects unknown or already-removed missions', () => {
   const gs = freshState(33)
   assert.throws(() => dropMission(gs, 'no-such-mission'), /not active/)
+})
+
+test('trade mission turns in at destination after buy+sell progress', () => {
+  const gs = freshState(42)
+  let mission = gs.missions.available.find((m) => m.type === 'trade')
+  if (!mission) {
+    // Force-generate one if seed board had none.
+    const board = gs.missions.available[0]
+    assert.ok(board, 'need at least one board mission for giver')
+    mission = generateTradeMission(Math.random, gs.galaxy, board.giverSystemId, board.giverStationId)
+    assert.ok(mission, 'generateTradeMission should find a viable route')
+    gs.missions.available.push(mission)
+  }
+  acceptMission(gs, mission.id, Math.random)
+  assert.equal(mission.type, 'trade')
+  assert.ok(mission.trade.quantity >= 50)
+  assert.ok(mission.trade.quantity <= 700)
+
+  // Destination must be ≥4 jumps from origin.
+  const within3 = new Set(systemsWithinJumps(gs.galaxy, mission.trade.originSystemId, 3).map((s) => s.id))
+  assert.equal(within3.has(mission.trade.destSystemId), false, 'dest must be at least 4 jumps away')
+  assert.ok(mission.trade.destSellPrice > mission.trade.originBuyPrice)
+
+  // Incomplete: nav at origin buy bay.
+  let nav = missionNavTarget(mission, gs)
+  assert.equal(nav.phase, 'objective')
+  assert.equal(nav.bodyId, mission.trade.originBodyId)
+
+  noteTradePurchase(gs, mission.trade.originBodyId, mission.trade.goodId, mission.trade.quantity)
+  nav = missionNavTarget(mission, gs)
+  assert.equal(nav.bodyId, mission.trade.destBodyId)
+  assert.equal(mission.status, 'active')
+
+  const creditsBefore = gs.player.credits
+  noteTradeSale(gs, mission.trade.destBodyId, mission.trade.goodId, mission.trade.quantity)
+  assert.equal(mission.status, 'complete')
+  assert.equal(gs.missions.active.some((m) => m.id === mission.id), false)
+  assert.ok(gs.player.credits > creditsBefore, 'reward paid on auto-complete')
 })

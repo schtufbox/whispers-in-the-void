@@ -71,13 +71,13 @@ test('player shields do not regen while in combat', () => {
 })
 
 test('fireProjectile spawns a projectile per hardpoint that travels and can hit a target', () => {
-  const shipClass = getShipClass('interceptor')
+  const shipClass = getShipClass('needle_dart')
   const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], lastFireAt: -Infinity }
   const gameState = {
     simTime: 0,
     projectiles: [],
     npcs: [],
-    player: { ship: { classId: 'bravia_mk2', position: [0, 0, 50], quaternion: [0, 0, 0, 1], destroyed: false, shields: 0, armor: 0, hull: 100 } }
+    player: { ship: { classId: STARTER_SHIP_CLASS_ID, position: [0, 0, 50], quaternion: [0, 0, 0, 1], destroyed: false, shields: 0, armor: 0, hull: 100 } }
   }
   fireProjectile(gameState, shooter, shipClass, 'enemy-1')
   assert.equal(gameState.projectiles.length, shipClass.hardpoints.length)
@@ -87,7 +87,7 @@ test('fireProjectile spawns a projectile per hardpoint that travels and can hit 
 })
 
 test('fireProjectile with a weaponTypeFilter only fires matching hardpoints', () => {
-  const shipClass = getShipClass('corvette') // one laser hardpoint, one missile hardpoint
+  const shipClass = getShipClass('gun_barge') // one laser hardpoint, one missile hardpoint
   const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
   const gameState = { simTime: 0, projectiles: [] }
 
@@ -101,7 +101,7 @@ test('fireProjectile with a weaponTypeFilter only fires matching hardpoints', ()
 })
 
 test('fireProjectile uses the shooter\'s equipped weapon stats, not just a fixed per-type preset', () => {
-  const shipClass = getShipClass('corvette') // hardpoints: wing1 (laser), wing2 (missile)
+  const shipClass = getShipClass('gun_barge') // hardpoints: wing1 (laser), wing2 (missile)
   const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], equippedWeapons: { wing1: 'plasma_cannon' } }
   const gameState = { simTime: 0, projectiles: [] }
 
@@ -216,7 +216,7 @@ test('a player laser hitting an asteroid field mines ore instead of dealing dama
 test('destroying an NPC with a player projectile leaves a lootable wreck at the impact point', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const shooter = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], lastFireAt: -Infinity }
-  const npc = { id: 'npc-9', shipClassId: 'scout', faction: 'trader', position: [0, 0, 50], hull: 1, shields: 0, armor: 0, destroyed: false }
+  const npc = { id: 'npc-9', shipClassId: 'light_runner', faction: 'trader', position: [0, 0, 50], hull: 1, shields: 0, armor: 0, destroyed: false }
   const gameState = {
     simTime: 0,
     projectiles: [],
@@ -258,7 +258,7 @@ test('NPC AI: an attacking pirate closes distance on the player and eventually f
   const gameState = {
     simTime: 0,
     npcs: [npc], projectiles: [],
-    player: { ship: { classId: 'bravia_mk2', position: [0, 0, 0], quaternion: [0, 0, 0, 1], destroyed: false, shields: 0, armor: 0, hull: 100 } }
+    player: { ship: { classId: STARTER_SHIP_CLASS_ID, position: [0, 0, 0], quaternion: [0, 0, 0, 1], destroyed: false, shields: 0, armor: 0, hull: 100 } }
   }
   const startDistance = Math.hypot(...npc.position)
 
@@ -284,7 +284,7 @@ test('NPC AI: low hull fraction forces flee (or, rarely, a suicide ram)', () => 
   const gameState = {
     simTime: 0,
     npcs: [npc], projectiles: [],
-    player: { ship: { classId: 'bravia_mk2', position: [0, 0, 0], quaternion: [0, 0, 0, 1], hull: 100, shields: 0, armor: 0 } }
+    player: { ship: { classId: STARTER_SHIP_CLASS_ID, position: [0, 0, 0], quaternion: [0, 0, 0, 1], hull: 100, shields: 0, armor: 0 } }
   }
   updateNpcAI(npc, gameState, DT)
   assert.ok(['flee', 'ram'].includes(npc.aiState))
@@ -302,7 +302,7 @@ test('NPC AI: a desperate ship almost always flees, but sometimes commits to a s
     const gameState = {
       simTime: 0,
       npcs: [npc], projectiles: [],
-      player: { ship: { classId: 'bravia_mk2', position: [0, 0, 0], quaternion: [0, 0, 0, 1], hull: 100, shields: 0, armor: 0 } }
+      player: { ship: { classId: STARTER_SHIP_CLASS_ID, position: [0, 0, 0], quaternion: [0, 0, 0, 1], hull: 100, shields: 0, armor: 0 } }
     }
     updateNpcAI(npc, gameState, DT)
     outcomes[npc.aiState]++
@@ -321,7 +321,7 @@ test('NPC AI: a ramming ship charges the player and deals damage (and destroys i
   const gameState = {
     simTime: 0,
     npcs: [npc], projectiles: [],
-    player: { ship: { classId: 'bravia_mk2', position: [0, 0, 0], quaternion: [0, 0, 0, 1], hull: 100, shields: 0, armor: 0 } }
+    player: { ship: { classId: STARTER_SHIP_CLASS_ID, position: [0, 0, 0], quaternion: [0, 0, 0, 1], hull: 100, shields: 0, armor: 0 } }
   }
   updateNpcAI(npc, gameState, DT)
   assert.ok(gameState.player.ship.hull < 100, 'ramming into contact range should damage the player')

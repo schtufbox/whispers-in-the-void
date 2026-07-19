@@ -284,36 +284,123 @@ function addVentralWingAerials(group, hull, mats) {
 
 // Cosmetic details on the parametric hull — canopy, engines, radiators,
 // greebles, cargo. Seeded per class id so every ship of a class matches.
+// style.visualKit (0–31) + platingStyle branch layout so same-role hulls diverge.
 function addHullDetails(group, hull, mats) {
   const rng = mulberry32(hashString(group.name))
   const { length, stationWidths, stationHeights } = hull
   const peakWidth = Math.max(...stationWidths)
   const peakHeight = Math.max(...stationHeights)
   const style = defaultStyle(hull, rng)
+  const kit = Number.isFinite(style.visualKit)
+    ? style.visualKit
+    : hashString(group.name) % 32
+  const plating =
+    style.platingStyle ||
+    ['belts', 'sparse', 'spine', 'sponsons', 'scales', 'ribs', 'clamshell', 'lattice'][kit % 8]
   addVentralWingAerials(group, hull, mats)
   // Asymmetric: full bridge offset. Symmetric: stay centered (or tiny noise only never).
   const bridgeX = style.asymmetric ? style.bridgeSide * peakWidth * 0.32 : 0
-  const density = style.detailDensity ?? 1
+  const density = (style.detailDensity ?? 1) * (0.75 + (kit % 7) * 0.07)
 
-  // Longitudinal armor belts + ventral/dorsal plate rails (plated hull read).
-  const bandCount = Math.round((6 + Math.floor(rng() * 5)) * density)
-  for (let i = 0; i < bandCount; i++) {
-    const z = -length * 0.38 + (i / Math.max(1, bandCount - 1)) * length * 0.76
-    const yOff = (i % 3 === 0 ? 0.35 : i % 3 === 1 ? 0.12 : -0.28) * peakHeight
-    const band = new THREE.Mesh(
-      new THREE.BoxGeometry(peakWidth * (1.05 + (i % 2) * 0.08), peakHeight * 0.05, length * 0.032),
-      i % 2 === 0 ? mats.panel : mats.structure
+  // —— Plating families: structural identity within a role ——
+  if (plating === 'belts' || plating === 'sparse') {
+    const bandCount = Math.round(
+      (plating === 'sparse' ? 2 + (kit % 3) : 4 + (kit % 5) + Math.floor(rng() * 4)) * density
     )
-    band.position.set(bridgeX * 0.12, yOff, z)
-    group.add(band)
+    for (let i = 0; i < bandCount; i++) {
+      const z = -length * 0.38 + (i / Math.max(1, bandCount - 1)) * length * 0.76
+      const yOff = (i % 3 === 0 ? 0.35 : i % 3 === 1 ? 0.12 : -0.28) * peakHeight
+      const band = new THREE.Mesh(
+        new THREE.BoxGeometry(peakWidth * (1.05 + (i % 2) * 0.08), peakHeight * 0.05, length * 0.032),
+        i % 2 === 0 ? mats.panel : mats.structure
+      )
+      band.position.set(bridgeX * 0.12, yOff, z)
+      group.add(band)
+    }
   }
-  // Side keel rails.
-  for (const sx of [-1, 1]) {
-    const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(peakWidth * 0.06, peakHeight * 0.08, length * 0.55),
+  if (plating === 'spine' || plating === 'ribs') {
+    // Dorsal spine ridge.
+    const spine = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.18, peakHeight * (0.35 + (kit % 4) * 0.08), length * 0.7),
       mats.structure
     )
-    rail.position.set(sx * peakWidth * 0.92, -peakHeight * 0.15, length * 0.02)
+    spine.position.set(bridgeX * 0.2, peakHeight * 0.55, length * 0.02)
+    group.add(spine)
+    if (plating === 'ribs') {
+      const ribN = 5 + (kit % 5)
+      for (let i = 0; i < ribN; i++) {
+        const z = -length * 0.3 + (i / Math.max(1, ribN - 1)) * length * 0.6
+        const rib = new THREE.Mesh(
+          new THREE.BoxGeometry(peakWidth * 1.08, peakHeight * 0.12, length * 0.04),
+          mats.panel
+        )
+        rib.position.set(0, peakHeight * 0.15, z)
+        group.add(rib)
+      }
+    }
+  }
+  if (plating === 'sponsons' || plating === 'clamshell') {
+    for (const sx of [-1, 1]) {
+      const spo = new THREE.Mesh(
+        new THREE.BoxGeometry(
+          peakWidth * (0.35 + (kit % 3) * 0.08),
+          peakHeight * (plating === 'clamshell' ? 0.55 : 0.4),
+          length * (0.35 + (kit % 4) * 0.06)
+        ),
+        mats.panel
+      )
+      spo.position.set(
+        sx * peakWidth * (0.75 + (kit % 3) * 0.05),
+        plating === 'clamshell' ? peakHeight * 0.05 : -peakHeight * 0.1,
+        length * (0.05 - (kit % 5) * 0.02)
+      )
+      group.add(spo)
+    }
+  }
+  if (plating === 'scales') {
+    const rows = 3 + (kit % 3)
+    const cols = 4 + (kit % 4)
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const scale = new THREE.Mesh(
+          new THREE.BoxGeometry(peakWidth * 0.22, peakHeight * 0.06, length * 0.08),
+          r % 2 === 0 ? mats.panel : mats.structure
+        )
+        scale.position.set(
+          (c - (cols - 1) / 2) * peakWidth * 0.28,
+          peakHeight * (0.35 + r * 0.12),
+          -length * 0.25 + r * length * 0.12 + c * length * 0.02
+        )
+        group.add(scale)
+      }
+    }
+  }
+  if (plating === 'lattice') {
+    for (let i = 0; i < 6 + (kit % 4); i++) {
+      const beam = new THREE.Mesh(
+        new THREE.BoxGeometry(peakWidth * 0.04, peakHeight * 0.04, length * 0.55),
+        mats.structure
+      )
+      beam.position.set(
+        (i % 2 === 0 ? -1 : 1) * peakWidth * (0.4 + (i % 3) * 0.15),
+        (Math.floor(i / 2) - 1) * peakHeight * 0.25,
+        length * 0.05
+      )
+      beam.rotation.y = (i % 3 - 1) * 0.12
+      group.add(beam)
+    }
+  }
+  // Side keel rails (always — subtle structure).
+  for (const sx of [-1, 1]) {
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(
+        peakWidth * (0.05 + (kit % 3) * 0.015),
+        peakHeight * 0.08,
+        length * (0.45 + (kit % 4) * 0.05)
+      ),
+      mats.structure
+    )
+    rail.position.set(sx * peakWidth * 0.92, -peakHeight * (0.1 + (kit % 3) * 0.05), length * 0.02)
     group.add(rail)
   }
 
@@ -321,13 +408,16 @@ function addHullDetails(group, hull, mats) {
   // Bottom cockpits flip the dome under the belly for a gunship/dropship look.
   const cockpitBottom = style.cockpitMount === 'bottom' || style.cockpitMount === 'ventral'
   const cockpitYSign = cockpitBottom ? -1 : 1
+  const canopyScale =
+    kit % 4 === 0 ? [1.35, 0.42, 1.5] : kit % 4 === 1 ? [0.9, 0.65, 2.2] : kit % 4 === 2 ? [1.15, 0.55, 1.7] : [1.08, 0.52, 1.9]
+  const canopyZ = length * (0.16 + (kit % 5) * 0.02)
   const canopy = new THREE.Mesh(
-    new THREE.SphereGeometry(peakWidth * 0.34, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(peakWidth * (0.28 + (kit % 3) * 0.04), 20, 14, 0, Math.PI * 2, 0, Math.PI / 2),
     mats.canopy
   )
-  canopy.scale.set(1.08, 0.52, 1.9)
+  canopy.scale.set(canopyScale[0], canopyScale[1], canopyScale[2])
   if (cockpitBottom) canopy.rotation.z = Math.PI // dome faces down
-  canopy.position.set(bridgeX, cockpitYSign * peakHeight * 0.8, length * 0.22)
+  canopy.position.set(bridgeX, cockpitYSign * peakHeight * 0.8, canopyZ)
   group.add(canopy)
   // Canopy frame ribs.
   for (let i = 0; i < 4; i++) {
@@ -393,21 +483,22 @@ function addHullDetails(group, hull, mats) {
   // Engine nacelles + glow — real housings, not floating discs.
   const layout = style.engineLayout ?? 'twin'
   const offsets = engineOffsets(layout, peakWidth)
-  const engineR = peakHeight * (layout === 'quad' ? 0.28 : 0.36)
+  const engineR = peakHeight * (layout === 'quad' ? 0.26 : layout === 'single' ? 0.42 : 0.36) * (0.9 + (kit % 3) * 0.06)
+  const finCount = 5 + (kit % 5)
   for (const [ox, oy] of offsets) {
     const nacelle = new THREE.Mesh(
-      new THREE.CylinderGeometry(engineR * 0.95, engineR * 1.08, peakHeight * 0.95, 12),
+      new THREE.CylinderGeometry(engineR * 0.95, engineR * 1.08, peakHeight * (0.85 + (kit % 4) * 0.06), 12),
       mats.nacelle
     )
     nacelle.rotation.x = Math.PI / 2
     nacelle.position.set(ox, oy, -length / 2 + peakHeight * 0.38)
     group.add(nacelle)
 
-    // Cooling fins around nacelle (denser).
-    for (let f = 0; f < 8; f++) {
-      const ang = (f / 8) * Math.PI * 2 + 0.15
+    // Cooling fins around nacelle (count varies by visual kit).
+    for (let f = 0; f < finCount; f++) {
+      const ang = (f / finCount) * Math.PI * 2 + 0.15
       const fin = new THREE.Mesh(
-        new THREE.BoxGeometry(engineR * 0.07, engineR * 0.6, peakHeight * 0.55),
+        new THREE.BoxGeometry(engineR * 0.07, engineR * (0.45 + (kit % 3) * 0.1), peakHeight * 0.55),
         mats.panel
       )
       fin.position.set(
@@ -535,13 +626,30 @@ function addHullDetails(group, hull, mats) {
     }
   }
 
-  // Hazard / identity accent stripe.
-  const stripe = new THREE.Mesh(
-    new THREE.BoxGeometry(peakWidth * 0.1, peakHeight * 0.055, length * 0.52),
-    mats.accent
-  )
-  stripe.position.set(bridgeX * 0.35, peakHeight * 0.5, length * 0.02)
-  group.add(stripe)
+  // Hazard / identity accent stripe(s) — placement varies by kit.
+  if (kit % 5 !== 4) {
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(
+        peakWidth * (0.08 + (kit % 3) * 0.03),
+        peakHeight * 0.055,
+        length * (0.35 + (kit % 4) * 0.08)
+      ),
+      mats.accent
+    )
+    const stripeY =
+      kit % 3 === 0 ? peakHeight * 0.5 : kit % 3 === 1 ? -peakHeight * 0.35 : peakHeight * 0.15
+    stripe.position.set(bridgeX * 0.35, stripeY, length * (0.02 - (kit % 4) * 0.03))
+    group.add(stripe)
+  }
+  if (kit % 4 === 1) {
+    // Second chevron stripe on the opposite side.
+    const stripe2 = new THREE.Mesh(
+      new THREE.BoxGeometry(peakWidth * 0.07, peakHeight * 0.04, length * 0.28),
+      mats.accent
+    )
+    stripe2.position.set(-bridgeX * 0.4 - peakWidth * 0.35, peakHeight * 0.2, -length * 0.1)
+    group.add(stripe2)
+  }
 
   // Radar dishes — top, bottom, and/or side mounts (see style.radarDishes).
   const radarMounts = resolveRadarMounts(style, rng)
@@ -608,8 +716,8 @@ function addHullDetails(group, hull, mats) {
     group.add(noz)
   }
 
-  // Surface plating / greeble panels — high industrial clutter.
-  const greebleCount = Math.round((28 + Math.floor(rng() * 18)) * density)
+  // Surface plating / greeble panels — density/shape varies by visual kit.
+  const greebleCount = Math.round((18 + (kit % 6) * 3 + Math.floor(rng() * 18)) * density)
   for (let i = 0; i < greebleCount; i++) {
     const w = peakWidth * (0.035 + rng() * 0.13)
     const h = peakHeight * (0.03 + rng() * 0.1)
@@ -773,6 +881,270 @@ function getCachedHullGeometries(shipClass) {
 }
 
 /**
+ * Heavy industrial mining rig kit — ore hoppers, scoops, drill boom, pipes.
+ * Used for role: miner hulls (not the generic freighter cargo-pod look).
+ */
+function addMinerDetails(group, hull, mats) {
+  const rng = mulberry32(hashString(group.name + ':miner'))
+  const length = hull.length ?? 20
+  const peakW = Math.max(...(hull.stationWidths ?? [1.5]))
+  const peakH = Math.max(...(hull.stationHeights ?? [1.2]))
+  const dens = Math.max(1, (hull.style?.detailDensity ?? 1.8))
+  const kit = Number.isFinite(hull.style?.visualKit) ? hull.style.visualKit : hashString(group.name) % 32
+  const arch = hull.style?.archetype || 'skiff'
+
+  // Rust / ore-stained panels for a working industrial read — kit-tinted.
+  const rustHueShift = ((kit % 8) - 4) * 0.04
+  const rust = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(0x6a4a32).offsetHSL(rustHueShift, 0, (kit % 5) * 0.02 - 0.04),
+    metalness: 0.55,
+    roughness: 0.72,
+    ...shipArmorMaps(0.7)
+  })
+  const hazard = new THREE.MeshStandardMaterial({
+    color: kit % 3 === 0 ? 0xd4a020 : kit % 3 === 1 ? 0xc06030 : 0x80a040,
+    metalness: 0.35,
+    roughness: 0.55,
+    ...shipHullMaps(0.35)
+  })
+  const oreDust = new THREE.MeshStandardMaterial({
+    color: 0x5a4838,
+    metalness: 0.4,
+    roughness: 0.85,
+    ...shipStructureMaps(0.55)
+  })
+
+  // —— Forward ore scoop — layout varies by miner archetype / kit ——
+  const scoopScale = arch === 'strip' ? 1.35 : arch === 'skiff' ? 0.85 : arch === 'silo' ? 0.9 : 1.15
+  const scoopY = arch === 'silo' ? -peakH * 0.45 : arch === 'prospector' ? -peakH * 0.15 : -peakH * 0.25
+  const scoopW = peakW * scoopScale
+  const scoopH = peakH * (arch === 'strip' ? 0.35 : 0.55)
+  const scoop = new THREE.Mesh(new THREE.BoxGeometry(scoopW, scoopH, length * (0.08 + (kit % 4) * 0.015)), rust)
+  scoop.position.set(0, scoopY, length * 0.42)
+  group.add(scoop)
+  // Jaw lips.
+  for (const sy of [1, -1]) {
+    const lip = new THREE.Mesh(
+      new THREE.BoxGeometry(scoopW * 1.05, peakH * 0.08, length * 0.04),
+      mats.structure
+    )
+    lip.position.set(0, -peakH * 0.25 + sy * scoopH * 0.48, length * 0.48)
+    group.add(lip)
+  }
+  // Side scoop plates.
+  for (const sx of [-1, 1]) {
+    const plate = new THREE.Mesh(
+      new THREE.BoxGeometry(peakW * 0.12, scoopH * 0.9, length * 0.14),
+      mats.panel
+    )
+    plate.position.set(sx * scoopW * 0.52, -peakH * 0.25, length * 0.42)
+    plate.rotation.y = sx * 0.15
+    group.add(plate)
+  }
+
+  // —— Drill / mining boom under the nose ——
+  const boomLen = length * (0.28 + rng() * 0.08)
+  const boom = new THREE.Mesh(
+    new THREE.CylinderGeometry(peakW * 0.06, peakW * 0.09, boomLen, 8),
+    mats.nacelle
+  )
+  boom.rotation.x = Math.PI / 2
+  boom.position.set(0, -peakH * 0.55, length * 0.28)
+  group.add(boom)
+  // Drill bit (spiral read = stacked cones).
+  for (let i = 0; i < 4; i++) {
+    const bit = new THREE.Mesh(
+      new THREE.ConeGeometry(peakW * (0.1 - i * 0.015), peakW * 0.12, 7),
+      mats.structure
+    )
+    bit.rotation.x = -Math.PI / 2
+    bit.position.set(0, -peakH * 0.55, length * 0.28 + boomLen * 0.5 + i * peakW * 0.1)
+    group.add(bit)
+  }
+  // Boom support struts.
+  for (const sx of [-1, 1]) {
+    const strut = new THREE.Mesh(
+      new THREE.BoxGeometry(peakW * 0.05, peakH * 0.35, peakW * 0.05),
+      mats.structure
+    )
+    strut.position.set(sx * peakW * 0.35, -peakH * 0.35, length * 0.22)
+    strut.rotation.z = sx * 0.35
+    group.add(strut)
+  }
+
+  // —— Ventral ore hoppers (main silhouette identity) ——
+  const hopperCount = 2 + Math.floor(dens * 1.5) + Math.floor(rng() * 2)
+  for (let i = 0; i < hopperCount; i++) {
+    const t = hopperCount === 1 ? 0 : (i / (hopperCount - 1)) * 0.55 - 0.22
+    const hw = peakW * (0.75 + rng() * 0.2)
+    const hh = peakH * (0.55 + rng() * 0.25)
+    const hl = length * (0.14 + rng() * 0.06)
+    // Trapezoid hopper: wide box + tapered bottom dump.
+    const body = new THREE.Mesh(new THREE.BoxGeometry(hw, hh * 0.65, hl), oreDust)
+    body.position.set(0, -peakH * 0.75, t * length)
+    group.add(body)
+    const dump = new THREE.Mesh(
+      new THREE.CylinderGeometry(hw * 0.22, hw * 0.45, hh * 0.45, 6),
+      rust
+    )
+    dump.position.set(0, -peakH * 0.75 - hh * 0.45, t * length)
+    group.add(dump)
+    // Clamp frames.
+    for (const sx of [-1, 1]) {
+      const frame = new THREE.Mesh(
+        new THREE.BoxGeometry(hw * 0.08, hh * 0.7, hl * 1.05),
+        mats.structure
+      )
+      frame.position.set(sx * hw * 0.48, -peakH * 0.72, t * length)
+      group.add(frame)
+    }
+    // Hazard band on hopper face.
+    const band = new THREE.Mesh(
+      new THREE.BoxGeometry(hw * 0.92, hh * 0.08, hl * 0.08),
+      hazard
+    )
+    band.position.set(0, -peakH * 0.55, t * length + hl * 0.48)
+    group.add(band)
+  }
+
+  // —— Side ore transfer ducts / conveyor casings ——
+  for (const sx of [-1, 1]) {
+    const duct = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakW * 0.1, peakW * 0.1, length * 0.55, 8),
+      mats.panel
+    )
+    duct.rotation.z = Math.PI / 2
+    duct.rotation.y = Math.PI / 2
+    duct.position.set(sx * peakW * 0.95, -peakH * 0.15, length * 0.02)
+    group.add(duct)
+    // Duct joints.
+    for (let j = 0; j < 3; j++) {
+      const joint = new THREE.Mesh(
+        new THREE.TorusGeometry(peakW * 0.11, peakW * 0.03, 6, 10),
+        mats.structure
+      )
+      joint.rotation.y = Math.PI / 2
+      joint.position.set(
+        sx * peakW * 0.95,
+        -peakH * 0.15,
+        -length * 0.15 + j * length * 0.14
+      )
+      group.add(joint)
+    }
+  }
+
+  // —— Stacked exhaust / vent stacks mid-dorsal ——
+  const stacks = 2 + Math.floor(rng() * 2)
+  for (let i = 0; i < stacks; i++) {
+    const stackH = peakH * (0.45 + rng() * 0.35)
+    const stack = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakW * 0.07, peakW * 0.09, stackH, 8),
+      mats.nacelle
+    )
+    stack.position.set(
+      (i - (stacks - 1) / 2) * peakW * 0.28,
+      peakH * 0.85 + stackH * 0.4,
+      -length * 0.08 + i * length * 0.04
+    )
+    group.add(stack)
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakW * 0.11, peakW * 0.08, peakH * 0.08, 8),
+      rust
+    )
+    cap.position.copy(stack.position)
+    cap.position.y += stackH * 0.48
+    group.add(cap)
+  }
+
+  // —— Pipe runs along the spine ——
+  for (let p = 0; p < 3; p++) {
+    const pipe = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakW * 0.03, peakW * 0.03, length * 0.5, 6),
+      mats.antenna
+    )
+    pipe.rotation.x = Math.PI / 2
+    pipe.position.set(
+      (p - 1) * peakW * 0.18,
+      peakH * (0.55 + (p % 2) * 0.12),
+      length * 0.02
+    )
+    group.add(pipe)
+  }
+
+  // —— Crane / derrick on larger hulls ——
+  if (length >= 28) {
+    const mastH = peakH * 1.4
+    const mast = new THREE.Mesh(
+      new THREE.BoxGeometry(peakW * 0.1, mastH, peakW * 0.1),
+      mats.structure
+    )
+    mast.position.set(peakW * 0.15, peakH * 0.9 + mastH * 0.35, -length * 0.05)
+    group.add(mast)
+    const jib = new THREE.Mesh(
+      new THREE.BoxGeometry(peakW * 0.08, peakW * 0.08, length * 0.32),
+      mats.structure
+    )
+    jib.position.set(peakW * 0.15, peakH * 0.9 + mastH * 0.7, length * 0.08)
+    jib.rotation.x = -0.35
+    group.add(jib)
+    // Cable
+    const cable = new THREE.Mesh(
+      new THREE.CylinderGeometry(peakW * 0.012, peakW * 0.012, peakH * 0.8, 5),
+      mats.antenna
+    )
+    cable.position.set(peakW * 0.15, peakH * 0.5, length * 0.18)
+    group.add(cable)
+    const hook = new THREE.Mesh(new THREE.TorusGeometry(peakW * 0.06, peakW * 0.02, 6, 10), rust)
+    hook.position.set(peakW * 0.15, peakH * 0.12, length * 0.18)
+    group.add(hook)
+  }
+
+  // —— Hazard chevron stripes along flanks ——
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < 5; i++) {
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(peakW * 0.04, peakH * 0.35, length * 0.04),
+        hazard
+      )
+      stripe.position.set(
+        sx * peakW * 0.98,
+        -peakH * 0.05,
+        -length * 0.25 + i * length * 0.1
+      )
+      stripe.rotation.z = sx * 0.08
+      group.add(stripe)
+    }
+  }
+
+  // —— Landing skids / gear (grounded industrial craft) ——
+  for (const sx of [-1, 1]) {
+    for (const zf of [-0.2, 0.15]) {
+      const leg = new THREE.Mesh(
+        new THREE.BoxGeometry(peakW * 0.08, peakH * 0.5, peakW * 0.12),
+        mats.structure
+      )
+      leg.position.set(sx * peakW * 0.55, -peakH * 1.05, zf * length)
+      group.add(leg)
+      const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(peakW * 0.28, peakH * 0.08, peakW * 0.35),
+        rust
+      )
+      pad.position.set(sx * peakW * 0.55, -peakH * 1.32, zf * length)
+      group.add(pad)
+    }
+  }
+
+  // —— Aft dump chute ——
+  const chute = new THREE.Mesh(
+    new THREE.CylinderGeometry(peakW * 0.2, peakW * 0.35, length * 0.15, 6),
+    oreDust
+  )
+  chute.rotation.x = 0.6
+  chute.position.set(0, -peakH * 0.6, -length * 0.38)
+  group.add(chute)
+}
+
+/**
  * Organic alien add-ons — cysts, tendrils, glow nodules (not industrial plates).
  */
 function addAlienDetails(group, hull, mats, baseColor) {
@@ -866,12 +1238,39 @@ export function buildShipMesh(shipClass, opts = {}) {
   const isPolice =
     shipClass.faction === 'police' || !!shipClass.hull?.style?.policeLivery
   const isAlien = !!(shipClass.alien || shipClass.hull?.style?.alien)
+  const isMiner =
+    shipClass.role === 'miner' || !!shipClass.hull?.style?.miningRig
 
   // Police: bright white hull (skip heavy PBR maps — they mute pure white).
+  // Miners: dirtier bronze / ore-stained industrial paint.
   const baseColor = isPolice
     ? new THREE.Color(0xf4f7fb)
-    : new THREE.Color(shipClass.hull.color)
+    : isMiner
+      ? new THREE.Color(shipClass.hull.color).offsetHSL(0.02, 0.05, -0.04)
+      : new THREE.Color(shipClass.hull.color)
   const mats = makeDetailMaterials(isPolice ? new THREE.Color(0x1a1c20) : baseColor)
+
+  if (isMiner && !isAlien) {
+    // Worked metal — less polished than combat hulls.
+    mats.panel = new THREE.MeshStandardMaterial({
+      color: baseColor.clone().multiplyScalar(0.65),
+      metalness: 0.78,
+      roughness: 0.58,
+      ...shipArmorMaps(0.7)
+    })
+    mats.structure = new THREE.MeshStandardMaterial({
+      color: baseColor.clone().offsetHSL(-0.02, -0.05, -0.08),
+      metalness: 0.82,
+      roughness: 0.52,
+      ...shipStructureMaps(0.62)
+    })
+    mats.accent = new THREE.MeshStandardMaterial({
+      color: 0xe0a010,
+      metalness: 0.4,
+      roughness: 0.5,
+      ...shipHullMaps(0.4)
+    })
+  }
 
   // Alien detail mats: organic rock + plate PBR, emissive green/violet sheen.
   if (isAlien) {
@@ -927,14 +1326,23 @@ export function buildShipMesh(shipClass, opts = {}) {
           envMapIntensity: 0.7,
           ...alienHullMaps(0.75)
         })
-      : new THREE.MeshStandardMaterial({
-          color: baseColor,
-          side: THREE.DoubleSide,
-          metalness: 0.72,
-          roughness: 0.42,
-          envMapIntensity: 1.05,
-          ...shipHullMaps(0.58)
-        })
+      : isMiner
+        ? new THREE.MeshStandardMaterial({
+            color: baseColor,
+            side: THREE.DoubleSide,
+            metalness: 0.62,
+            roughness: 0.58,
+            envMapIntensity: 0.75,
+            ...shipHullMaps(0.72)
+          })
+        : new THREE.MeshStandardMaterial({
+            color: baseColor,
+            side: THREE.DoubleSide,
+            metalness: 0.72,
+            roughness: 0.42,
+            envMapIntensity: 1.05,
+            ...shipHullMaps(0.58)
+          })
   const hullMesh = new THREE.Mesh(geometry, material)
   group.add(hullMesh)
 
@@ -944,9 +1352,9 @@ export function buildShipMesh(shipClass, opts = {}) {
       new THREE.LineSegments(
         seams,
         new THREE.LineBasicMaterial({
-          color: isPolice ? 0x1a2030 : isAlien ? 0x1a3020 : 0x0a0c10,
+          color: isPolice ? 0x1a2030 : isAlien ? 0x1a3020 : isMiner ? 0x1a1208 : 0x0a0c10,
           transparent: true,
-          opacity: isPolice ? 0.55 : isAlien ? 0.45 : 0.35
+          opacity: isPolice ? 0.55 : isAlien ? 0.45 : isMiner ? 0.5 : 0.35
         })
       )
     )
@@ -954,9 +1362,9 @@ export function buildShipMesh(shipClass, opts = {}) {
       new THREE.LineSegments(
         rimGeo,
         new THREE.LineBasicMaterial({
-          color: isPolice ? 0xc8d4e8 : isAlien ? 0x7fff6a : 0x6a8aaa,
+          color: isPolice ? 0xc8d4e8 : isAlien ? 0x7fff6a : isMiner ? 0xc4a060 : 0x6a8aaa,
           transparent: true,
-          opacity: isPolice ? 0.35 : isAlien ? 0.28 : 0.16
+          opacity: isPolice ? 0.35 : isAlien ? 0.28 : isMiner ? 0.22 : 0.16
         })
       )
     )
@@ -966,7 +1374,11 @@ export function buildShipMesh(shipClass, opts = {}) {
   // cost when many contacts mesh on the same combat frame.
   if (!lite) {
     if (isAlien) addAlienDetails(group, shipClass.hull, mats, baseColor)
-    else addHullDetails(group, shipClass.hull, mats)
+    else if (isMiner) {
+      // Shared industrial plates first, then mining-specific hoppers / scoops.
+      addHullDetails(group, shipClass.hull, mats)
+      addMinerDetails(group, shipClass.hull, mats)
+    } else addHullDetails(group, shipClass.hull, mats)
   } else if (isAlien) {
     // Lite alien NPCs still get a couple glow nodes so they read as non-human.
     const glow = new THREE.Mesh(

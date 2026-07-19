@@ -85,9 +85,16 @@ function describeTarget(mission, gameState) {
   const t = missionNavTarget(mission, gameState)
   const system = getSystem(gameState.galaxy, t.systemId)
   const systemName = system?.name ?? t.systemId
-  if (t.phase === 'turnin') {
+  if (mission.type === 'trade' && mission.trade) {
+    const tr = mission.trade
+    const need = tr.quantity ?? 0
+    const bought = tr.purchased ?? 0
+    const sold = tr.sold ?? 0
     const body = findBody(gameState.galaxy, t.bodyId)
-    return `Turn in at ${body?.name ?? 'mission giver'} · ${systemName}`
+    if (bought < need) {
+      return `Buy ${bought}/${need} at ${body?.name ?? 'origin'} · ${systemName}`
+    }
+    return `Sell ${sold}/${need} at ${body?.name ?? 'destination'} · ${systemName}`
   }
   if (t.bodyId) {
     const body = findBody(gameState.galaxy, t.bodyId)
@@ -136,7 +143,7 @@ export function createMissionsUI(container, gameState, hooks = {}) {
     if (!active.length) {
       contentEl.innerHTML = `
         <div class="empty">No active missions.<br/>Accept contracts from station and settlement mission boards while docked.</div>
-        <div class="footer-note">Orange rings on the galaxy map mark systems with an active objective or turn-in. Green rings mark remote systems where you have stored assets (ships, cargo, ore, parts, weapons, blueprints, or crafts). Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located.</div>
+        <div class="footer-note">Orange rings on the galaxy map mark systems with an active objective. Green rings mark remote systems where you have stored assets. Set Waypoint only works while you are in the objective system. Missions complete automatically when the objective is done.</div>
       `
       return
     }
@@ -144,26 +151,31 @@ export function createMissionsUI(container, gameState, hooks = {}) {
     contentEl.innerHTML = `
       <h3>Active (${active.length})</h3>
       ${active.map((m) => {
-        const ready = m.objectiveComplete
         const leads = m.leads ?? 0
         const chain = m.type === 'investigation' && leads > 0
           ? `<span class="chain-badge">Chain ×${leads}</span>`
           : ''
+        const progress =
+          m.type === 'trade' && m.trade
+            ? ((m.trade.purchased ?? 0) < (m.trade.quantity ?? 0)
+              ? `Buy cargo (${m.trade.purchased ?? 0}/${m.trade.quantity ?? 0})`
+              : `Sell cargo (${m.trade.sold ?? 0}/${m.trade.quantity ?? 0})`)
+            : 'In progress'
         return `
-          <div class="mission ${ready ? 'ready' : ''}">
+          <div class="mission">
             <div class="title">${escapeHtml(m.title)}${chain}</div>
             <div class="meta">${escapeHtml(m.type ? m.type.charAt(0).toUpperCase() + m.type.slice(1) : '')} · Reward ${m.reward}cr</div>
             <div class="meta">${escapeHtml(describeTarget(m, gameState))}</div>
             ${renderLog(m)}
-            <div class="status ${ready ? 'ready' : 'progress'}">${ready ? 'Ready to turn in' : 'In progress'}</div>
+            <div class="status progress">${progress}</div>
             <div class="mission-actions">
-              <button class="track" data-id="${m.id}">${ready ? 'Waypoint: Turn-In' : 'Set Waypoint'}</button>
+              <button class="track" data-id="${m.id}">Set Waypoint</button>
               <button class="drop" data-id="${m.id}">Drop Mission</button>
             </div>
           </div>
         `
       }).join('')}
-      <div class="footer-note">Drop Mission abandons the contract with no reward. Set Waypoint only works while you are in the system where that mission's objective (or turn-in) is located. Investigations: probe the target (P). Logs track leads, hostiles, and intel. Each lead raises the payout 5%.</div>
+      <div class="footer-note">Drop Mission abandons the contract with no reward. Completing the objective pays the reward immediately (no station turn-in). Investigations: probe the target (P). Logs track leads, hostiles, and intel. Each lead raises the payout 5%.</div>
     `
 
     contentEl.querySelectorAll('.track').forEach((btn) =>

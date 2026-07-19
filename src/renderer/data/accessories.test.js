@@ -21,10 +21,10 @@ test('autopilot costs 10000; extra ore storage costs 12000', () => {
   assert.ok(ACCESSORIES.some((a) => a.id === EXTRA_ORE_STORAGE_ID))
 })
 
-test('starter Bravia has zero accessory slots; other hand-crafted ships have 1–4', () => {
-  assert.equal(accessorySlotCount(getShipClass(STARTER_SHIP_CLASS_ID)), 0)
-  assert.deepEqual(defaultAccessoriesFor(getShipClass(STARTER_SHIP_CLASS_ID)), [])
-  for (const id of ['hauler', 'interceptor', 'corvette', 'scout', 'raider_mk1', 'clipper']) {
+test('starter Light Runner has one accessory slot; other hand-crafted ships have 1–4', () => {
+  assert.equal(accessorySlotCount(getShipClass(STARTER_SHIP_CLASS_ID)), 1)
+  assert.equal(defaultAccessoriesFor(getShipClass(STARTER_SHIP_CLASS_ID)).length, 1)
+  for (const id of ['hold_runner', 'needle_dart', 'gun_barge', 'bravia_mk2', 'raider_mk1', 'swift_keel']) {
     const n = accessorySlotCount(getShipClass(id))
     assert.ok(n >= 1 && n <= MAX_ACCESSORY_SLOTS, `${id} slots ${n}`)
   }
@@ -45,7 +45,7 @@ test('shipHasAutopilot reads equippedAccessories', () => {
 })
 
 test('Extra Ore Storage multiplies mining capacity by 5 while equipped', () => {
-  const shipClass = getShipClass('scout')
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const base = shipClass.stats.miningCapacity
   assert.equal(effectiveMiningCapacity({ equippedAccessories: [] }, shipClass), base)
   assert.equal(

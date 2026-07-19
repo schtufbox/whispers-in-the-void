@@ -144,22 +144,22 @@ test('goods in demand cost more; thin stock raises price further', () => {
 test('purchaseShip stores the new ship at that station rather than making it active', () => {
   const gameState = makeGameState()
   gameState.player.credits = 50000
-  purchaseShip(gameState, 'agri-world', 'scout', 'Wanderer')
+  purchaseShip(gameState, 'agri-world', 'light_runner', 'Wanderer')
   assert.equal(gameState.player.ship.classId, STARTER_SHIP_CLASS_ID, 'buying alone should not swap the active ship')
   assert.ok(gameState.player.credits < 50000)
   const stored = gameState.stationStorage['agri-world'].ships
   assert.equal(stored.length, 1)
-  assert.equal(stored[0].classId, 'scout')
+  assert.equal(stored[0].classId, 'light_runner')
   assert.equal(stored[0].instanceName, 'Wanderer')
 })
 
 test('activateStoredShip swaps the active ship with one in storage, and sellStoredShip removes it for credits', () => {
   const gameState = makeGameState()
   gameState.player.credits = 50000
-  purchaseShip(gameState, 'agri-world', 'scout', 'Wanderer')
+  purchaseShip(gameState, 'agri-world', 'light_runner', 'Wanderer')
 
   activateStoredShip(gameState, 'agri-world', 0)
-  assert.equal(gameState.player.ship.classId, 'scout', 'the stored ship should now be active')
+  assert.equal(gameState.player.ship.classId, 'light_runner', 'the stored ship should now be active')
   const stored = gameState.stationStorage['agri-world'].ships
   assert.equal(stored.length, 1)
   assert.equal(stored[0].classId, STARTER_SHIP_CLASS_ID, 'the old active ship should now be the one in storage')
@@ -185,7 +185,7 @@ test('storeCargo/retrieveCargo round-trip cargo through per-station storage', ()
 test('renameActiveShip and renameStoredShip rename ships (and reject blank names)', () => {
   const gameState = makeGameState()
   gameState.player.credits = 50000
-  purchaseShip(gameState, 'agri-world', 'scout', 'Scout')
+  purchaseShip(gameState, 'agri-world', 'light_runner', 'Light Runner')
 
   renameActiveShip(gameState, '  Nova Runner  ')
   assert.equal(gameState.player.ship.instanceName, 'Nova Runner', 'should trim whitespace')
@@ -319,14 +319,9 @@ test('storageHasAssets is true only when something of value is parked', () => {
 test('buyAccessory / equipAccessory / unequip Autopilot on a hull with slots', () => {
   const gameState = makeGameState()
   gameState.player.credits = 50000
-  // Bravia has 0 slots — equip must fail.
+  // Starter Light Runner has 1 slot — equip from storage works.
   buyAccessory(gameState, 'agri-world', 'autopilot')
   assert.equal(gameState.stationStorage['agri-world'].accessories.autopilot, 1)
-  assert.throws(() => equipAccessory(gameState, 'agri-world', 0, 'autopilot'), /No such accessory slot/)
-
-  // Switch to scout (1 accessory slot) via storage activate path simulation.
-  gameState.player.ship.classId = 'scout'
-  gameState.player.ship.equippedAccessories = defaultAccessoriesFor(getShipClass('scout'))
   equipAccessory(gameState, 'agri-world', 0, 'autopilot')
   assert.equal(gameState.player.ship.equippedAccessories[0], 'autopilot')
   assert.equal(gameState.stationStorage['agri-world'].accessories.autopilot, undefined)
@@ -338,6 +333,9 @@ test('buyAccessory / equipAccessory / unequip Autopilot on a hull with slots', (
   assert.equal(gameState.stationStorage['agri-world'].accessories.autopilot, 1)
   assert.equal(shipHasAutopilot(gameState.player.ship), false)
 
+  // Out-of-range slot index must fail.
+  assert.throws(() => equipAccessory(gameState, 'agri-world', 9, 'autopilot'), /No such accessory slot/)
+
   const creditsBefore = gameState.player.credits
   sellStoredAccessory(gameState, 'agri-world', 'autopilot')
   assert.ok(gameState.player.credits > creditsBefore)
@@ -346,9 +344,9 @@ test('buyAccessory / equipAccessory / unequip Autopilot on a hull with slots', (
 test('purchaseShip stores empty equippedAccessories sized to class slots', () => {
   const gameState = makeGameState()
   gameState.player.credits = 100000
-  purchaseShip(gameState, 'agri-world', 'scout', 'Probe Runner')
+  purchaseShip(gameState, 'agri-world', 'hold_runner', 'Probe Runner')
   const stored = gameState.stationStorage['agri-world'].ships[0]
-  assert.deepEqual(stored.equippedAccessories, defaultAccessoriesFor(getShipClass('scout')))
+  assert.deepEqual(stored.equippedAccessories, defaultAccessoriesFor(getShipClass('hold_runner')))
 })
 
 test('transferStorageItem moves cargo ship↔station and capacity-limits retrieve', () => {

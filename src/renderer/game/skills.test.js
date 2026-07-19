@@ -26,7 +26,7 @@ function mockState(skills = {}) {
   return {
     player: {
       skills: { ...emptySkills(), ...skills },
-      ship: { skillbooks: {}, classId: 'bravia_mk2' }
+      ship: { skillbooks: {}, classId: 'light_runner' }
     }
   }
 }

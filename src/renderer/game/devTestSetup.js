@@ -10,8 +10,8 @@ import { DEFAULT_DRONE_ID } from '../data/drones.js'
 /** When true, New Game uses the test ship + resources (menu still boots normally). */
 export const DEV_TEST_SETUP = false
 
-// Odyssey: explorer, 2 drone bays, laser + missile, 3 accessory slots.
-const DEV_SHIP_CLASS_ID = 'odyssey'
+// Far Reach: explorer, 2 drone bays, laser + missile, 3 accessory slots.
+const DEV_SHIP_CLASS_ID = 'far_reach'
 
 /**
  * @param {{ characterName?: string, shipInstanceName?: string, seed?: number }} [opts]
@@ -19,7 +19,7 @@ const DEV_SHIP_CLASS_ID = 'odyssey'
 export function createDevTestGameState(opts = {}) {
   const gameState = createGameState({
     characterName: opts.characterName || 'Test Pilot',
-    shipInstanceName: opts.shipInstanceName || 'Odyssey',
+    shipInstanceName: opts.shipInstanceName || 'Far Reach',
     shipClassId: DEV_SHIP_CLASS_ID,
     seed: opts.seed ?? Math.floor(Math.random() * 1e9)
   })
@@ -36,7 +36,7 @@ export function applyDevTestLoadout(gameState, opts = {}) {
   const ship = gameState.player.ship
 
   ship.classId = DEV_SHIP_CLASS_ID
-  ship.instanceName = opts.shipInstanceName || 'Odyssey'
+  ship.instanceName = opts.shipInstanceName || 'Far Reach'
 
   ship.hull = shipClass.stats.hull
   ship.shields = shipClass.stats.shields

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mulberry32 } from '../procgen/prng.js'
 import { createGameState } from '../game/state.js'
-import { acceptMission, dropMission, turnInMission } from '../game/missions.js'
+import { acceptMission, dropMission, finishMission } from '../game/missions.js'
 import { STARTER_SHIP_CLASS_ID } from './shipClasses.js'
 import {
   generateMissionsForBody,
@@ -75,7 +75,7 @@ test('refillMissionsIfExhausted waits while active missions from that body remai
   assert.equal(blocked.length, 0, 'must not refill while active contracts remain')
 })
 
-test('accepting every available contract never restocks until turn-in/drop', () => {
+test('accepting every available contract never restocks until complete/drop', () => {
   const gs = freshState(41)
   const hit = missionBody(gs)
   assert.ok(hit)
@@ -95,7 +95,7 @@ test('accepting every available contract never restocks until turn-in/drop', () 
   )
 })
 
-test('refillMissionsIfExhausted rolls a new board only after turn-in or drop of all contracts', () => {
+test('refillMissionsIfExhausted rolls a new board only after complete or drop of all contracts', () => {
   const gs = freshState(17)
   const hit = missionBody(gs)
   assert.ok(hit)
@@ -113,7 +113,7 @@ test('refillMissionsIfExhausted rolls a new board only after turn-in or drop of 
   assert.ok(added.every((m) => m.id !== board[0].id))
 })
 
-test('refill after turn-in of completed mission also works', () => {
+test('refill after auto-complete of a mission also works', () => {
   const gs = freshState(23)
   const hit = missionBody(gs)
   assert.ok(hit)
@@ -121,8 +121,10 @@ test('refill after turn-in of completed mission also works', () => {
   gs.missions.available = gs.missions.available.filter((m) => m.giverStationId !== hit.body.id)
   gs.missions.available.push(board[0])
   acceptMission(gs, board[0].id, Math.random)
-  board[0].objectiveComplete = true
-  turnInMission(gs, board[0].id)
+  const creditsBefore = gs.player.credits
+  finishMission(gs, board[0])
+  assert.ok(gs.player.credits > creditsBefore)
+  assert.equal(gs.missions.active.some((m) => m.id === board[0].id), false)
 
   const added = refillMissionsIfExhausted(gs, hit.body.id, mulberry32(29))
   assert.ok(added.length >= 1)

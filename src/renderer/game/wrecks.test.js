@@ -19,7 +19,7 @@ test('spawnWreck can drop a paid weapon matching the destroyed ship class', () =
   let i = 0
   const rolls = [0, 0.5, 0.01, 0.0]
   const rng = () => rolls[Math.min(i++, rolls.length - 1)]
-  const wreck = spawnWreck([0, 0, 0], 0, rng, 'interceptor')
+  const wreck = spawnWreck([0, 0, 0], 0, rng, 'needle_dart')
   assert.ok(wreck.loot.weapons, 'expected weapon drop')
   const [weaponId] = Object.keys(wreck.loot.weapons)
   const weapon = WEAPONS.find((w) => w.id === weaponId)
@@ -28,7 +28,7 @@ test('spawnWreck can drop a paid weapon matching the destroyed ship class', () =
 
 test('spawnWreck weapon drop is rare without a lucky roll', () => {
   // Always high rolls after cargo: no part, no weapon
-  const wreck = spawnWreck([0, 0, 0], 0, () => 0.99, 'interceptor')
+  const wreck = spawnWreck([0, 0, 0], 0, () => 0.99, 'needle_dart')
   assert.equal(wreck.loot.weapons, undefined)
   assert.ok(WEAPON_DROP_CHANCE < 0.2)
 })
@@ -77,7 +77,7 @@ test('alien wrecks only drop alien blueprints, never human industry BPs', () => 
   // Human wreck never gets alien BP from tryRollBlueprintDrop path
   let alienOnHuman = false
   for (let i = 0; i < 200; i++) {
-    const w = spawnWreck([0, 0, 0], 0, () => Math.random() * 0.02, 'interceptor')
+    const w = spawnWreck([0, 0, 0], 0, () => Math.random() * 0.02, 'needle_dart')
     for (const id of Object.keys(w.loot.blueprints ?? {})) {
       if (id.includes('void_cyst') || id.includes('void_lance') || id.includes('singularity')) alienOnHuman = true
     }

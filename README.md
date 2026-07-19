@@ -17,17 +17,17 @@
 
 A desktop space sim with ~**1500** planets across ~**450** star systems, **100+** ship classes (including exclusive alien hulls), real-time mouse-aim flight and combat, station industry crafting, system security and law standing, and **permadeath**.
 
-New Game starts you in a **Bravia Mk2** near the galactic core (always **Security 6**) with a normal starter loadout.
+New Game starts you in a **Light Runner** near the galactic core (always **Security 6**) with a normal starter loadout.
 
 ## Features
 
 - **One seeded galaxy** — systems, planets, moons, stations, settlements, and asteroid fields from a single seed. Systems vary in scale; new games start near the core (never on a binary/trinary).
 - **Whispers** — outer-rim landmark system with a unique trinary sun, a named station, and no ambient hostiles.
 - **Textured worlds** — CC0 photo textures under procedural surface detail; stars with coronas, flares, and binary/trinary energy rings.
-- **100+ ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**.
+- **100+ ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**. **Mining** hulls (8 models) trade combat for ore holds **200–2000**, tiny cargo (≤40), few/no accessory slots, and low speed/defences.
 - **Alien ships & weapons** — four exclusive organic hulls (Void Cyst, Spine Skimmer, Chor Lathe, Zealot Carapace) with alien guns and unique fire SFX. **Never sold.** Craft only if you salvage an **extremely rare** alien blueprint from an alien wreck (the only source of alien tech).
 - **Real-time flight and combat** — mouse-aim flight; **LMB** lasers and **RMB** missiles can fire together; boresight weapons; shield/armour/hull; NPC AI. Core systems are busier; the rim is quieter and more alien, with tougher pirates. Pirates may truce with you against aliens.
-- **Combat drones** — hulls with drone bays start empty; buy **Asp Light** drones from **Shipyard → Armoury** (turrets / launchers / drones listed separately), equip into bays, then launch (**G**) / recall (**H**). They engage only after shots are exchanged.
+- **Combat drones** — hulls with drone bays start empty; buy **Stinger Light** drones from **Shipyard → Armoury** (turrets / launchers / drones listed separately), equip into bays, then launch (**G**) / recall (**H**). They engage only after shots are exchanged.
 - **Skills & skillbooks** — pilot skills **0–20** (Character / inventory). Skillbooks are **loot-only** (wrecks, rare alien wreck bonus); read from Inventory. Not sold on markets.
 - **System security & law** — security rating **0–6** per system (core safer, rim often lawless). **Law standing 0–10** (start 10): attacking innocents only costs law in Sec 3–6. Low law draws police, station docking refusals, and eventually shoot-on-sight. Police patrol stations; black/white livery with red/blue flashers.
 - **Combat FX** — hit sparks/smoke, missile models and contrails, rock explosions, ship death FX; projectiles pass through station/settlement mesh so geometry does not block fire.
@@ -39,7 +39,7 @@ New Game starts you in a **Bravia Mk2** near the galactic core (always **Securit
 - **Docking & storage** — dock into a themed bay interior; per-station cargo, ore, parts, ships, weapons, accessories, blueprints, drones. Drag-and-drop ship ↔ bay (cargo/ore/parts on Storage; ore/BPs on Industry).
 - **Inventory (I)** — cargo, ore, ship parts, blueprints, **skillbooks**, remote stored assets, industry jobs.
 - **Character (F1)** — pilot portrait, law standing, credits, ship summary, **skills**; available anytime in-session.
-- **Missions** — bounty, exploration, investigation, and probe contracts. **J** tracks active work; orange rings on the galaxy map mark objectives and turn-ins. Mission waypoints advance as you complete steps.
+- **Missions** — bounty, exploration, investigation, probe, and **trade** contracts. Trade: buy a haul (**50–max freighter cargo**, currently up to **700**) at the origin with your credits, jump **≥4** systems to a bay that pays more, then sell — reward scales with quantity. Objectives **auto-complete** when finished (floating toast + chime; no station turn-in). **J** tracks active work; orange rings mark objective systems.
 - **Mining** — fire weapons at individual asteroids for ore; finite yield per rock, rarer tiers toward the rim; depleted rocks explode and respawn on the campaign clock. In **Security 0–3**, mining has a **10%** chance per hit to attract pirates (with a cooldown so laser spam cannot stack fleets).
 - **Probing** — scan planets, moons, asteroid fields, and stars for survey data, classification reports, and rare **human** blueprints; probe auto-returns after scan.
 - **Wrecks & salvage** — loot trade goods, occasional ship parts, rare blueprints; salvaged weapons equip or sell at the armoury. Alien wrecks can drop alien weapons and (rarely) alien blueprints. **F** prefers wreck loot over dock when both are in range.

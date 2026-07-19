@@ -48,7 +48,13 @@ function pickStartingSystem(galaxy, rng) {
   return home
 }
 
-export function createGameState({ characterName, shipInstanceName, shipClassId, seed }) {
+export function createGameState({
+  characterName,
+  shipInstanceName,
+  shipClassId,
+  seed,
+  portraitDataUrl = null
+}) {
   const galaxy = generateGalaxy(seed)
   const shipClass = getShipClass(shipClassId)
   // Separate rng streams (seed+1, seed+2) keep mission generation and
@@ -91,8 +97,8 @@ export function createGameState({ characterName, shipInstanceName, shipClassId, 
       combatEngagedNpcIds: {},
       // Authority reputation 0–10 (see game/security.js). Start clean.
       lawStanding: 10,
-      // Optional base64 data-URL of player portrait (Character screen upload).
-      portraitDataUrl: null,
+      // Optional base64 data-URL of player portrait (Create Pilot / Character upload).
+      portraitDataUrl: portraitDataUrl || null,
       // Player-only skills 0–20 (data/skills.js) — raised via skillbooks.
       skills: emptySkills(),
       ship: {
