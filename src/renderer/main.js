@@ -111,6 +111,7 @@ import {
   canProbeBody,
   recordProbeAttempt,
   isActiveMissionProbeTarget,
+  isMissionOnlyReprobe,
   probeAttemptCount,
   probeSurveyReport,
   probeExhaustedMessage,
@@ -2364,6 +2365,8 @@ function probeBody(body) {
     return
   }
 
+  // Snapshot before record: fully scanned + open mission → one free re-probe.
+  const missionOnlyReprobe = isMissionOnlyReprobe(gameState, body.id)
   const n = recordProbeAttempt(gameState, body.id)
 
   const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
@@ -2395,10 +2398,15 @@ function probeBody(body) {
     // Snapshot at launch — scan phase completes the mission before return, so
     // finishProbeResults cannot re-detect "open mission target" on the way back.
     attemptNumber: n,
-    missionTargetAtLaunch: isActiveMissionProbeTarget(gameState, body.id)
+    missionTargetAtLaunch: isActiveMissionProbeTarget(gameState, body.id),
+    missionOnlyReprobe
   }
   audio.playProbeLaunch()
-  flashToast(`Probe launched toward ${body.name}… (${n}/${MAX_PROBE_ATTEMPTS})`, 2.2)
+  if (missionOnlyReprobe) {
+    flashToast(`Mission re-scan of ${body.name}… (no additional finds)`, 2.4)
+  } else {
+    flashToast(`Probe launched toward ${body.name}… (${n}/${MAX_PROBE_ATTEMPTS})`, 2.2)
+  }
 }
 
 function showFloatingProbeResults(messages) {
@@ -2557,7 +2565,12 @@ function escapeHtmlProbe(s) {
     .replace(/"/g, '&quot;')
 }
 
-function finishProbeResults(body, attemptNumber = null, missionTargetAtLaunch = null) {
+function finishProbeResults(
+  body,
+  attemptNumber = null,
+  missionTargetAtLaunch = null,
+  missionOnlyReprobe = false
+) {
   // Attempt was already reserved at launch — do not double-count here.
   const attempt = attemptNumber ?? probeAttemptCount(gameState, body.id)
   // Prefer launch snapshot: scan phase may already have completed the mission.
@@ -2566,9 +2579,10 @@ function finishProbeResults(body, attemptNumber = null, missionTargetAtLaunch = 
       ? !!missionTargetAtLaunch
       : isActiveMissionProbeTarget(gameState, body.id)
   // First probe on a mission body resolves the contract; later probes are normal loot only.
-  const missionFirstProbe = wasMissionTarget && attempt === 1
+  // Mission re-probe on an already fully scanned body also resolves the contract (no loot).
+  const missionFirstProbe = wasMissionTarget && (attempt === 1 || missionOnlyReprobe)
   // Classification dossier only on the first probe of this body (attempt 1).
-  const showClassification = attempt === 1
+  const showClassification = attempt === 1 && !missionOnlyReprobe
 
   // Idempotent if already marked at end of scan phase — completes probe/exploration on first hit.
   markBodyProbed(gameState, body.id)
@@ -2582,9 +2596,10 @@ function finishProbeResults(body, attemptNumber = null, missionTargetAtLaunch = 
   }
   updateMissionProgress(gameState)
 
-  // Standard loot roll every attempt (no forced find).
+  // Mission re-probe on a fully scanned body: contract only — no survey/BP/skillbook rolls.
   const result = launchProbe(gameState, playerShipClass, Math.random, {
-    forceFind: false
+    forceFind: false,
+    noLoot: missionOnlyReprobe
   })
 
   const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
@@ -2624,24 +2639,26 @@ function finishProbeResults(body, attemptNumber = null, missionTargetAtLaunch = 
     if (investigation?.kind !== 'intel') audio.playMissionComplete()
   }
 
-  // Loot lines below mission complete when both apply.
+  // Loot lines below mission complete when both apply (never for mission-only re-probe).
   const lootLines = []
-  if (result.found && result.stored) {
-    lootLines.push(
-      `Probe found Survey Data at ${body.name}! Added to cargo — transfer to station storage (Storage tab) to sell.`
-    )
-  } else if (result.found) {
-    lootLines.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
-  }
-  if (result.blueprint) {
-    lootLines.push(
-      `Rare find: ${result.blueprint.name}! Stored in ship blueprints — craft at a station Industry bay.`
-    )
-  }
-  if (result.skillbook) {
-    lootLines.push(
-      `Skillbook found: ${result.skillbook.name}! Read it under Inventory → Skillbooks.`
-    )
+  if (!missionOnlyReprobe) {
+    if (result.found && result.stored) {
+      lootLines.push(
+        `Probe found Survey Data at ${body.name}! Added to cargo — transfer to station storage (Storage tab) to sell.`
+      )
+    } else if (result.found) {
+      lootLines.push(`Probe found valuable survey data at ${body.name}, but your cargo hold is full!`)
+    }
+    if (result.blueprint) {
+      lootLines.push(
+        `Rare find: ${result.blueprint.name}! Stored in ship blueprints — craft at a station Industry bay.`
+      )
+    }
+    if (result.skillbook) {
+      lootLines.push(
+        `Skillbook found: ${result.skillbook.name}! Read it under Inventory → Skillbooks.`
+      )
+    }
   }
   for (const line of lootLines) messages.push(line)
 
@@ -2729,8 +2746,9 @@ function updateProbeEffect(dt) {
       const finishedBody = body
       const attemptNumber = probeEffect.attemptNumber
       const missionTargetAtLaunch = probeEffect.missionTargetAtLaunch
+      const missionOnlyReprobe = !!probeEffect.missionOnlyReprobe
       clearProbeEffect()
-      finishProbeResults(finishedBody, attemptNumber, missionTargetAtLaunch)
+      finishProbeResults(finishedBody, attemptNumber, missionTargetAtLaunch, missionOnlyReprobe)
     }
   }
 }
@@ -3294,8 +3312,9 @@ function beginDocking(body) {
       const b = probeEffect.body
       const attemptNumber = probeEffect.attemptNumber
       const missionTargetAtLaunch = probeEffect.missionTargetAtLaunch
+      const missionOnlyReprobe = !!probeEffect.missionOnlyReprobe
       clearProbeEffect()
-      finishProbeResults(b, attemptNumber, missionTargetAtLaunch)
+      finishProbeResults(b, attemptNumber, missionTargetAtLaunch, missionOnlyReprobe)
     } else {
       clearProbeEffect()
       flashToast('Probe aborted — docking')
@@ -5284,7 +5303,12 @@ function animate() {
   if (probeLaunch) {
     const left = MAX_PROBE_ATTEMPTS - probeAttemptCount(gameState, probeLaunch.body.id)
     if (left <= 0) {
-      probePromptEl.textContent = probeExhaustedMessage(probeLaunch.body.name)
+      // Fully scanned, but an open probe/investigation mission still needs one re-scan.
+      if (canProbeBody(gameState, probeLaunch.body.id)) {
+        probePromptEl.textContent = `Press P to re-scan ${probeLaunch.body.name} (mission) · no additional finds`
+      } else {
+        probePromptEl.textContent = probeExhaustedMessage(probeLaunch.body.name)
+      }
     } else {
       const base = probeLaunch.viaOrbit
         ? `Press P to probe ${probeLaunch.body.name} (in orbit)`

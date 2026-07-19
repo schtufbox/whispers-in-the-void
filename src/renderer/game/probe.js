@@ -235,25 +235,10 @@ export function probeAttemptCount(gameState, bodyId) {
   return gameState.probeCounts?.[bodyId] ?? 0
 }
 
-export function canProbeBody(gameState, bodyId) {
-  if (!bodyId) return false
-  return probeAttemptCount(gameState, bodyId) < MAX_PROBE_ATTEMPTS
-}
-
-// Call once per launch (not per return) so aborted probes still consume a slot.
-export function recordProbeAttempt(gameState, bodyId) {
-  if (!bodyId) return 0
-  if (!gameState.probeCounts || typeof gameState.probeCounts !== 'object') {
-    gameState.probeCounts = {}
-  }
-  const key = String(bodyId)
-  gameState.probeCounts[key] = (gameState.probeCounts[key] ?? 0) + 1
-  return gameState.probeCounts[key]
-}
-
 // True when this body is the open objective of an active probe/investigation mission
 // (those always resolve their mission outcome on the first successful probe).
 export function isActiveMissionProbeTarget(gameState, bodyId) {
+  if (!bodyId || !gameState?.missions?.active) return false
   const id = String(bodyId)
   return gameState.missions.active.some(
     (m) =>
@@ -265,11 +250,50 @@ export function isActiveMissionProbeTarget(gameState, bodyId) {
   )
 }
 
+/**
+ * Fully scanned bodies normally block further probes. Exception: one mission
+ * re-probe is allowed while an open probe/investigation targets this body.
+ * That re-probe does not change probeCounts and yields no loot (main.js).
+ */
+export function isMissionOnlyReprobe(gameState, bodyId) {
+  if (!bodyId) return false
+  return (
+    probeAttemptCount(gameState, bodyId) >= MAX_PROBE_ATTEMPTS &&
+    isActiveMissionProbeTarget(gameState, bodyId)
+  )
+}
+
+export function canProbeBody(gameState, bodyId) {
+  if (!bodyId) return false
+  if (probeAttemptCount(gameState, bodyId) < MAX_PROBE_ATTEMPTS) return true
+  // Exhausted count, but an active contract still needs a survey of this body.
+  return isActiveMissionProbeTarget(gameState, bodyId)
+}
+
+// Call once per launch (not per return) so aborted probes still consume a slot.
+// When already at MAX, leave the count unchanged (mission re-probe path).
+export function recordProbeAttempt(gameState, bodyId) {
+  if (!bodyId) return 0
+  if (!gameState.probeCounts || typeof gameState.probeCounts !== 'object') {
+    gameState.probeCounts = {}
+  }
+  const key = String(bodyId)
+  const cur = gameState.probeCounts[key] ?? 0
+  if (cur >= MAX_PROBE_ATTEMPTS) return cur
+  gameState.probeCounts[key] = cur + 1
+  return gameState.probeCounts[key]
+}
+
 // A find still respects cargo capacity like any other good, so a full hold
 // can miss out on a discovery rather than silently exceeding capacity.
 // forceFind: used so a mission-target first probe always yields its result path
 // (caller still handles mission logic separately; this only affects survey data).
-export function launchProbe(gameState, shipClass, rng, { forceFind = false } = {}) {
+// noLoot: mission re-probe on a fully scanned body — complete the contract only.
+export function launchProbe(gameState, shipClass, rng, { forceFind = false, noLoot = false } = {}) {
+  if (noLoot) {
+    return { found: false, stored: false, blueprint: null, skillbook: null }
+  }
+
   // Independent ultra-rare blueprint find (does not require survey-data roll).
   // Explorer role + Probe Expert skill raise odds.
   const blueprintId = tryRollBlueprintDrop(rng, probeBlueprintChance(shipClass, gameState))

@@ -6,6 +6,7 @@ import {
   canProbeBody,
   recordProbeAttempt,
   isActiveMissionProbeTarget,
+  isMissionOnlyReprobe,
   MAX_PROBE_ATTEMPTS,
   PROBE_FIND_CHANCE,
   EXPLORER_PROBE_LOOT_BONUS,
@@ -117,6 +118,57 @@ test('isActiveMissionProbeTarget detects open probe and investigation targets', 
   assert.equal(isActiveMissionProbeTarget(gameState, 'b'), true)
   assert.equal(isActiveMissionProbeTarget(gameState, 'c'), false)
   assert.equal(isActiveMissionProbeTarget(gameState, 'x'), false)
+})
+
+test('fully probed body allows one mission re-probe without raising count or loot', () => {
+  const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
+  const gameState = {
+    probeCounts: { 'body-1': MAX_PROBE_ATTEMPTS },
+    missions: {
+      active: [{ type: 'probe', objectiveComplete: false, target: { bodyId: 'body-1' } }]
+    },
+    player: { ship: freshShip() }
+  }
+
+  assert.equal(canProbeBody(gameState, 'body-1'), true)
+  assert.equal(isMissionOnlyReprobe(gameState, 'body-1'), true)
+
+  // Re-probe does not consume another slot — count stays exhausted.
+  const n = recordProbeAttempt(gameState, 'body-1')
+  assert.equal(n, MAX_PROBE_ATTEMPTS)
+  assert.equal(gameState.probeCounts['body-1'], MAX_PROBE_ATTEMPTS)
+
+  // Lucky rng would normally yield survey data + rare rolls; noLoot suppresses all.
+  const result = launchProbe(gameState, shipClass, () => 0, { forceFind: true, noLoot: true })
+  assert.equal(result.found, false)
+  assert.equal(result.stored, false)
+  assert.equal(result.blueprint, null)
+  assert.equal(result.skillbook, null)
+  assert.deepEqual(gameState.player.ship.cargo, {})
+})
+
+test('fully probed body without an open mission cannot be re-probed', () => {
+  const gameState = {
+    probeCounts: { 'body-1': MAX_PROBE_ATTEMPTS },
+    missions: { active: [] }
+  }
+  assert.equal(canProbeBody(gameState, 'body-1'), false)
+  assert.equal(isMissionOnlyReprobe(gameState, 'body-1'), false)
+  // record still no-ops at max even without a mission
+  assert.equal(recordProbeAttempt(gameState, 'body-1'), MAX_PROBE_ATTEMPTS)
+  assert.equal(gameState.probeCounts['body-1'], MAX_PROBE_ATTEMPTS)
+})
+
+test('mission re-probe is blocked once the probe contract is complete', () => {
+  const gameState = {
+    probeCounts: { 'body-1': MAX_PROBE_ATTEMPTS },
+    missions: {
+      active: [{ type: 'probe', objectiveComplete: true, target: { bodyId: 'body-1' } }]
+    }
+  }
+  assert.equal(isActiveMissionProbeTarget(gameState, 'body-1'), false)
+  assert.equal(canProbeBody(gameState, 'body-1'), false)
+  assert.equal(isMissionOnlyReprobe(gameState, 'body-1'), false)
 })
 
 test('probeSurveyReport classifies planets, moons, stars, and asteroid fields', () => {
