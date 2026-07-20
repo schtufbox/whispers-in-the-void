@@ -11,11 +11,6 @@
 
 <p align="center">
   <a href="https://github.com/LaughingInPurgatory/whispers-in-the-void/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/LaughingInPurgatory/whispers-in-the-void?style=flat-square" /></a>
-  <a href="https://ko-fi.com/laughinginpurgatory"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white" /></a>
-</p>
-
-<p align="center">
-  Support development on <a href="https://ko-fi.com/laughinginpurgatory">Ko-fi</a>
 </p>
 
 ---
@@ -144,7 +139,15 @@ Main menu and pause menu both open **Settings**: **Sound Effects**, **Music**, *
 
 ## Support
 
-If you enjoy the game, you can support development on [Ko-fi](https://ko-fi.com/laughinginpurgatory).
+<p align="center">
+  <a href="https://ko-fi.com/laughinginpurgatory">
+    <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" />
+  </a>
+</p>
+
+<p align="center">
+  Please support me on KOFI, every bit helps!
+</p>
 
 ## License / credit
 
