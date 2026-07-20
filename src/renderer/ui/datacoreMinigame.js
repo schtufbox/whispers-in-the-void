@@ -8,12 +8,12 @@ const STYLE = `
 #datacore-hack {
   position: fixed; inset: 0; z-index: 60; display: none;
   align-items: center; justify-content: center;
-  background: rgba(4,8,16,0.75); font-family: monospace; color: #cfe3ff;
+  background: rgba(4,8,16,0.75); font-family: monospace; color: var(--ui-text);
 }
 #datacore-hack.visible { display: flex; }
 #datacore-hack .dh-panel {
   width: 420px; padding: 18px 20px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.96), rgba(7,12,22,0.92));
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.96), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.92));
   border: 1px solid rgba(201,160,255,0.5); border-left: 3px solid #c9a0ff;
   box-shadow: 0 0 28px rgba(160,100,255,0.25);
 }

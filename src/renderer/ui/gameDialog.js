@@ -10,44 +10,44 @@ const STYLE = `
 .${OVERLAY_CLASS} {
   position: fixed; inset: 0; z-index: 200;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(4,6,12,0.62);
-  font-family: monospace; color: #cfe3ff;
+  background: rgba(var(--ui-bg-scrim-r),var(--ui-bg-scrim-g),var(--ui-bg-scrim-b),0.62);
+  font-family: monospace; color: var(--ui-text);
   pointer-events: auto;
 }
 .${OVERLAY_CLASS} .game-dialog {
   width: min(420px, 92vw); padding: 18px 20px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.98), rgba(7,12,22,0.95));
-  border: 1px solid rgba(111,216,242,0.5); border-left: 3px solid #6fd8f2;
-  box-shadow: 0 0 28px rgba(79,195,217,0.3), inset 0 0 20px rgba(79,195,217,0.05);
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.98), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.95));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 28px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 20px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
 }
 .${OVERLAY_CLASS} .game-dialog .prompt-title {
   font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #7fe6ff; margin-bottom: 12px; text-shadow: 0 0 8px rgba(79,195,217,0.45);
+  color: var(--ui-accent); margin-bottom: 12px; text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
 }
 .${OVERLAY_CLASS} .game-dialog .prompt-body {
-  font-size: 13px; line-height: 1.45; color: #cfe3ff; opacity: 0.92;
+  font-size: 13px; line-height: 1.45; color: var(--ui-text); opacity: 0.92;
   margin-bottom: 14px; white-space: pre-wrap;
 }
 .${OVERLAY_CLASS} .game-dialog input {
   width: 100%; box-sizing: border-box; margin-bottom: 12px;
-  background: rgba(8,14,26,0.95); border: 1px solid rgba(111,216,242,0.4);
-  color: #cfe3ff; padding: 8px 10px; font-family: monospace; font-size: 13px;
+  background: rgba(var(--ui-bg-track-r),var(--ui-bg-track-g),var(--ui-bg-track-b),0.95); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  color: var(--ui-text); padding: 8px 10px; font-family: monospace; font-size: 13px;
 }
 .${OVERLAY_CLASS} .game-dialog input:focus {
-  outline: none; border-color: #7fe6ff; box-shadow: 0 0 8px rgba(79,195,217,0.35);
+  outline: none; border-color: var(--ui-accent); box-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
 }
 .${OVERLAY_CLASS} .game-dialog .prompt-actions {
   display: flex; justify-content: flex-end; gap: 8px;
 }
 .${OVERLAY_CLASS} .game-dialog button.prompt-ok {
-  background: rgba(111,216,242,0.15); border: 1px solid rgba(111,216,242,0.5); color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.15); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5); color: var(--ui-text);
   padding: 6px 14px; cursor: pointer; font-family: monospace; letter-spacing: 0.5px;
 }
 .${OVERLAY_CLASS} .game-dialog button.prompt-cancel {
   background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.45); color: #ffb3b3;
   padding: 6px 14px; cursor: pointer; font-family: monospace; letter-spacing: 0.5px;
 }
-.${OVERLAY_CLASS} .game-dialog button.prompt-ok:hover { background: rgba(111,216,242,0.28); }
+.${OVERLAY_CLASS} .game-dialog button.prompt-ok:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28); }
 .${OVERLAY_CLASS} .game-dialog button.prompt-cancel:hover { background: rgba(224,90,90,0.22); }
 .${OVERLAY_CLASS} .game-dialog.danger { border-left-color: #e05a5a; }
 .${OVERLAY_CLASS} .game-dialog.danger .prompt-title { color: #ffb3b3; text-shadow: 0 0 8px rgba(224,90,90,0.4); }

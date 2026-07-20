@@ -27,11 +27,11 @@ const STYLE = `
   80% { transform: translate(3px, -2px); }
 }
 @keyframes glitchShadow {
-  0%, 18% { text-shadow: 2px 0 #5ee6ff, -2px 0 #ff4d4d; }
-  20% { text-shadow: -4px 1px #5ee6ff, 4px -1px #ff4d4d; }
-  22%, 48% { text-shadow: 2px 0 #5ee6ff, -2px 0 #ff4d4d; }
-  50% { text-shadow: 4px -2px #5ee6ff, -4px 2px #ff4d4d; }
-  52%, 100% { text-shadow: 2px 0 #5ee6ff, -2px 0 #ff4d4d; }
+  0%, 18% { text-shadow: 2px 0 var(--ui-accent), -2px 0 #ff4d4d; }
+  20% { text-shadow: -4px 1px var(--ui-accent), 4px -1px #ff4d4d; }
+  22%, 48% { text-shadow: 2px 0 var(--ui-accent), -2px 0 #ff4d4d; }
+  50% { text-shadow: 4px -2px var(--ui-accent), -4px 2px #ff4d4d; }
+  52%, 100% { text-shadow: 2px 0 var(--ui-accent), -2px 0 #ff4d4d; }
 }
 
 #death-screen .killer {
@@ -59,7 +59,7 @@ const STYLE = `
 }
 #death-screen .killer .k-line { color: #f0d0d0; }
 #death-screen .killer .k-name { color: #ffe0e0; font-size: 15px; letter-spacing: 0.5px; }
-#death-screen .killer .k-ship { color: #7fe6ff; }
+#death-screen .killer .k-ship { color: var(--ui-accent); }
 #death-screen .killer .k-method { margin-top: 4px; opacity: 0.85; font-size: 12px; }
 #death-screen .killer .k-faction {
   display: block; margin-top: 3px; font-size: 11px; letter-spacing: 1px;

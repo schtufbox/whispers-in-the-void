@@ -6,10 +6,13 @@ import {
   updateProjectiles,
   updateNpcAI,
   regenShields,
-  PLAYER_DAMAGE_TAKEN_MULT
+  PLAYER_DAMAGE_TAKEN_MULT,
+  rollShipBounty,
+  applyShipBounty
 } from './combat.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from '../data/shipClasses.js'
 import { getAsteroidRocks } from '../render/asteroidFieldMesh.js'
+import { flushPendingToasts } from './security.js'
 
 const DT = 1 / 60
 
@@ -124,7 +127,7 @@ test('fireProjectile with a weaponTypeFilter the ship has no hardpoint for fires
   assert.equal(gameState.projectiles.length, 0)
 })
 
-test('player lasers spawn on centerline and fly pure ship-forward', () => {
+test('single player laser spawns on centerline and flies pure ship-forward', () => {
   const shipClass = getShipClass(STARTER_SHIP_CLASS_ID)
   const shooter = {
     position: [0, 0, 0],
@@ -138,12 +141,53 @@ test('player lasers spawn on centerline and fly pure ship-forward', () => {
   fireProjectile(gameState, shooter, cls, 'player', null, 'laser', null, aim)
   assert.equal(gameState.projectiles.length, 1)
   const p = gameState.projectiles[0]
-  assert.deepEqual(p.position, [0, 0, 8], 'player laser uses centerline muzzle spawn')
+  assert.deepEqual(p.position, [0, 0, 8], 'single player laser uses centerline muzzle spawn')
   const speed = Math.hypot(...p.velocity)
   const dir = p.velocity.map((v) => v / speed)
   assert.ok(Math.abs(dir[0]) < 1e-5)
   assert.ok(Math.abs(dir[1]) < 1e-5)
   assert.ok(Math.abs(dir[2] - 1) < 1e-5)
+})
+
+test('multi-turret player LMB fires every laser with separated muzzles', () => {
+  const shipClass = getShipClass('needle_dart') // two laser hardpoints
+  const shooter = {
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    equippedWeapons: { fwd1: 'pulse_laser', fwd2: 'pulse_laser' }
+  }
+  const gameState = { simTime: 0, projectiles: [] }
+  fireProjectile(gameState, shooter, shipClass, 'player', null, 'laser', null, [0, 0, 200])
+  assert.equal(gameState.projectiles.length, 2, 'both laser hardpoints fire on LMB')
+  const xs = gameState.projectiles.map((p) => p.position[0]).sort((a, b) => a - b)
+  assert.ok(xs[0] < -0.5 && xs[1] > 0.5, 'laser muzzles fan left/right')
+  for (const p of gameState.projectiles) {
+    assert.equal(p.weaponType, 'laser')
+    const speed = Math.hypot(...p.velocity)
+    const dir = p.velocity.map((v) => v / speed)
+    assert.ok(Math.abs(dir[2] - 1) < 1e-5, 'lasers still fly ship-forward')
+  }
+})
+
+test('multi-launcher player RMB fires every missile hardpoint', () => {
+  const shipClass = {
+    ...getShipClass('gun_barge'),
+    hardpoints: [
+      { id: 'm1', position: [-1.2, 0, 6], type: 'missile' },
+      { id: 'm2', position: [1.2, 0, 6], type: 'missile' }
+    ]
+  }
+  const shooter = {
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    equippedWeapons: { m1: 'rocket_pod', m2: 'rocket_pod' }
+  }
+  const gameState = { simTime: 0, projectiles: [] }
+  fireProjectile(gameState, shooter, shipClass, 'player', null, 'missile', null, [0, 0, 200])
+  assert.equal(gameState.projectiles.length, 2, 'both missile hardpoints fire on RMB')
+  const xs = gameState.projectiles.map((p) => p.position[0]).sort((a, b) => a - b)
+  assert.ok(xs[0] < -0.5 && xs[1] > 0.5, 'missile muzzles are laterally separated')
+  for (const p of gameState.projectiles) assert.equal(p.weaponType, 'missile')
 })
 
 test('prunePlayerLasersOffBoresight drops turn-spray but keeps on-axis bolts', async () => {
@@ -222,7 +266,12 @@ test('destroying an NPC with a player projectile leaves a lootable wreck at the 
     projectiles: [],
     npcs: [npc],
     wrecks: [],
-    player: { currentSystemId: 'sys-0', startingSystemId: null, ship: { position: [0, 0, 0], quaternion: [0, 0, 0, 1] } }
+    player: {
+      credits: 0,
+      currentSystemId: 'sys-0',
+      startingSystemId: null,
+      ship: { position: [0, 0, 0], quaternion: [0, 0, 0, 1] }
+    }
   }
   fireProjectile(gameState, shooter, shipClass, 'player')
   step(gameState, 20, () => updateProjectiles(gameState, DT))
@@ -230,6 +279,28 @@ test('destroying an NPC with a player projectile leaves a lootable wreck at the 
   assert.equal(npc.destroyed, true)
   assert.equal(gameState.wrecks.length, 1)
   assert.ok(gameState.wrecks[0].loot.cargo, 'wreck should carry some lootable cargo')
+  // No galaxy/system in fixture → security 0; still pays a random bounty.
+  assert.ok(gameState.player.credits >= 100, 'player kill should award bounty credits')
+  const toasts = flushPendingToasts(gameState)
+  assert.ok(toasts.some((t) => /Bounty \+\d+ cr/.test(t)), 'bounty toast should be queued')
+})
+
+test('rollShipBounty pays more in lower security systems', () => {
+  // Fixed mid-roll for frac so only security multiplier differs.
+  const mid = () => 0.5
+  const lowSec = rollShipBounty('light_runner', 0, mid)
+  const highSec = rollShipBounty('light_runner', 6, mid)
+  assert.ok(lowSec > highSec, `sec0 (${lowSec}) should beat sec6 (${highSec})`)
+  assert.ok(lowSec >= 100)
+  assert.ok(highSec >= 100)
+})
+
+test('applyShipBounty adds credits and queues a toast', () => {
+  const gs = { player: { credits: 500 } }
+  const paid = applyShipBounty(gs, { shipClassId: 'light_runner' }, 3, () => 0.5)
+  assert.ok(paid >= 100)
+  assert.equal(gs.player.credits, 500 + paid)
+  assert.deepEqual(flushPendingToasts(gs), [`Bounty +${paid} cr`])
 })
 
 test('NPC AI: a pirate close to the player transitions from patrol to attack', () => {

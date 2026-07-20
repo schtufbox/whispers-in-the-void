@@ -6,7 +6,11 @@ import {
   getSfxEnabled,
   setSfxEnabled,
   getMusicEnabled,
-  setMusicEnabled
+  setMusicEnabled,
+  getUiHue,
+  setUiHue,
+  getUiBgHue,
+  setUiBgHue
 } from './settings.js'
 import { getDisplayMode, getMainWindow, toggleFullscreen } from './display.js'
 
@@ -39,4 +43,8 @@ export function registerSaveHandlers() {
   ipcMain.handle('set-sfx-enabled', (_event, enabled) => setSfxEnabled(enabled))
   ipcMain.handle('get-music-enabled', () => getMusicEnabled())
   ipcMain.handle('set-music-enabled', (_event, enabled) => setMusicEnabled(enabled))
+  ipcMain.handle('get-ui-hue', () => getUiHue())
+  ipcMain.handle('set-ui-hue', (_event, hue) => setUiHue(hue))
+  ipcMain.handle('get-ui-bg-hue', () => getUiBgHue())
+  ipcMain.handle('set-ui-bg-hue', (_event, hue) => setUiBgHue(hue))
 }

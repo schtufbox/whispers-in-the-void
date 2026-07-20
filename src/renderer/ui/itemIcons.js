@@ -7,7 +7,7 @@ import { escapeHtml } from './escapeHtml.js'
 
 const SZ = 18
 
-function svg(body, color = '#7fe6ff') {
+function svg(body, color = 'var(--ui-accent)') {
   return `<svg class="item-icon" width="${SZ}" height="${SZ}" viewBox="0 0 18 18" aria-hidden="true" focusable="false" style="color:${color}">${body}</svg>`
 }
 
@@ -56,12 +56,12 @@ function weaponIcon(category = 'laser') {
      <path ${S} d="M6 9.5 h6"/>
      <path ${S} d="M9 4.5 V2.8"/>
      <path ${S} d="M7.5 13.5 h3" opacity="0.7"/>`,
-    '#5ee6ff'
+    'var(--ui-accent)'
   )
 }
 
 function shipIcon(alien = false) {
-  const color = alien ? '#9bff4a' : '#7fe6ff'
+  const color = alien ? '#9bff4a' : 'var(--ui-accent)'
   return svg(
     `<path ${S} d="M9 2.5 L14 8.5 L12.5 14.5 L5.5 14.5 L4 8.5 Z"/>
      <path ${S} d="M9 5.5 v5 M6.5 10.5 h5"/>
@@ -93,7 +93,7 @@ function blueprintIcon(kind = 'ship') {
      <path ${S} d="M6.5 12 L9 5.5 L11.5 12"/>
      <path ${S} d="M7.2 10 h3.6"/>
      <path ${S} d="M5 4.5 h2" opacity="0.7"/>`,
-    '#7fe6ff'
+    'var(--ui-accent)'
   )
 }
 
@@ -199,7 +199,7 @@ export const ITEM_ICON_CSS = `
 }
 .item-name .item-icon {
   flex-shrink: 0; display: block;
-  filter: drop-shadow(0 0 3px rgba(79,195,217,0.35));
+  filter: drop-shadow(0 0 3px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35));
 }
 .item-name .item-label {
   min-width: 0; overflow: hidden; text-overflow: ellipsis;

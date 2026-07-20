@@ -11,6 +11,11 @@
 
 <p align="center">
   <a href="https://github.com/LaughingInPurgatory/whispers-in-the-void/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/LaughingInPurgatory/whispers-in-the-void?style=flat-square" /></a>
+  <a href="https://ko-fi.com/laughinginpurgatory"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white" /></a>
+</p>
+
+<p align="center">
+  Support development on <a href="https://ko-fi.com/laughinginpurgatory">Ko-fi</a>
 </p>
 
 ---
@@ -25,10 +30,11 @@ New Game starts you in a **Light Runner** at **Terra Prime** (galactic centre, a
 
 - **One seeded galaxy** — systems, planets, moons, stations, settlements, asteroid fields, and **warp gates** from a fixed canonical seed. Every New Game uses the same map; home is always **Terra Prime** (never a binary/trinary).
 - **Whispers** — outer-rim landmark system with a unique trinary sun, a named station, and no ambient hostiles.
-- **Textured worlds** — CC0 photo textures under procedural surface detail; stars with coronas, flares, and binary/trinary energy rings.
+- **Textured worlds** — CC0 photo textures under procedural surface detail; gas giants use the same free texture path as other planets. Stars use procedural granulation, tight limb coronas, soft outer glow, flares, and binary/trinary energy rings.
 - **100+ ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**. **Mining** hulls (8 models) trade combat for ore holds **200–2000**, tiny cargo (≤40), few/no accessory slots, and low speed/defences.
 - **Alien ships & weapons** — four exclusive organic hulls (Void Cyst, Spine Skimmer, Chor Lathe, Zealot Carapace) with alien guns and unique fire SFX. **Never sold.** Craft only if you salvage an **extremely rare** alien blueprint from an alien wreck (the only source of alien tech).
-- **Real-time flight and combat** — mouse-aim flight; **LMB** lasers and **RMB** missiles can fire together; boresight weapons; shield/armour/hull; NPC AI. Core systems are busier; the rim is quieter and more alien, with tougher pirates. Pirates may truce with you against aliens.
+- **Real-time flight and combat** — mouse-aim flight; **LMB** fires every laser hardpoint and **RMB** every launcher (visible wing offsets on multi-mount hulls); boresight weapons; shield/armour/hull; NPC AI. Core systems are busier; the rim is quieter and more alien, with tougher pirates. Pirates may truce with you against aliens.
+- **Destroy bounties** — destroying an NPC ship with your weapons pays a **random credit bounty** (toast + wreck loot). Pay scales with hull value and is **higher in lower-security systems** (nullsec pays most). Pirate kills can still improve law standing in high-sec.
 - **Combat drones** — hulls with drone bays start empty; buy **Stinger Light** drones from **Shipyard → Armoury** (turrets / launchers / drones listed separately), equip into bays, then launch (**G**) / recall (**H**). They engage only after shots are exchanged.
 - **Skills & skillbooks** — pilot skills **0–20** (Character / inventory). Skillbooks are **loot-only** (wrecks, rare alien wreck bonus); read from Inventory. Not sold on markets.
 - **System security & law** — security rating **0–6** per system (core safer, rim often lawless). **Law standing 0–10** (start 10): attacking innocents only costs law in Sec 3–6. Low law draws police, station docking refusals, and eventually shoot-on-sight. Police patrol stations; black/white livery with red/blue flashers.
@@ -45,10 +51,11 @@ New Game starts you in a **Light Runner** at **Terra Prime** (galactic centre, a
 - **Mining** — fire weapons at individual asteroids for ore; finite yield per rock, rarer tiers toward the rim; depleted rocks explode and respawn on the campaign clock. In **Security 0–3**, mining has a **10%** chance per hit to attract pirates (with a cooldown so laser spam cannot stack fleets).
 - **Probing** — scan planets, moons, asteroid fields, and stars for survey data, classification reports, and rare **human** blueprints; probe auto-returns after scan.
 - **Wrecks & salvage** — loot trade goods, occasional ship parts, rare blueprints; salvaged weapons equip or sell at the armoury. Alien wrecks can drop alien weapons and (rarely) alien blueprints. **F** prefers wreck loot over dock when both are in range.
-- **Warp gates & supercruise** — neighbor-linked warp gates; fly into the aperture to jump, emerge from the paired gate. Supercruise to waypoints with standoff arrival. **System Scan (B)** for probe scanning of Spatial Anomalies. System overview under the radar (clickable with free mouse).
+- **Warp gates & supercruise** — neighbor-linked warp gates; fly into the aperture to jump, emerge from the paired gate. Supercruise to waypoints with standoff arrival. **System Scan (B)** for probe scanning of Spatial Anomalies (alien incursions, datacores).
 - **Chase camera** — centered behind the ship; **hold Alt + mouse** free-look (only arms when the mouse moves — bare Alt does not stick free-look), release to snap back.
-- **HUD** — status bars, radar, System Scan button, canopy braces, scanlines, tab-target panel; subtle starfield tint from the local sun. Galaxy map with system search and security.
+- **HUD** — status bars, radar, System Scan button, canopy braces, scanlines, tab-target panel; subtle starfield tint from the local sun. **Galaxy map (M)** and **System Scan (B)** open as movable floating panels (geometry remembered). System overview under the radar (clickable with free mouse).
 - **Music & SFX** — title/ambient/death music; sample thrusters, weapons, dock, and synthesized combat layers. **Separate Sound Effects and Music** toggles in **Settings** (saved). **Controls** list in Settings (intro + pause). Alien weapons use distinct synth fire sounds.
+- **UI Colour** — in **Settings → UI Colour**, retint **accent** (borders, labels, cyan-hinted text) and **panel background** fills (menus, HUD cards, docks — not space or interiors). Changes apply live and auto-save to `settings.json` / localStorage.
 - **Windowed app + fullscreen** — default **windowed** with OS frame (**1600×900 outer** including title bar/borders; size/position remembered). **Alt + Enter** toggles native fullscreen. **Settings** on main menu and pause menu. Preferences persist in app `settings.json`.
 - **Permadeath** — no respawns; death screen shows killer and law consequence.
 
@@ -99,9 +106,10 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **Mouse movement** | Aim (yaw/pitch) while flight mode is on |
 | **Alt + mouse** | Free-look camera around the ship (release Alt to restore chase) |
 | **Alt + Enter** | Toggle fullscreen |
-| **Left click** | Fire lasers (can hold with RMB) |
-| **Right click** | Fire missiles/rockets (can hold with LMB) |
-| **W / S** | Throttle forward / reverse (coasts down when released; reverse capped at 25% of max) |
+| **Left click** | Fire all laser hardpoints (can hold with RMB) |
+| **Right click** | Fire all missile hardpoints (can hold with LMB) |
+| **W / S** | Throttle forward / reverse in flight (coasts down when released; reverse capped at 25% of max) |
+| **S** | While docked: open/close **Station Services** |
 | **A / D** | Strafe left / right |
 | **X / Z** | Strafe up / down |
 | **Q / E** | Roll |
@@ -109,7 +117,7 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **Shift+Tab** | Clear target lock |
 | **Ctrl/Cmd + Tab** | Set waypoint on body under crosshair |
 | **C** | Toggle supercruise (requires a waypoint) |
-| **M** | Galaxy map (search systems, plot routes) |
+| **M** | Galaxy map (flight or docked; search systems, plot routes) |
 | **B** | System Scan (probes / Spatial Anomalies) |
 | **F** | Warp gate jump (within 2 km) · loot wreck · dock |
 | **P** | Hack datacore nodule · launch survey probe |
@@ -122,7 +130,7 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **F5** | Quick save |
 | **Free mouse** | Click system overview (right) to set waypoints |
 
-Main menu and pause menu both open **Settings** (sound effects + music). Preferences are saved for the next launch.
+Main menu and pause menu both open **Settings**: **Sound Effects**, **Music**, **UI Colour** (accent + panel background), and **Controls**. Preferences (including UI colours) are saved for the next launch.
 
 ## Tech stack
 
@@ -133,6 +141,10 @@ Main menu and pause menu both open **Settings** (sound effects + music). Prefere
 - SFX samples: [Kenney Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds) (CC0)
 - Ship/alien PBR textures: [ambientCG](https://ambientcg.com/) (CC0)
 - Station bay kit pieces: [Kenney Space Station Kit](https://kenney.nl/assets/space-station-kit) (CC0); selected props from [Quaternius Ultimate Space Kit](https://quaternius.com/packs/ultimatespacekit.html) (CC0)
+
+## Support
+
+If you enjoy the game, you can support development on [Ko-fi](https://ko-fi.com/laughinginpurgatory).
 
 ## License / credit
 

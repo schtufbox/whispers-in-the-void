@@ -7,7 +7,7 @@ export const CONTROLS = [
   ['Mouse', 'Aim (pitch & yaw) while in flight mode'],
   ['Alt + Mouse', 'Free-look — orbit chase camera around ship'],
   ['Alt + Enter', 'Toggle fullscreen'],
-  ['W / S', 'Throttle forward / reverse'],
+  ['W / S', 'Throttle forward / reverse (flight)'],
   ['A / D', 'Strafe left / right'],
   ['X / Z', 'Strafe up / down'],
   ['Q / E', 'Roll left / right'],
@@ -17,7 +17,8 @@ export const CONTROLS = [
   ['Shift+Tab', 'Clear target lock'],
   ['Ctrl+Tab', 'Set waypoint on body under crosshair'],
   ['C', 'Toggle supercruise (requires a waypoint)'],
-  ['M', 'Galaxy map (search systems, plot routes)'],
+  ['S', 'Station Services (docked only)'],
+  ['M', 'Galaxy map (flight or docked; plot routes)'],
   ['B', 'System Scan (deploy probes, lock anomalies)'],
   ['F', 'Warp gate jump (within 2 km) · loot wreck · dock'],
   ['P', 'Hack datacore nodule · launch survey probe'],
@@ -43,11 +44,11 @@ export const CONTROLS_LIST_CSS = `
   font-size: 12px; line-height: 1.35;
 }
 .controls-list .key {
-  display: inline-block; padding: 2px 7px; border: 1px solid rgba(111,216,242,0.45);
-  border-radius: 3px; color: #a8d8ea; background: rgba(111,216,242,0.1);
+  display: inline-block; padding: 2px 7px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-radius: 3px; color: var(--ui-key); background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1);
   font-size: 11px; letter-spacing: 0.5px; text-align: center; white-space: nowrap;
 }
-.controls-list .label { opacity: 0.85; color: #cfe3ff; }
+.controls-list .label { opacity: 0.85; color: var(--ui-text); }
 `
 
 export function controlsListHTML() {

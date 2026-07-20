@@ -4,57 +4,66 @@ import { missionMarkedSystemIds } from '../game/missions.js'
 import { playerAssetSystemIds } from '../game/economy.js'
 import { shipHasAutopilot } from '../data/accessories.js'
 import { escapeHtml } from './escapeHtml.js'
+import {
+  defaultPanelGeom,
+  floatingPanelElevationCss,
+  floatingResizeHandleCss,
+  wireFloatingPanel
+} from './floatingPanel.js'
+import { getUiPalette } from './uiTheme.js'
+
+const GEOM_LS_KEY = 'witv.galaxyMapPanel'
 
 const STYLE = `
-/* Match System Scan: dim scrim + ~60% centered panel (above docking z 50). */
+/* Dim scrim; panel free-floating (move / resize, geometry remembered).
+   z-index above docking (50) so the map opens while docked. */
 #nav-map {
-  position: fixed; inset: 0; z-index: 55; display: none;
-  align-items: center; justify-content: center;
-  background: rgba(2, 6, 14, 0.55);
+  position: fixed; inset: 0; z-index: 58; display: none;
+  background: rgba(var(--ui-bg-scrim-r),var(--ui-bg-scrim-g),var(--ui-bg-scrim-b), 0.55);
   backdrop-filter: blur(2px);
-  font-family: monospace; color: #cfe3ff;
-  padding: 3vh 3vw;
+  font-family: monospace; color: var(--ui-text);
   box-sizing: border-box;
+  pointer-events: auto;
 }
 #nav-map .panel {
-  width: min(60vw, 1100px);
-  height: min(60vh, 720px);
-  max-width: 100%;
-  max-height: 100%;
+  position: fixed;
   display: flex; flex-direction: column;
   overflow: hidden;
   padding: 12px 16px;
+  min-width: 420px; min-height: 300px;
   background: rgba(4,8,16,0.96);
-  border: 1px solid rgba(111,216,242,0.4);
-  border-right: 3px solid #6fd8f2;
-  box-shadow: 0 0 28px rgba(79,195,217,0.28), 0 12px 40px rgba(0,0,0,0.55);
-  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% 100%, 0 100%);
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 28px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.28);
   box-sizing: border-box;
 }
-#nav-map h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); margin: 0; font-size: 15px; }
-#nav-map h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 0 0 8px 0; }
+${floatingPanelElevationCss('#nav-map .panel')}
+#nav-map h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5); margin: 0; font-size: 15px; }
+#nav-map h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6); margin: 0 0 8px 0; }
 #nav-map .header {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   margin-bottom: 10px; flex-shrink: 0;
-  padding-bottom: 8px; border-bottom: 1px solid rgba(111,216,242,0.25);
+  padding-bottom: 8px; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
+  cursor: grab; user-select: none; touch-action: none;
 }
+#nav-map .header.dragging { cursor: grabbing; }
 #nav-map .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-#nav-map .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#nav-map .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; cursor: default; }
 #nav-map .sys-search {
   width: min(200px, 28vw);
   box-sizing: border-box;
   font-family: monospace; font-size: 12px; letter-spacing: 0.4px;
   padding: 6px 10px;
-  color: #eaffff;
+  color: var(--ui-bright);
   background: rgba(8,14,24,0.9);
-  border: 1px solid rgba(111,216,242,0.4);
-  border-right: 2px solid #6fd8f2;
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   outline: none;
 }
 #nav-map .sys-search::placeholder { color: rgba(180,210,240,0.4); }
 #nav-map .sys-search:focus {
-  border-color: rgba(127,230,255,0.7);
-  box-shadow: 0 0 10px rgba(79,195,217,0.25);
+  border-color: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.7);
+  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25);
 }
 #nav-map .sys-search.match {
   border-color: rgba(127,224,160,0.65);
@@ -77,7 +86,7 @@ const STYLE = `
   flex: 1; min-width: 0; min-height: 0; position: relative;
   display: flex; align-items: center; justify-content: center;
   background: radial-gradient(ellipse at center, #0a1428 0%, #040810 70%);
-  border: 1px solid rgba(111,216,242,0.25);
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
 }
 #nav-map canvas {
   background: #05070d; border: none; cursor: crosshair;
@@ -88,9 +97,9 @@ const STYLE = `
   color: rgba(180,210,240,0.65); pointer-events: none; font-family: monospace;
 }
 #nav-map .map-tooltip {
-  position: absolute; pointer-events: none; font-size: 11px; color: #eaffff;
+  position: absolute; pointer-events: none; font-size: 11px; color: var(--ui-bright);
   background: rgba(10,14,24,0.92); border: 1px solid rgba(94,230,255,0.5); padding: 4px 9px;
-  box-shadow: 0 0 10px rgba(79,195,217,0.3);
+  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3);
   white-space: nowrap; display: none; transform: translate(-50%, -130%); z-index: 2;
 }
 #nav-map .info-panel {
@@ -148,15 +157,15 @@ const STYLE = `
   font-size: 9px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.7; color: #ffe08a;
 }
 #nav-map table { width: 100%; border-collapse: collapse; }
-#nav-map th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); }
+#nav-map th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ui-dim); font-weight: normal; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.3); }
 #nav-map td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); font-size: 13px; }
-#nav-map tbody tr:hover td { background: rgba(111,216,242,0.05); }
+#nav-map tbody tr:hover td { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.05); }
 #nav-map td.body-name { display: flex; align-items: center; gap: 6px; }
 #nav-map button.waypoint {
-  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
   padding: 3px 9px; cursor: pointer; font-family: monospace; transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#nav-map button.waypoint:hover { background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35); }
+#nav-map button.waypoint:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35); }
 #nav-map tr.active-waypoint td { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #nav-map tr.mission-marker td { color: #ffb07a; }
 #nav-map tr.mission-marker td.body-name { text-shadow: 0 0 6px rgba(255,138,61,0.45); }
@@ -164,6 +173,7 @@ const STYLE = `
   font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
   color: #ff8a3d; margin-left: 4px; opacity: 0.9;
 }
+${floatingResizeHandleCss('#nav-map .float-resize')}
 `
 
 // Small per-kind glyphs (not emoji) so the system-body list reads at a
@@ -173,9 +183,9 @@ const STYLE = `
 // and a little cluster of dots for asteroid fields (echoing how they
 // actually render as scattered rocks).
 const BODY_ICONS = {
-  planet: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="#8fb3ff"/></svg>',
+  planet: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="var(--ui-key)"/></svg>',
   moon: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3.5" fill="#9aa8bd"/></svg>',
-  station: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" fill="#5ee6ff"/></svg>',
+  station: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" fill="var(--ui-accent)"/></svg>',
   settlement: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" fill="#c2a35c"/></svg>',
   asteroidField: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="3" cy="4" r="2" fill="#8a8172"/><circle cx="8" cy="3" r="1.4" fill="#8a8172"/><circle cx="7" cy="8" r="2.2" fill="#8a8172"/></svg>',
   star: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="#ffe066"/><circle cx="6" cy="6" r="5.5" fill="none" stroke="#ffb347" stroke-width="0.8" opacity="0.7"/></svg>'
@@ -204,12 +214,16 @@ export function createNavMap(container, gameState) {
         </div>
       </div>
       <div class="tab-content"></div>
+      <div class="float-resize" title="Resize" aria-label="Resize galaxy map"></div>
     </div>
   `
   container.appendChild(root)
 
+  const panelEl = root.querySelector('.panel')
+  const headerEl = root.querySelector('.header')
   const contentEl = root.querySelector('.tab-content')
   const searchInput = root.querySelector('.sys-search')
+  let mapOpen = false
   let selectedSystemId = null
   let hoveredSystemId = null
   // Camera: center (galaxy XZ) + half-extent radius shown on canvas.
@@ -222,6 +236,30 @@ export function createNavMap(container, gameState) {
   let redrawMap = null
   /** Latest updateInfoPanel from open galaxy tab (search select refresh). */
   let refreshInfoPanel = null
+
+  const floating = wireFloatingPanel({
+    panelEl,
+    headerEl,
+    resizeEl: root.querySelector('.float-resize'),
+    storageKey: GEOM_LS_KEY,
+    minW: 420,
+    minH: 300,
+    isActive: () => mapOpen,
+    onGeomChange: () => {
+      // Canvas fit after panel size changes.
+      requestAnimationFrame(() => redrawMap?.())
+    },
+    defaultGeom: () =>
+      defaultPanelGeom({
+        fracW: 0.6,
+        fracH: 0.6,
+        maxW: 1100,
+        maxH: 720,
+        minW: 420,
+        minH: 300,
+        align: 'center'
+      })
+  })
 
   /**
    * Best name match for query: exact → prefix → substring (case-insensitive).
@@ -328,7 +366,7 @@ export function createNavMap(container, gameState) {
             <h3>Plotted Route</h3>
             <div class="route-list-wrap"></div>
           </div>
-          <div class="map-legend" style="margin-top:12px;padding-top:8px;border-top:1px solid rgba(111,216,242,0.2);font-size:10px;line-height:1.5;opacity:0.75;">
+          <div class="map-legend" style="margin-top:12px;padding-top:8px;border-top:1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);font-size:10px;line-height:1.5;opacity:0.75;">
             <div><span style="color:rgba(120,190,230,0.9);">—</span> Cyan — warp gate lanes</div>
             <div><span style="color:#ffd246;">—</span> Yellow — plotted route</div>
             <div><span style="color:#ff8a3d;">○</span> Orange — mission objective</div>
@@ -576,14 +614,15 @@ export function createNavMap(container, gameState) {
           (isCurrent ? 5 : isSelected || isHovered || onRoute ? 4.5 : 2.5) * zoomDot
         ctx.beginPath()
         ctx.arc(px, py, r, 0, Math.PI * 2)
+        const ui = getUiPalette()
         ctx.fillStyle = isCurrent
-          ? '#5ee6ff'
+          ? ui.accent
           : isSelected
             ? '#ffcc66'
             : onRoute
               ? '#ffd246'
               : isHovered
-                ? '#eaffff'
+                ? ui.bright
                 : hasMission
                   ? '#ff9a4a'
                   : hasAssets
@@ -606,7 +645,7 @@ export function createNavMap(container, gameState) {
       const wrap = contentEl.querySelector('.route-list-wrap')
       const rem = remainingRoute()
       if (!rem) {
-        wrap.innerHTML = `<div class="route-empty">Select a distant system and Plot Route. Yellow path shows hops — SC + F manually, or Engage Autopilot if fitted.</div>`
+        wrap.innerHTML = `<div class="route-empty">Select a distant system and Plot Route. Yellow path shows hops — SC + F manually, or Engage Autopilot after undocking if fitted.</div>`
         return
       }
       const hops = rem.length
@@ -640,7 +679,8 @@ export function createNavMap(container, gameState) {
       })
     }
 
-    /** Engage when fitted + route; Cancel while a sequence is running (route kept). */
+    /** Engage when fitted + route; Cancel while a sequence is running (route kept).
+     * Engage is always disabled while docked — plot/route planning still works. */
     function updateAutopilotButton() {
       const apBtn = contentEl.querySelector('.engage-ap')
       if (!apBtn) return
@@ -649,10 +689,12 @@ export function createNavMap(container, gameState) {
       const hasAutopilot = shipHasAutopilot(gameState.player.ship)
       const active = !!isAutopilotActive?.()
 
-      if (active) {
+      // Cancel is allowed even if you somehow dock mid-sequence.
+      if (active && !docked) {
         apBtn.disabled = false
         apBtn.textContent = 'Cancel Autopilot'
         apBtn.dataset.mode = 'cancel'
+        apBtn.title = 'Stop the autopilot sequence (route is kept)'
         return
       }
       apBtn.dataset.mode = 'engage'
@@ -660,15 +702,19 @@ export function createNavMap(container, gameState) {
       if (docked) {
         apBtn.disabled = true
         apBtn.textContent = 'Cannot Autopilot While Docked'
+        apBtn.title = 'Undock before engaging route autopilot'
       } else if (inCombat) {
         apBtn.disabled = true
         apBtn.textContent = 'Cannot Autopilot in Combat'
+        apBtn.title = ''
       } else if (!hasAutopilot) {
         apBtn.disabled = true
         apBtn.textContent = 'Autopilot Not Fitted'
+        apBtn.title = 'Fit an Autopilot accessory at a shipyard'
       } else if (!routeRem?.length || !routeHop) {
         apBtn.disabled = true
         apBtn.textContent = 'Plot Route First'
+        apBtn.title = ''
       } else {
         apBtn.disabled = false
         const hops = routeRem.length
@@ -679,6 +725,7 @@ export function createNavMap(container, gameState) {
             : hopSys
               ? `Engage Autopilot · ${hopSys.name}`
               : 'Engage Autopilot'
+        apBtn.title = ''
       }
     }
 
@@ -692,9 +739,15 @@ export function createNavMap(container, gameState) {
         contentEl.querySelector('.sel-security').textContent = ''
         contentEl.querySelector('.sel-bodies').textContent = ''
         contentEl.querySelector('.sel-distance').textContent = ''
-        hintEl.textContent = hasAutopilot
-          ? 'Plot a route, then Engage Autopilot — or fly gates yourself (SC + F).'
-          : 'Select a system and Plot Route. Fly gates yourself (SC + F). Fit Autopilot to automate.'
+        if (docked) {
+          hintEl.textContent = hasAutopilot
+            ? 'Docked — plot a route now; undock to Engage Autopilot or fly gates (SC + F).'
+            : 'Docked — plot a route now; undock and fly gates yourself (SC + F).'
+        } else {
+          hintEl.textContent = hasAutopilot
+            ? 'Plot a route, then Engage Autopilot — or fly gates yourself (SC + F).'
+            : 'Select a system and Plot Route. Fly gates yourself (SC + F). Fit Autopilot to automate.'
+        }
         plotBtn.disabled = true
         plotBtn.textContent = 'Plot Route'
         updateAutopilotButton()
@@ -722,14 +775,21 @@ export function createNavMap(container, gameState) {
         : `${Math.round(distance)} ly away${inRange ? ' — direct warp gate' : ' — multi-gate route'}`
 
       if (!isCurrent && path && jumps > 0) {
-        hintEl.textContent =
-          jumps === 1
-            ? hasAutopilot
-              ? '1 warp gate — SC + F, or Plot Route and Engage Autopilot.'
-              : '1 warp gate — supercruise there and press F to jump.'
-            : hasAutopilot
-              ? `Route: ${jumps} gates. Plot Route, then Engage Autopilot — or SC + F at each gate.`
-              : `Route: ${jumps} gates via ${jumps - 1} system${jumps - 1 === 1 ? '' : 's'}. Plot Route, then SC + F at each gate.`
+        if (docked) {
+          hintEl.textContent =
+            jumps === 1
+              ? '1 warp gate. Plot Route here, then undock to fly or Engage Autopilot.'
+              : `Route: ${jumps} gates. Plot Route here, then undock to fly or Engage Autopilot.`
+        } else {
+          hintEl.textContent =
+            jumps === 1
+              ? hasAutopilot
+                ? '1 warp gate — SC + F, or Plot Route and Engage Autopilot.'
+                : '1 warp gate — supercruise there and press F to jump.'
+              : hasAutopilot
+                ? `Route: ${jumps} gates. Plot Route, then Engage Autopilot — or SC + F at each gate.`
+                : `Route: ${jumps} gates via ${jumps - 1} system${jumps - 1 === 1 ? '' : 's'}. Plot Route, then SC + F at each gate.`
+        }
       } else if (!isCurrent && !path) {
         hintEl.textContent = 'No warp-gate route found.'
       } else {
@@ -831,7 +891,8 @@ export function createNavMap(container, gameState) {
         updateAutopilotButton()
         return
       }
-      if (!onEngageAutopilot || inCombat || docked) return
+      // Hard block: never start autopilot while docked (button should already be disabled).
+      if (docked || inCombat || !onEngageAutopilot) return
       if (!shipHasAutopilot(gameState.player.ship)) return
       const hop = nextRouteHopId()
       const routeRem = remainingRoute()
@@ -914,6 +975,7 @@ export function createNavMap(container, gameState) {
     refreshInfoPanel = null
     searchInput.value = ''
     searchInput.classList.remove('match', 'nomatch')
+    mapOpen = false
     root.style.display = 'none'
     onCloseCallback?.()
   })
@@ -937,8 +999,9 @@ export function createNavMap(container, gameState) {
       searchInput.value = ''
       searchInput.classList.remove('match', 'nomatch')
       stopMapPanLoop()
-      // Show first so flex layout has real dimensions for canvas sizing.
-      root.style.display = 'flex'
+      mapOpen = true
+      floating.restore()
+      root.style.display = 'block'
       renderGalaxyTab()
       // One more frame after layout settles (font/scrollbar).
       requestAnimationFrame(() => redrawMap?.())
@@ -949,6 +1012,7 @@ export function createNavMap(container, gameState) {
       refreshInfoPanel = null
       searchInput.value = ''
       searchInput.classList.remove('match', 'nomatch')
+      mapOpen = false
       root.style.display = 'none'
     },
     element: root

@@ -198,13 +198,20 @@ import {
 import { buildDroneMesh, updateDroneMesh, disposeDroneMesh } from './render/droneMesh.js'
 import { droneBayCount } from './data/drones.js'
 import * as audio from './audio.js'
-import { applyLocalSoundCache, loadSoundPreference } from './preferences.js'
+import {
+  applyLocalSoundCache,
+  loadSoundPreference,
+  applyLocalUiThemeCache,
+  loadUiThemePreference
+} from './preferences.js'
 
 window.addEventListener('error', (e) => console.error('uncaught error:', e.message, e.error?.stack))
 
 // Instant restore of last sound choice (localStorage) before title music starts;
 // Electron settings.json is reconciled right after and is the long-term default.
 applyLocalSoundCache()
+// UI accent colour (localStorage) before first menu paint.
+applyLocalUiThemeCache()
 
 // Docking approach range for stations/settlements (metres from body origin).
 // Docking approach range for stations/settlements (metres from body origin).
@@ -381,7 +388,7 @@ const DOCK_EXTERIOR_MARGIN = 28
 const UNDOCK_BACKOFF_MARGIN = 70
 const DOCK_FLASH_FADE_S = 0.65
 const HYPERSPACE_FLASH_COLOR = '#c8f0ff'
-const DOCK_FLASH_COLOR = '#4fc3d9'
+const DOCK_FLASH_COLOR = 'var(--ui-glow)'
 // Min standoff past the collision shell when the dock bubble is large enough
 // (stations/settlements have +2000m). Avoids bouncing off the body on drop-out.
 const SUPERCRUISE_ARRIVAL_MIN_CLEAR = 220
@@ -2120,7 +2127,8 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
     },
     // Bought ships only become active via Storage activate — rebuild the
     // visual hull so a class swap doesn't keep looking like the previous ship.
-    onPlayerShipChanged: () => rebuildPlayerShipMesh()
+    onPlayerShipChanged: () => rebuildPlayerShipMesh(),
+    onStorageChanged: () => inventoryUI?.refresh?.()
   })
   pauseMenu = createPauseMenu(appEl, {
     onResume: () => {
@@ -2176,7 +2184,9 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   systemOverview.show()
   systemOverview.setInteractive(!flightMode)
   hud?.onSystemScan?.(openSystemScanPanel)
-  inventoryUI = createInventoryUI(appEl, gameState)
+  inventoryUI = createInventoryUI(appEl, gameState, {
+    onStorageChanged: () => dockingUI?.refreshStorage?.()
+  })
   missionsUI = createMissionsUI(appEl, gameState, {
     canSetWaypoint: () => {
       if (cruising) {
@@ -2200,13 +2210,13 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   dockPromptEl = document.createElement('div')
   dockPromptEl.id = 'dock-prompt'
   dockPromptEl.style.cssText =
-    `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);color:#cfe3ff;display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
+    `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);color:var(--ui-text);display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
   appEl.appendChild(dockPromptEl)
 
   probePromptEl = document.createElement('div')
   probePromptEl.id = 'probe-prompt'
   probePromptEl.style.cssText =
-    `position:fixed;bottom:120px;left:50%;transform:translateX(-50%);color:#cfe3ff;display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
+    `position:fixed;bottom:120px;left:50%;transform:translateX(-50%);color:var(--ui-text);display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
   appEl.appendChild(probePromptEl)
 
   // Floating multi-line probe return readout (not a blocking alert dialog).
@@ -2222,7 +2232,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
     'font-size:13px',
     'line-height:1.5',
     'letter-spacing:0.4px',
-    'color:#cfe3ff',
+    'color:var(--ui-text)',
     'display:none',
     'pointer-events:none',
     'z-index:40',
@@ -2372,8 +2382,8 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   targetIndicatorEl.style.cssText =
     'position:fixed;pointer-events:none;display:none;transform:translate(-50%,-50%);width:56px;height:56px;'
   targetIndicatorEl.innerHTML = `
-    <div class="target-box" style="position:absolute;inset:0;border:2px solid #cfe3ff;filter:drop-shadow(0 0 3px rgba(0,0,0,0.85));"></div>
-    <div class="target-label" style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;color:#cfe3ff;font-size:11px;white-space:nowrap;text-align:center;${floatText()}"></div>
+    <div class="target-box" style="position:absolute;inset:0;border:2px solid var(--ui-text);filter:drop-shadow(0 0 3px rgba(0,0,0,0.85));"></div>
+    <div class="target-label" style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;color:var(--ui-text);font-size:11px;white-space:nowrap;text-align:center;${floatText()}"></div>
   `
   appEl.appendChild(targetIndicatorEl)
 
@@ -2384,7 +2394,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   targetDirEl.style.cssText =
     'position:fixed;pointer-events:none;display:none;transform:translate(-50%,-50%);z-index:6;'
   targetDirEl.innerHTML = `
-    <div class="tdir-arrow" style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:14px solid #cfe3ff;filter:drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 6px rgba(127,224,255,0.45));"></div>
+    <div class="tdir-arrow" style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:14px solid var(--ui-text);filter:drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 6px rgba(127,224,255,0.45));"></div>
   `
   appEl.appendChild(targetDirEl)
 
@@ -4461,8 +4471,22 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault()
     if (paused && performance.now() - pauseOpenedAtMs < 200) return
     setGamePaused(!paused)
+  } else if (
+    e.code === 'KeyS' &&
+    docked &&
+    !dockEffect &&
+    !paused &&
+    !navMapOpen &&
+    !inventoryOpen &&
+    !missionsOpen &&
+    !characterOpen
+  ) {
+    // Docked only: S toggles Station Services (flight uses S for reverse thrust).
+    e.preventDefault()
+    dockingUI?.toggleServices?.()
   } else if (e.code === 'KeyM' && !paused && !inventoryOpen && !missionsOpen && !characterOpen && !dockEffect) {
-    // Map is available in flight and while docked (plan jumps from a bay).
+    // Galaxy map: flight or docked (plot routes from a bay). Autopilot engage is
+    // disabled while docked — see navMap + engageRouteAutopilot.
     navMapOpen = !navMapOpen
     audio.setThrustState(null)
     if (navMapOpen) {
@@ -4478,7 +4502,7 @@ window.addEventListener('keydown', (e) => {
           if (!docked) reenterFlightMode()
         },
         inCombat: !!gameState.inCombat,
-        docked
+        docked: !!docked
       })
     } else {
       navMap.hide()
@@ -4698,8 +4722,8 @@ function starShellRadius() {
   let shell = 0
   for (const s of stars) {
     const core = s.radius ?? 0
-    // Outer corona ~1.9–2.3× core (see starMesh corona scales).
-    const corona = core * 2.15
+    // Outer corona shells hug the photosphere (~1.06× core + soft glow).
+    const corona = core * 1.35
     const orbitR = s.orbit?.radius ?? 0
     shell = Math.max(shell, orbitR + corona)
   }
@@ -5232,14 +5256,14 @@ function targetReticleColor(target) {
   if (target.hostile) return '#e05a5a'
   if (target.reticle === 'asteroid') return '#ffb347'
   if (target.reticle === 'star') return '#ffd27a'
-  if (target.reticle === 'facility') return '#7fe6ff'
-  if (target.reticle === 'world') return '#9ad0ff'
+  if (target.reticle === 'facility') return 'var(--ui-accent)'
+  if (target.reticle === 'world') return 'var(--ui-soft)'
   if (target.reticle === 'wreck') return '#c0a070'
   if (target.reticle === 'nav') return '#7fe0a0'
   if (target.reticle === 'anomaly') return '#d080ff'
   if (target.reticle === 'nodule') return '#60f0ff'
   if (target.reticle === 'alien_base') return '#ff6040'
-  return '#cfe3ff'
+  return 'var(--ui-text)'
 }
 
 function updateTargetIndicator() {
@@ -6252,6 +6276,20 @@ function animate() {
     nearestHudBody?.name ?? null,
     getSystemSecurity(hudSystem)
   )
+  // Plotted warp-gate route (far left) — remaining hops; clears at destination.
+  {
+    const rem = gameState.player.plottedRoute
+    if (Array.isArray(rem) && rem.length > 0) {
+      hud.updatePlottedRoute(
+        rem.map((id) => {
+          const sys = getSystem(gameState.galaxy, id)
+          return { id, name: sys?.name ?? String(id) }
+        })
+      )
+    } else {
+      hud.updatePlottedRoute(null)
+    }
+  }
   // Tab-target detail panel between system name and radar.
   {
     const t = resolveTarget()
@@ -6395,9 +6433,9 @@ preloadInteriorModels().then(() => {
   scene.add(ensureInteriorMesh(theme))
 })
 
-// Intro/menu — apply saved sound default, then title screen.
+// Intro/menu — apply saved sound + UI colour defaults, then title screen.
 // Display mode is already applied by the main process on window create.
-void loadSoundPreference().finally(() => {
+void Promise.all([loadSoundPreference(), loadUiThemePreference()]).finally(() => {
   startMenuBackground()
   hasSave().then((exists) => menu.show(exists))
 })

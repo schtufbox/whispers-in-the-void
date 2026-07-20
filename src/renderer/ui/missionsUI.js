@@ -5,13 +5,12 @@ import { gameConfirm, gameNotice } from './gameDialog.js'
 
 const STYLE = `
 /* Above docking chrome (z 50) so the tracker opens while docked. */
-#missions-ui { position: fixed; inset: 0; background: rgba(4,6,12,0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 55; }
+#missions-ui { position: fixed; inset: 0; background: rgba(var(--ui-bg-scrim-r),var(--ui-bg-scrim-g),var(--ui-bg-scrim-b),0.75); backdrop-filter: blur(2px); font-family: monospace; color: var(--ui-text); display: none; align-items: center; justify-content: center; z-index: 55; }
 #missions-ui .panel {
   width: 700px; max-height: 80vh; overflow-y: auto; padding: 18px 22px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
-  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #ff8a3d;
-  box-shadow: 0 0 26px rgba(255,138,61,0.18), inset 0 0 26px rgba(79,195,217,0.05);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.95), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.9));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 3px solid #ff8a3d;
+  box-shadow: 0 0 26px rgba(255,138,61,0.18), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
 }
 #missions-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(255,138,61,0.45); }
 #missions-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #ffb07a; text-shadow: 0 0 6px rgba(255,138,61,0.5); margin: 4px 0 12px; }
@@ -30,12 +29,12 @@ const STYLE = `
 #missions-ui .mission .status.ready { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #missions-ui .log {
   margin: 10px 0 6px; padding: 8px 0 8px 12px;
-  border-left: 1px solid rgba(111,216,242,0.25);
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
   position: relative;
 }
 #missions-ui .log-title {
   font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
-  color: #6fd8f2; opacity: 0.85; margin-bottom: 8px;
+  color: var(--ui-accent-mid); opacity: 0.85; margin-bottom: 8px;
 }
 #missions-ui .log-entry {
   position: relative; font-size: 11px; line-height: 1.45;
@@ -44,7 +43,7 @@ const STYLE = `
 #missions-ui .log-entry::before {
   content: ''; position: absolute; left: -13px; top: 5px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: #4fc3d9; box-shadow: 0 0 6px rgba(79,195,217,0.7);
+  background: var(--ui-glow); box-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7);
 }
 #missions-ui .log-entry.lead::before { background: #ffb07a; box-shadow: 0 0 6px rgba(255,176,122,0.7); }
 #missions-ui .log-entry.hostile::before { background: #e05a5a; box-shadow: 0 0 6px rgba(224,90,90,0.7); }

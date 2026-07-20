@@ -20,7 +20,11 @@ const DEFAULTS = {
   /** Sound effects + synth + voice callouts. */
   sfxEnabled: true,
   /** Title / ambient / death music tracks. */
-  musicEnabled: true
+  musicEnabled: true,
+  /** UI accent hue degrees (0–360). Default ~191 = original cyan. */
+  uiHue: 191,
+  /** UI panel background hue (0–360). Default ~220 = original navy fills. */
+  uiBgHue: 220
 }
 
 function settingsPath() {
@@ -68,6 +72,14 @@ export function loadSettings() {
           : legacyMaster === false
             ? false
             : true
+    let uiHue = DEFAULTS.uiHue
+    if (data.uiHue != null && Number.isFinite(Number(data.uiHue))) {
+      uiHue = ((Math.round(Number(data.uiHue)) % 360) + 360) % 360
+    }
+    let uiBgHue = DEFAULTS.uiBgHue
+    if (data.uiBgHue != null && Number.isFinite(Number(data.uiBgHue))) {
+      uiBgHue = ((Math.round(Number(data.uiBgHue)) % 360) + 360) % 360
+    }
     return {
       ...DEFAULTS,
       windowedWidth,
@@ -75,7 +87,9 @@ export function loadSettings() {
       windowedX,
       windowedY,
       sfxEnabled,
-      musicEnabled
+      musicEnabled,
+      uiHue,
+      uiBgHue
     }
   } catch {
     return { ...DEFAULTS }
@@ -119,6 +133,40 @@ export function setSoundEnabled(enabled) {
   const on = enabled !== false
   const next = saveSettings({ sfxEnabled: on, musicEnabled: on })
   return next.sfxEnabled !== false
+}
+
+export function getUiHue() {
+  const h = loadSettings().uiHue
+  if (h == null || !Number.isFinite(Number(h))) return DEFAULTS.uiHue
+  return ((Math.round(Number(h)) % 360) + 360) % 360
+}
+
+export function setUiHue(hue) {
+  let h = Math.round(Number(hue))
+  if (!Number.isFinite(h)) h = DEFAULTS.uiHue
+  h = ((h % 360) + 360) % 360
+  const next = saveSettings({ uiHue: h })
+  return getUiHueFrom(next)
+}
+
+function getUiHueFrom(s) {
+  const h = s?.uiHue
+  if (h == null || !Number.isFinite(Number(h))) return DEFAULTS.uiHue
+  return ((Math.round(Number(h)) % 360) + 360) % 360
+}
+
+export function getUiBgHue() {
+  const h = loadSettings().uiBgHue
+  if (h == null || !Number.isFinite(Number(h))) return DEFAULTS.uiBgHue
+  return ((Math.round(Number(h)) % 360) + 360) % 360
+}
+
+export function setUiBgHue(hue) {
+  let h = Math.round(Number(hue))
+  if (!Number.isFinite(h)) h = DEFAULTS.uiBgHue
+  h = ((h % 360) + 360) % 360
+  saveSettings({ uiBgHue: h })
+  return getUiBgHue()
 }
 
 export function getWindowedBounds() {

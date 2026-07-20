@@ -9,7 +9,7 @@ import {
 import {
   getPrice, getMarketAvailable, buyGood, sellGood, sellMinedOre, buyMinedOre, buyShipParts, purchaseShip, repairCost, repairShip,
   activateStoredShip, sellStoredShip,
-  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon, sellCarriedWeapon, storeCarriedWeapons,
+  renameActiveShip, renameStoredShip, buyWeapon, sellStoredWeapon, equipWeapon, sellCarriedWeapon,
   buyAccessory, sellStoredAccessory, equipAccessory, storageHasAssets, transferStorageItem,
   discardCargo, discardOre,
   buyDrone, sellStoredDrone, equipDrone, unequipDrone, sellShipDrone
@@ -19,7 +19,6 @@ import { freeDroneBayCount } from '../game/drones.js'
 import {
   startCraft,
   transferBlueprintItem,
-  storeBlueprints,
   retrieveBlueprints,
   jobsAtBody,
   craftRemainingS,
@@ -53,13 +52,13 @@ ${ITEM_ICON_CSS}
    boxes appear or content height changes. */
 #docking-ui {
   position: fixed; inset: 0; background: transparent; backdrop-filter: none;
-  font-family: monospace; color: #cfe3ff; display: none;
+  font-family: monospace; color: var(--ui-text); display: none;
   align-items: flex-start; justify-content: center;
   padding-top: 6vh; box-sizing: border-box; z-index: 50;
   pointer-events: none;
 }
 #docking-ui.services-open {
-  background: rgba(4,6,12,0.38); backdrop-filter: blur(1.5px);
+  background: rgba(var(--ui-bg-scrim-r),var(--ui-bg-scrim-g),var(--ui-bg-scrim-b),0.38); backdrop-filter: blur(1.5px);
   pointer-events: auto;
 }
 #docking-ui .docked-layout {
@@ -70,10 +69,9 @@ ${ITEM_ICON_CSS}
 #docking-ui.services-open .docked-layout { display: flex; }
 #docking-ui .panel, #docking-ui .side-panel {
   max-height: calc(100vh - 6vh - 2vh); overflow-y: auto; padding: 18px 22px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
-  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
-  box-shadow: 0 0 26px rgba(79,195,217,0.22), inset 0 0 26px rgba(79,195,217,0.05);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.95), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.9));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.22), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
 }
 #docking-ui .panel { width: 720px; }
 #docking-ui .side-column {
@@ -90,7 +88,7 @@ ${ITEM_ICON_CSS}
   margin-left: 60px;
   box-sizing: border-box;
 }
-/* Shipyard: loadout on the right column, above holds / stored ships */
+/* Shipyard: loadout on the right column, above stored ships */
 #docking-ui.shipyard-layout .side-column.dock-right-column {
   width: 280px;
 }
@@ -102,7 +100,6 @@ ${ITEM_ICON_CSS}
   border: none;
   border-left: none;
   box-shadow: none;
-  clip-path: none;
   max-height: none;
 }
 #docking-ui .side-panel.ships-side { max-height: none; }
@@ -113,19 +110,19 @@ ${ITEM_ICON_CSS}
 }
 /* Loadout rows — same vocabulary as holds / inventory / HUD status rows */
 #docking-ui .side-panel.loadout-side .lo-ship {
-  font-size: 12px; color: #7fe6ff; margin: 0 0 10px 0;
+  font-size: 12px; color: var(--ui-accent); margin: 0 0 10px 0;
   letter-spacing: 0.3px;
-  text-shadow: 0 0 6px rgba(79,195,217,0.35);
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
 }
 #docking-ui .side-panel.loadout-side .lo-class {
   opacity: 0.65; font-size: 11px; margin-left: 4px;
 }
 #docking-ui .side-panel.loadout-side .lo-section {
   margin: 12px 0 6px; padding-top: 8px;
-  border-top: 1px solid rgba(111,216,242,0.2);
+  border-top: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
   font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #7fe6ff; opacity: 0.9;
-  text-shadow: 0 0 6px rgba(79,195,217,0.45);
+  color: var(--ui-accent); opacity: 0.9;
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
 }
 #docking-ui .side-panel.loadout-side .lo-section:first-of-type {
   margin-top: 4px; padding-top: 0; border-top: none;
@@ -133,26 +130,26 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel.loadout-side .lo-row {
   margin-bottom: 10px;
   padding: 8px 10px;
-  background: rgba(79,195,217,0.05);
-  border-left: 2px solid rgba(111,216,242,0.35);
+  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.35);
 }
 #docking-ui .side-panel.loadout-side .lo-row:last-child { margin-bottom: 0; }
 #docking-ui .side-panel.loadout-side .lo-row-head {
   display: flex; justify-content: space-between; align-items: center;
   gap: 8px; margin-bottom: 5px;
   font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
-  opacity: 0.75; color: #8fb3d9;
+  opacity: 0.75; color: var(--ui-dim);
 }
 #docking-ui .side-panel.loadout-side .lo-row-head .lo-mount {
-  color: #7fe6ff; opacity: 0.9;
+  color: var(--ui-accent); opacity: 0.9;
 }
 #docking-ui .side-panel.loadout-side .lo-row-head .lo-tag {
   font-size: 9px; letter-spacing: 1px; opacity: 0.7;
-  color: #7fa8c9;
+  color: var(--ui-dim);
 }
 #docking-ui .side-panel.loadout-side .lo-equipped {
   display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: #cfe3ff; margin-bottom: 6px;
+  font-size: 12px; color: var(--ui-text); margin-bottom: 6px;
   line-height: 1.3;
 }
 #docking-ui .side-panel.loadout-side .lo-equipped .lo-meta {
@@ -167,7 +164,7 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel.loadout-side .lo-badge {
   display: inline-block; font-size: 9px; letter-spacing: 0.8px;
   text-transform: uppercase; padding: 1px 5px; margin-left: 4px;
-  border: 1px solid rgba(111,216,242,0.35); color: #7fe6ff;
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.35); color: var(--ui-accent);
   opacity: 0.85;
 }
 #docking-ui .side-panel.loadout-side .lo-badge.warn {
@@ -177,30 +174,29 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel.loadout-side select.equip-accessory,
 #docking-ui .side-panel.loadout-side select.equip-drone {
   width: 100%; max-width: 100%; box-sizing: border-box;
-  background: rgba(8,14,26,0.92);
-  border: 1px solid rgba(111,216,242,0.4);
-  color: #cfe3ff;
+  background: rgba(var(--ui-bg-track-r),var(--ui-bg-track-g),var(--ui-bg-track-b),0.92);
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  color: var(--ui-text);
   padding: 6px 8px;
   font-family: monospace;
   font-size: 11px;
   letter-spacing: 0.3px;
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
 }
 #docking-ui .side-panel.loadout-side select.equip-select:focus,
 #docking-ui .side-panel.loadout-side select.equip-accessory:focus,
 #docking-ui .side-panel.loadout-side select.equip-drone:focus {
   outline: none;
-  border-color: #6fd8f2;
-  box-shadow: 0 0 10px rgba(79,195,217,0.25);
+  border-color: var(--ui-accent-mid);
+  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25);
 }
 #docking-ui .side-panel.loadout-side select:disabled {
   opacity: 0.4; cursor: not-allowed;
 }
 #docking-ui .side-panel.loadout-side button.unequip-drone {
   width: 100%; box-sizing: border-box;
-  background: rgba(111,216,242,0.1);
-  border: 1px solid rgba(111,216,242,0.4);
-  color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1);
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  color: var(--ui-text);
   padding: 5px 10px;
   cursor: pointer;
   font-family: monospace;
@@ -210,8 +206,8 @@ ${ITEM_ICON_CSS}
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 #docking-ui .side-panel.loadout-side button.unequip-drone:hover {
-  background: rgba(111,216,242,0.22);
-  box-shadow: 0 0 10px rgba(79,195,217,0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22);
+  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
 }
 #docking-ui .side-panel.ore-side {
   max-height: min(52vh, calc(100vh - 6vh - 2vh - 100px)); overflow-y: auto;
@@ -223,8 +219,8 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel h3 + h3 { margin-top: 14px; }
 #docking-ui .side-panel .panel-kicker {
   font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #7fe6ff; opacity: 0.75; margin: 0 0 10px 0;
-  text-shadow: 0 0 6px rgba(79,195,217,0.45);
+  color: var(--ui-accent); opacity: 0.75; margin: 0 0 10px 0;
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
 }
 #docking-ui .side-panel .meta-line {
   font-size: 11px; opacity: 0.75; margin: 0 0 8px 0;
@@ -242,7 +238,7 @@ ${ITEM_ICON_CSS}
 }
 #docking-ui .xfer-item:active { cursor: grabbing; }
 #docking-ui tr.xfer-item td { transition: background 0.12s ease; }
-#docking-ui tr.xfer-item:hover td { background: rgba(111,216,242,0.1); }
+#docking-ui tr.xfer-item:hover td { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); }
 #docking-ui .xfer-item.xfer-dragging { opacity: 0.45; }
 #docking-ui .xfer-drop-target.drag-over {
   outline: 1px solid rgba(127,224,160,0.55);
@@ -254,7 +250,7 @@ ${ITEM_ICON_CSS}
 }
 #docking-ui .xfer-parts {
   display: inline-block; padding: 2px 8px; margin-top: 2px;
-  border: 1px dashed rgba(111,216,242,0.35); border-radius: 2px;
+  border: 1px dashed rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.35); border-radius: 2px;
 }
 #docking-ui .bp-section { margin-top: 4px; }
 #docking-ui .bp-header {
@@ -262,56 +258,56 @@ ${ITEM_ICON_CSS}
 }
 #docking-ui .bp-header h3 { margin: 0; flex: 1; }
 #docking-ui .bp-toggle {
-  background: transparent; border: none; color: #7fe6ff; cursor: pointer;
+  background: transparent; border: none; color: var(--ui-accent); cursor: pointer;
   font-family: monospace; font-size: 11px; letter-spacing: 1.5px;
   text-transform: uppercase; padding: 0; text-align: left;
-  text-shadow: 0 0 6px rgba(79,195,217,0.45);
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
 }
-#docking-ui .bp-toggle:hover { color: #cfe3ff; }
+#docking-ui .bp-toggle:hover { color: var(--ui-text); }
 #docking-ui .bp-toggle .chev { opacity: 0.7; margin-right: 4px; display: inline-block; width: 0.9em; }
 #docking-ui button.store-all-bps {
-  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
   padding: 2px 8px; cursor: pointer; font-family: monospace; font-size: 11px;
   margin-right: 0;
 }
 #docking-ui button.store-all-bps:hover {
-  background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
 }
 #docking-ui .bp-body { margin-top: 4px; }
 #docking-ui .side-panel .job-row { font-size: 12px; margin-bottom: 10px; }
-#docking-ui .side-panel .job-row .job-name { color: #cfe3ff; margin-bottom: 2px; }
+#docking-ui .side-panel .job-row .job-name { color: var(--ui-text); margin-bottom: 2px; }
 #docking-ui .side-panel .job-row .job-meta { opacity: 0.7; font-size: 11px; margin-bottom: 4px; }
 #docking-ui .side-panel .ship-row {
   font-size: 12px; margin-bottom: 12px; padding-bottom: 10px;
-  border-bottom: 1px solid rgba(111,216,242,0.15);
+  border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.15);
 }
 #docking-ui .side-panel .ship-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-#docking-ui .side-panel .ship-row .ship-name { color: #cfe3ff; margin-bottom: 2px; }
+#docking-ui .side-panel .ship-row .ship-name { color: var(--ui-text); margin-bottom: 2px; }
 #docking-ui .side-panel .ship-row .ship-class { opacity: 0.65; font-size: 11px; margin-bottom: 6px; }
 #docking-ui .side-panel .ship-row .ship-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 #docking-ui .side-panel .ship-row .ship-actions button {
   margin-right: 0; padding: 3px 8px; font-size: 11px;
 }
-#docking-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); }
-#docking-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 18px 0 8px; }
+#docking-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5); }
+#docking-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6); margin: 18px 0 8px; }
 #docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 12px; }
 #docking-ui .header .body-name { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #docking-ui .header-credits {
   flex-shrink: 0; font-size: 13px; letter-spacing: 1px; color: #ffe08a;
   text-shadow: 0 0 8px rgba(255,210,70,0.4); white-space: nowrap;
 }
-#docking-ui .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid rgba(111,216,242,0.25); }
+#docking-ui .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25); }
 #docking-ui .tab {
-  background: transparent; border: none; border-bottom: 2px solid transparent; color: #8fb3d9;
+  background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--ui-dim);
   padding: 8px 16px; cursor: pointer; font-family: monospace; font-size: 11px;
   letter-spacing: 1.5px; text-transform: uppercase; transition: color 0.15s ease, border-color 0.15s ease;
 }
-#docking-ui .tab:hover { color: #cfe3ff; }
-#docking-ui .tab.active { color: #7fe6ff; border-bottom-color: #6fd8f2; text-shadow: 0 0 6px rgba(79,195,217,0.6); }
+#docking-ui .tab:hover { color: var(--ui-text); }
+#docking-ui .tab.active { color: var(--ui-accent); border-bottom-color: var(--ui-accent-mid); text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6); }
 #docking-ui table { width: 100%; border-collapse: collapse; }
-#docking-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); }
+#docking-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ui-dim); font-weight: normal; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.3); }
 #docking-ui td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
-#docking-ui tbody tr:hover td { background: rgba(111,216,242,0.05); }
+#docking-ui tbody tr:hover td { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.05); }
 #docking-ui .credits { margin-bottom: 10px; opacity: 0.85; font-size: 12px; letter-spacing: 0.5px; }
 /* Lower-center action row. */
 #docking-ui .dock-actions {
@@ -380,7 +376,7 @@ ${ITEM_ICON_CSS}
 #docking-ui button.buy-drone, #docking-ui button.sell-drone, #docking-ui button.install-drone,
 #docking-ui button.store-weapons, #docking-ui button.store-all-bps,
 #docking-ui button.assemble-btn {
-  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
   padding: 4px 10px; cursor: pointer; margin-right: 4px; font-family: monospace;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
@@ -402,7 +398,7 @@ ${ITEM_ICON_CSS}
 #docking-ui button.buy-drone:hover, #docking-ui button.sell-drone:hover, #docking-ui button.install-drone:hover,
 #docking-ui button.store-weapons:hover, #docking-ui button.store-all-bps:hover,
 #docking-ui button.assemble-btn:hover:not(:disabled) {
-  background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
 }
 #docking-ui button.assemble-btn:disabled,
 #docking-ui button.buy:disabled,
@@ -413,45 +409,45 @@ ${ITEM_ICON_CSS}
 #docking-ui button.install-drone:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 #docking-ui .armoury-section-title {
   margin: 16px 0 8px; font-weight: normal; letter-spacing: 2px; text-transform: uppercase;
-  color: #7fe6ff; font-size: 12px; text-shadow: 0 0 6px rgba(79,195,217,0.5);
+  color: var(--ui-accent); font-size: 12px; text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
 }
 #docking-ui .armoury-section-title:first-child { margin-top: 0; }
 #docking-ui .armoury-actions { white-space: nowrap; }
 #docking-ui .craft-progress {
   height: 8px; background: #0c1424; border: 1px solid #2a3a55; margin-top: 4px; overflow: hidden;
 }
-#docking-ui .craft-progress .fill { height: 100%; background: linear-gradient(90deg, #2e8fa8, #7fe6ff); }
+#docking-ui .craft-progress .fill { height: 100%; background: linear-gradient(90deg, var(--ui-deep), var(--ui-accent)); }
 #docking-ui button.repair-btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 #docking-ui .repair-row { margin-bottom: 10px; }
 /* Nested service sub-tabs (Trade / Shipyard / Missions / Storage) */
 #docking-ui .svc-subtabs {
   display: flex; gap: 2px; margin-bottom: 12px;
-  border-bottom: 1px solid rgba(111,216,242,0.2);
+  border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
 }
 #docking-ui .svc-subtab {
   background: transparent; border: none; border-bottom: 2px solid transparent;
-  color: #8fb3d9; padding: 7px 12px; cursor: pointer; font-family: monospace;
+  color: var(--ui-dim); padding: 7px 12px; cursor: pointer; font-family: monospace;
   font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
-#docking-ui .svc-subtab:hover { color: #cfe3ff; }
+#docking-ui .svc-subtab:hover { color: var(--ui-text); }
 #docking-ui .svc-subtab.active {
-  color: #7fe6ff; border-bottom-color: #6fd8f2;
-  text-shadow: 0 0 6px rgba(79,195,217,0.55);
+  color: var(--ui-accent); border-bottom-color: var(--ui-accent-mid);
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55);
 }
 /* Shipyard: current ship header + sub-tabs */
 #docking-ui .shipyard-current {
   margin-bottom: 12px; padding-bottom: 10px;
-  border-bottom: 1px solid rgba(111,216,242,0.2);
+  border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
   font-size: 13px; opacity: 0.95;
 }
-#docking-ui .shipyard-current .ship-name { color: #7fe6ff; }
+#docking-ui .shipyard-current .ship-name { color: var(--ui-accent); }
 #docking-ui .shipyard-main {
   min-width: 0; max-height: 52vh; overflow-y: auto;
 }
 #docking-ui .shipyard-main h3 { margin-top: 0; }
 #docking-ui .shipyard-main tr[data-class] { cursor: pointer; }
-#docking-ui .shipyard-main tr[data-class]:hover td { background: rgba(111,216,242,0.08); }
+#docking-ui .shipyard-main tr[data-class]:hover td { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.08); }
 #docking-ui .shipyard-main tr[data-class].selected td { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #docking-ui .shipyard-main .acc-desc {
   font-size: 11px; opacity: 0.65; max-width: 280px; line-height: 1.35;
@@ -466,34 +462,34 @@ ${ITEM_ICON_CSS}
 }
 #docking-ui .industry-bp-header h3 { margin: 0; }
 #docking-ui button.move-all-bps {
-  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
   padding: 4px 10px; cursor: pointer; font-family: monospace; font-size: 11px;
   letter-spacing: 0.5px; flex-shrink: 0;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 #docking-ui button.move-all-bps:hover:not(:disabled) {
-  background: rgba(111,216,242,0.22); box-shadow: 0 0 10px rgba(79,195,217,0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
 }
 #docking-ui button.move-all-bps:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 #docking-ui .bp-kind {
-  margin-bottom: 10px; border: 1px solid rgba(111,216,242,0.2);
-  background: rgba(8,14,26,0.45);
+  margin-bottom: 10px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
+  background: rgba(var(--ui-bg-track-r),var(--ui-bg-track-g),var(--ui-bg-track-b),0.45);
 }
 #docking-ui .bp-kind-toggle {
   width: 100%; box-sizing: border-box; text-align: left;
-  background: rgba(111,216,242,0.06); border: none; border-bottom: 1px solid rgba(111,216,242,0.15);
-  color: #7fe6ff; cursor: pointer; font-family: monospace; font-size: 11px;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.06); border: none; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.15);
+  color: var(--ui-accent); cursor: pointer; font-family: monospace; font-size: 11px;
   letter-spacing: 1.5px; text-transform: uppercase; padding: 8px 10px;
 }
-#docking-ui .bp-kind-toggle:hover { background: rgba(111,216,242,0.12); color: #cfe3ff; }
+#docking-ui .bp-kind-toggle:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.12); color: var(--ui-text); }
 #docking-ui .bp-kind-toggle .chev { opacity: 0.7; margin-right: 6px; display: inline-block; width: 0.9em; }
 #docking-ui .bp-kind-body { padding: 6px 8px 10px; }
 #docking-ui .bp-kind-body table { margin-bottom: 0; }
 #docking-ui .remote-asset {
   margin-bottom: 12px; padding: 10px 12px;
-  background: rgba(79,195,217,0.05); border-left: 2px solid rgba(111,216,242,0.35);
+  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.35);
 }
-#docking-ui .remote-asset h4 { margin: 0 0 2px 0; font-size: 13px; color: #7fe6ff; font-weight: normal; }
+#docking-ui .remote-asset h4 { margin: 0 0 2px 0; font-size: 13px; color: var(--ui-accent); font-weight: normal; }
 #docking-ui .remote-asset .location {
   font-size: 11px; opacity: 0.75; margin-bottom: 6px;
 }
@@ -502,9 +498,9 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel.stats-side .stat { font-size: 12px; margin-bottom: 4px; opacity: 0.9; }
 #docking-ui .side-panel.stats-side .stat-section {
   margin-top: 12px; padding-top: 8px;
-  border-top: 1px solid rgba(111,216,242,0.2);
+  border-top: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
   font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #7fe6ff; opacity: 0.9; margin-bottom: 6px;
+  color: var(--ui-accent); opacity: 0.9; margin-bottom: 6px;
 }
 #docking-ui .side-panel.stats-side .stat.bonus {
   color: #a8e6c8; opacity: 0.95; padding-left: 2px;
@@ -523,7 +519,7 @@ ${ITEM_ICON_CSS}
 `
 
 export function createDockingUI(container, gameState, rng, hooks = {}) {
-  const { onCraftStarted, onPlayerShipChanged } = hooks
+  const { onCraftStarted, onPlayerShipChanged, onStorageChanged } = hooks
   const style = document.createElement('style')
   style.textContent = STYLE
   document.head.appendChild(style)
@@ -553,7 +549,6 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       </div>
       <div class="side-column dock-right-column">
         <div class="side-panel loadout-side" style="display:none"></div>
-        <div class="side-panel holds-side"></div>
         <div class="side-panel ships-side" style="display:none"></div>
         <div class="side-panel jobs-side" style="display:none"></div>
       </div>
@@ -580,7 +575,6 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
   const statsSideEl = root.querySelector('.stats-side')
   const loadoutSideEl = root.querySelector('.loadout-side')
   const oreSideEl = root.querySelector('.ore-side')
-  const holdsSideEl = root.querySelector('.holds-side')
   const shipsSideEl = root.querySelector('.ships-side')
   const jobsSideEl = root.querySelector('.jobs-side')
   const tabButtons = [...root.querySelectorAll('.tab')]
@@ -597,13 +591,11 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
   const XFER_MIME = 'application/x-witv-storage'
 
   function xferEnabled() {
+    // Any open Station Services tab — drop routes by item kind/source, not by which tab is open.
     if (!currentBody || (currentBody.kind !== 'station' && currentBody.kind !== 'settlement')) {
       return false
     }
-    // Cargo/parts/ore on Storage (local); ore/blueprints on Industry.
-    if (currentTab === 'storage' && storageSubTab === 'local') return true
-    if (currentTab === 'industry') return true
-    return false
+    return root.classList.contains('services-open')
   }
 
   /** data-* + draggable for transfer rows (caller adds class="xfer-item"). */
@@ -768,11 +760,13 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     return Math.min(max, n)
   }
 
-  function refreshStorageViews() {
+  function refreshStorageViews({ notify = true } = {}) {
     renderSidePanel()
     if (currentTab === 'storage') renderStorage()
     else if (currentTab === 'industry') renderIndustry()
     else if (currentTab === 'shipyard') renderShipyard()
+    else if (currentTab === 'trade') renderTrade()
+    if (notify) onStorageChanged?.()
   }
 
   function liveAvailable(payload, direction) {
@@ -843,15 +837,22 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         // Remember shift at drop time via drag event (shift can change; read on drop).
         e.dataTransfer.setData('application/x-witv-shift', e.shiftKey ? '1' : '0')
       })
-      el.addEventListener('dragend', () => el.classList.remove('xfer-dragging'))
+      el.addEventListener('dragend', () => {
+        el.classList.remove('xfer-dragging')
+        root.querySelectorAll('.xfer-drop-target.drag-over').forEach((n) => n.classList.remove('drag-over'))
+        document.querySelectorAll('#inventory-ui .xfer-drop-target.drag-over').forEach((n) => n.classList.remove('drag-over'))
+      })
     })
   }
 
-  function wireDropZone(el, acceptFrom, direction) {
+  /**
+   * Drop target for ship↔station transfers. Direction is always derived from
+   * the drag payload (ship → station bay, station → ship), so drops work on
+   * any wired surface — including the whole Station Services layout.
+   */
+  function wireDropZone(el) {
     if (!el) return
     el.classList.add('xfer-drop-target')
-    el.dataset.xferAccept = acceptFrom
-    el.dataset.xferDirection = direction
     // Element is stable across re-renders — bind listeners only once.
     if (el._xferDropWired) return
     el._xferDropWired = true
@@ -869,7 +870,10 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     })
     el.addEventListener('drop', async (e) => {
       e.preventDefault()
+      e.stopPropagation()
       el.classList.remove('drag-over')
+      // Clear parent layout highlight if a nested zone handled the drop.
+      dockedLayoutEl?.classList.remove('drag-over')
       if (!xferEnabled()) return
       let payload = null
       try {
@@ -877,126 +881,24 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       } catch {
         return
       }
-      if (!payload || payload.from !== el.dataset.xferAccept) return
+      if (!payload || (payload.from !== 'ship' && payload.from !== 'station')) return
+      const direction = payload.from === 'ship' ? 'toStation' : 'toShip'
       const shiftKey = e.shiftKey || e.dataTransfer.getData('application/x-witv-shift') === '1'
-      await performStorageTransfer(payload, el.dataset.xferDirection, shiftKey)
+      await performStorageTransfer(payload, direction, shiftKey)
     })
   }
 
-  // Always visible ship inventory on the right; station ships + industry jobs below.
+  const dockedLayoutEl = root.querySelector('.docked-layout')
+  // Whole Station Services surface accepts drops; item kind/source pick the bay.
+  wireDropZone(dockedLayoutEl)
+
+  // Right column: stored ships + industry jobs. Ship cargo lives in Inventory (I).
   function renderSidePanel() {
     updateHeaderCredits()
     ensureBlueprintMaps(gameState)
-    const shipClass = getShipClass(gameState.player.ship.classId)
-    const ship = gameState.player.ship
-    const cargoRows = Object.entries(ship.cargo).filter(([, qty]) => qty > 0)
-    const oreRows = Object.entries(ship.miningHold).filter(([, qty]) => qty > 0)
-    const cargoUsed = cargoRows.reduce((a, [, qty]) => a + qty, 0)
-    const oreUsed = oreRows.reduce((a, [, qty]) => a + qty, 0)
-    const spareWeaponRows = Object.entries(ship.spareWeapons ?? {}).filter(([, qty]) => qty > 0)
-    const shipBpRows = Object.entries(ship.blueprints ?? {}).filter(([, qty]) => qty > 0)
-    const shipParts = ship.shipParts ?? 0
     const atBay =
       currentBody &&
       (currentBody.kind === 'station' || currentBody.kind === 'settlement')
-    const canXfer = xferEnabled()
-    const weaponsStoreHtml =
-      atBay && spareWeaponRows.length
-        ? `<div class="holds-actions"><button type="button" class="store-weapons">Store salvaged weapons</button></div>`
-        : ''
-
-    // Cargo/parts on Storage; blueprints on Industry; ore on both.
-    const onIndustry = canXfer && currentTab === 'industry'
-    const onStorage = canXfer && currentTab === 'storage'
-    const oreXfer = onIndustry || onStorage
-    holdsSideEl.innerHTML = `
-      <div class="panel-kicker">Your ship</div>
-      ${onStorage ? `<p class="xfer-hint">Drag cargo, ore, or parts onto station storage (or reverse). Blueprints: Industry tab.</p>` : ''}
-      ${onIndustry ? `<p class="xfer-hint">Drag ore or blueprints onto the Industry bay (or reverse).</p>` : ''}
-      <h3>Cargo Hold (${cargoUsed}/${shipClass.stats.cargoCapacity})</h3>
-      ${cargoRows.length
-        ? `<table><tbody>${cargoRows.map(([id, qty]) =>
-            `<tr class="${onStorage ? xferClass(qty).trim() : ''}"${onStorage ? xferAttrs('ship', 'cargo', id, qty) : ''}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('ship', 'cargo', id, qty)}</td></tr>`
-          ).join('')}</tbody></table>`
-        : '<div class="empty">Empty</div>'}
-      <h3>Ore Hold (${oreUsed}/${effectiveMiningCapacity(ship, shipClass)})</h3>
-      ${oreRows.length
-        ? `<table><tbody>${oreRows.map(([id, qty]) =>
-            `<tr class="${oreXfer ? xferClass(qty).trim() : ''}"${oreXfer ? xferAttrs('ship', 'ore', id, qty) : ''}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('ship', 'ore', id, qty)}</td></tr>`
-          ).join('')}</tbody></table>`
-        : '<div class="empty">Empty</div>'}
-      <h3>Ship Parts</h3>
-      ${shipParts > 0
-        ? `<div class="meta-line${onStorage ? ` xfer-parts${xferClass(shipParts)}` : ''}"${onStorage ? xferAttrs('ship', 'parts', 'ship_parts', shipParts) : ''}>Carried: ${shipParts}</div>`
-        : '<div class="meta-line">Carried: 0</div>'}
-      <h3>Salvaged Weapons</h3>
-      ${spareWeaponRows.length
-        ? `<table><tbody>${spareWeaponRows.map(([id, qty]) => {
-            let cat = 'laser'
-            let name = id
-            try {
-              const w = getWeapon(id)
-              cat = w.category
-              name = w.name
-            } catch { /* */ }
-            return `
-            <tr>
-              <td>${itemNameCell(itemIcon('weapon', { weaponCategory: cat }), name)}</td><td>×${qty}</td>
-            </tr>`
-          }).join('')}</tbody></table>
-          <p class="empty" style="font-size:11px">Sell salvaged weapons from Shipyard → Armoury.</p>`
-        : '<div class="empty">None</div>'}
-      <div class="bp-section">
-        <div class="bp-header">
-          <button type="button" class="bp-toggle" aria-expanded="${shipBlueprintsExpanded ? 'true' : 'false'}">
-            <span class="chev">${shipBlueprintsExpanded ? '▼' : '▶'}</span>Blueprints${shipBpRows.length ? ` (${shipBpRows.length})` : ''}
-          </button>
-          ${onIndustry && shipBpRows.length
-            ? `<button type="button" class="store-all-bps" title="Move all blueprints to station Industry storage">All</button>`
-            : ''}
-        </div>
-        <div class="bp-body" style="display:${shipBlueprintsExpanded ? 'block' : 'none'}">
-          ${shipBpRows.length
-            ? `<table><tbody>${shipBpRows.map(([id, qty]) => {
-              let name = id
-              let kind = 'ship'
-              try {
-                const bp = getBlueprint(id)
-                name = bp.name
-                kind = bp.kind || 'ship'
-              } catch { /* */ }
-              return `<tr class="${onIndustry ? xferClass(qty).trim() : ''}"${onIndustry ? xferAttrs('ship', 'blueprint', id, qty) : ''}><td>${itemNameCell(itemIcon('blueprint', { blueprintKind: kind }), name)}</td><td>×${qty}</td></tr>`
-            }).join('')}</tbody></table>`
-            : '<div class="empty">None (1-shot; not sellable)</div>'}
-        </div>
-      </div>
-      ${weaponsStoreHtml}
-    `
-
-    holdsSideEl.querySelector('.bp-toggle')?.addEventListener('click', () => {
-      shipBlueprintsExpanded = !shipBlueprintsExpanded
-      renderSidePanel()
-    })
-
-    if (atBay) {
-      holdsSideEl.querySelector('.store-weapons')?.addEventListener('click', () => {
-        storeCarriedWeapons(gameState, currentBody.id)
-        refreshStorageViews()
-      })
-      holdsSideEl.querySelector('.store-all-bps')?.addEventListener('click', () => {
-        storeBlueprints(gameState, currentBody.id)
-        refreshStorageViews()
-      })
-    }
-
-    wireDiscardButtons(holdsSideEl)
-    if (canXfer) {
-      wireXferItems(holdsSideEl)
-      // Drop station → ship.
-      wireDropZone(holdsSideEl, 'station', 'toShip')
-    }
-
-
 
     if (!atBay) {
       shipsSideEl.style.display = 'none'
@@ -1356,8 +1258,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
   let tradeSubTab = 'goods'
   let missionsSubTab = 'available'
   let storageSubTab = 'local'
-  /** Ship-side blueprints list collapsed by default (Storage / Your ship panel). */
-  let shipBlueprintsExpanded = false
+
   /** Industry blueprint kind dropdowns — closed by default. */
   const industryBpOpen = { ship: false, accessory: false, weapon: false }
 
@@ -1481,7 +1382,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     shipyardLeftCol.style.display = 'flex'
     statsSideEl.innerHTML = `
       <h3>Ship stats</h3>
-      <div class="stat" style="font-size:13px;color:#7fe6ff;margin-bottom:8px">${escapeHtml(statsTitle)}</div>
+      <div class="stat" style="font-size:13px;color:var(--ui-accent);margin-bottom:8px">${escapeHtml(statsTitle)}</div>
       <div class="stat">Role: ${escapeHtml(roleLabel)}</div>
       <div class="stat">Price: ${selectedClass.price}cr</div>
       <div class="stat">Accessory slots: ${accessorySlotCount(selectedClass)}</div>
@@ -1663,8 +1564,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     }
 
     loadoutSideEl.innerHTML = `
-      <div class="panel-kicker">Your ship</div>
-      <h3>Loadout</h3>
+      <div class="panel-kicker">Ship Loadout</div>
       <div class="lo-ship">${escapeHtml(ship.instanceName)}<span class="lo-class">· ${escapeHtml(activeClass.name)}</span></div>
       <div class="lo-section">Hardpoints (${activeClass.hardpoints.length})</div>
       ${weaponBlocks || '<div class="empty">No hardpoints</div>'}
@@ -2290,7 +2190,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       const oreStored = oreRows.reduce((a, [, qty]) => a + qty, 0)
       const stationParts = storage.shipParts ?? 0
       bodyHtml = `
-        <p class="xfer-hint">Drag cargo, ore, or ship parts from <strong>Your ship</strong> into this bay (or reverse). Blueprints: Industry tab.</p>
+        <p class="xfer-hint">Open <strong>Inventory (I)</strong> and drag cargo, ore, ship parts, or blueprints onto any Station Services surface (or reverse onto Inventory).</p>
         <h3>Cargo</h3>
         <div class="credits">${cargoStored} unit${cargoStored === 1 ? '' : 's'} stored</div>
         ${cargoRows.length
@@ -2349,8 +2249,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       wireDiscardButtons(contentEl)
       if (xferEnabled()) {
         wireXferItems(contentEl)
-        // Drop ship → station bay (cargo / ore / parts).
-        wireDropZone(contentEl, 'ship', 'toStation')
+        wireDropZone(contentEl)
       }
     }
     renderSidePanel()
@@ -2425,7 +2324,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     oreSideEl.style.display = 'block'
     oreSideEl.innerHTML = `
       <h3>Ore in storage</h3>
-      <p class="xfer-hint">Drag ore from Your ship here (or reverse). Used by Assemble.</p>
+      <p class="xfer-hint">Drag ore from <strong>Inventory (I)</strong> here (or reverse onto Inventory). Used by Assemble.</p>
       ${oreRows.length
         ? `<table><tbody>${oreRows.map(([id, qty]) =>
             `<tr class="${xferClass(qty).trim()}"${xferAttrs('station', 'ore', id, qty)}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty} ${discardBtn('station', 'ore', id, qty)}</td></tr>`
@@ -2435,7 +2334,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     wireDiscardButtons(oreSideEl)
     if (xferEnabled()) {
       wireXferItems(oreSideEl)
-      wireDropZone(oreSideEl, 'ship', 'toStation')
+      wireDropZone(oreSideEl)
     }
   }
 
@@ -2524,7 +2423,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     contentEl.innerHTML = `
       <p style="opacity:0.75;font-size:12px;">
         Assemble from <strong>station-stored</strong> blueprints and ore (1 blueprint per build, consumed on start).
-        Ore bay is on the <strong>left</strong>; drag BPs from Your ship onto this panel.
+        Ore bay is on the <strong>left</strong>; drag BPs from <strong>Inventory (I)</strong> onto this panel.
       </p>
       <div class="industry-main industry-bp-drop">
         <div class="industry-bp-header">
@@ -2562,8 +2461,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     )
     if (xferEnabled()) {
       wireXferItems(contentEl)
-      // Ship → station industry (blueprints into main panel)
-      wireDropZone(contentEl, 'ship', 'toStation')
+      wireDropZone(contentEl)
     }
     renderIndustryOreSide()
     renderSidePanel()
@@ -2647,6 +2545,18 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       shipPreview.hide()
       root.style.display = 'none'
     },
+    /** Re-render station bay lists without re-notifying inventory (avoids loops). */
+    refreshStorage() {
+      if (!currentBody) return
+      refreshStorageViews({ notify: false })
+    },
+    /** Toggle Station Services panel (used by docked hotkey S). */
+    toggleServices() {
+      if (root.style.display === 'none' || !currentBody) return false
+      setServicesOpen(!servicesOpen)
+      return servicesOpen
+    },
+    isServicesOpen: () => servicesOpen,
     element: root
   }
 }

@@ -1,25 +1,31 @@
-import { SETTINGS_VIEW_CSS, settingsViewHTML, bindSettingsView } from './settingsView.js'
+import {
+  SETTINGS_VIEW_CSS,
+  settingsViewHTML,
+  uiColourViewHTML,
+  bindSettingsView,
+  bindUiColourView
+} from './settingsView.js'
 import { controlsListHTML } from './controlsList.js'
 
 const STYLE = `
 /* Above docking chrome (z 50–55) so pause works while docked. */
-#pause-menu { position: fixed; inset: 0; background: rgba(4, 6, 12, 0.75); backdrop-filter: blur(2px); font-family: monospace; color: #cfe3ff; display: none; align-items: center; justify-content: center; z-index: 60; }
+#pause-menu { position: fixed; inset: 0; background: rgba(var(--ui-bg-scrim-r),var(--ui-bg-scrim-g),var(--ui-bg-scrim-b), 0.75); backdrop-filter: blur(2px); font-family: monospace; color: var(--ui-text); display: none; align-items: center; justify-content: center; z-index: 60; }
 #pause-menu .panel {
   display: flex; flex-direction: column; gap: 10px; width: 300px; padding: 26px 28px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
-  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
-  box-shadow: 0 0 30px rgba(79,195,217,0.25), inset 0 0 26px rgba(79,195,217,0.05);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.95), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.9));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 30px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
 }
 #pause-menu .panel.controls-view { width: min(460px, 92vw); max-height: min(80vh, 640px); }
-#pause-menu .panel.settings-view { width: min(360px, 92vw); }
-#pause-menu h2 { margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 10px rgba(79,195,217,0.7); }
+#pause-menu .panel.settings-view,
+#pause-menu .panel.ui-colour-view { width: min(360px, 92vw); }
+#pause-menu h2 { margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7); }
 #pause-menu button {
-  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
   padding: 11px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#pause-menu button:hover { background: rgba(111,216,242,0.22); box-shadow: 0 0 14px rgba(79,195,217,0.35); }
+#pause-menu button:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 14px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35); }
 #pause-menu button.quit-title {
   background: rgba(255,180,60,0.12);
   border-color: rgba(255,190,70,0.55);
@@ -43,11 +49,11 @@ ${SETTINGS_VIEW_CSS}
   font-size: 12px; line-height: 1.35;
 }
 #pause-menu .controls-list .key {
-  display: inline-block; padding: 2px 7px; border: 1px solid rgba(111,216,242,0.45);
-  border-radius: 3px; color: #a8d8ea; background: rgba(111,216,242,0.1);
+  display: inline-block; padding: 2px 7px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-radius: 3px; color: var(--ui-key); background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1);
   font-size: 11px; letter-spacing: 0.5px; text-align: center; white-space: nowrap;
 }
-#pause-menu .controls-list .label { opacity: 0.85; color: #cfe3ff; }
+#pause-menu .controls-list .label { opacity: 0.85; color: var(--ui-text); }
 `
 
 export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit }) {
@@ -72,10 +78,13 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
       <div class="controls-list">
         ${controlsListHTML()}
       </div>
-      <button class="controls-back">Back</button>
+      <button type="button" class="controls-back ui-btn-gold">Back</button>
     </div>
     <div class="panel settings-view" style="display:none;">
       ${settingsViewHTML()}
+    </div>
+    <div class="panel ui-colour-view" style="display:none;">
+      ${uiColourViewHTML()}
     </div>
   `
   container.appendChild(root)
@@ -83,24 +92,38 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
   const mainView = root.querySelector('.main-view')
   const controlsView = root.querySelector('.controls-view')
   const settingsView = root.querySelector('.settings-view')
+  const uiColourView = root.querySelector('.ui-colour-view')
 
   function showMain() {
     mainView.style.display = 'flex'
     controlsView.style.display = 'none'
     settingsView.style.display = 'none'
+    if (uiColourView) uiColourView.style.display = 'none'
   }
 
   function showControls() {
     mainView.style.display = 'none'
     controlsView.style.display = 'flex'
     settingsView.style.display = 'none'
+    if (uiColourView) uiColourView.style.display = 'none'
   }
 
   function showSettings() {
     mainView.style.display = 'none'
     controlsView.style.display = 'none'
     settingsView.style.display = 'flex'
+    if (uiColourView) uiColourView.style.display = 'none'
     settingsApi.refresh()
+  }
+
+  function showUiColour() {
+    mainView.style.display = 'none'
+    controlsView.style.display = 'none'
+    settingsView.style.display = 'none'
+    if (uiColourView) {
+      uiColourView.style.display = 'flex'
+      uiColourApi.refresh()
+    }
   }
 
   function hide() {
@@ -110,7 +133,11 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
 
   const settingsApi = bindSettingsView(settingsView, {
     onBack: showMain,
-    onShowControls: showControls
+    onShowControls: showControls,
+    onShowUiColour: showUiColour
+  })
+  const uiColourApi = bindUiColourView(uiColourView, {
+    onBack: showSettings
   })
 
   root.querySelector('.resume').addEventListener('click', () => {

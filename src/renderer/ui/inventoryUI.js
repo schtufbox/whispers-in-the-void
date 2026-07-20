@@ -1,10 +1,22 @@
 import { getGood } from '../data/goods.js'
 import { getShipClass } from '../data/shipClasses.js'
-import { useShipPart, storageHasAssets, discardCargo, discardOre } from '../game/economy.js'
+import {
+  useShipPart,
+  storageHasAssets,
+  discardCargo,
+  discardOre,
+  transferStorageItem,
+  storeCarriedWeapons
+} from '../game/economy.js'
 import { findBody, findSystemOfBody } from '../procgen/galaxy.js'
 import { getWeapon } from '../data/weapons.js'
 import { getAccessory, effectiveMiningCapacity } from '../data/accessories.js'
-import { craftRemainingS } from '../game/crafting.js'
+import {
+  craftRemainingS,
+  transferBlueprintItem,
+  storeBlueprints,
+  ensureBlueprintMaps
+} from '../game/crafting.js'
 import { getBlueprint, formatDuration } from '../data/blueprints.js'
 import {
   ensureSkills,
@@ -16,25 +28,44 @@ import {
 import { escapeHtml } from './escapeHtml.js'
 import { gameNotice, gamePrompt } from './gameDialog.js'
 import { goodIcon, itemIcon, itemNameCell, ITEM_ICON_CSS } from './itemIcons.js'
+import {
+  defaultPanelGeom,
+  floatingPanelElevationCss,
+  floatingResizeHandleCss,
+  wireFloatingPanel
+} from './floatingPanel.js'
+
+/** Same MIME as dockingUI station transfers. */
+const XFER_MIME = 'application/x-witv-storage'
+const GEOM_LS_KEY = 'witv.inventoryPanel'
 
 const STYLE = `
 ${ITEM_ICON_CSS}
-/* Above docking chrome (z 50) so Inventory opens while docked.
-   Vertical anchor: just below the HUD system-label (+50px), not screen-centered. */
+/* Floating inventory — above docking chrome (z 50). Root is click-through so
+   Station Services stays usable while Inventory is open for drag transfers. */
 #inventory-ui {
-  position: fixed; inset: 0; background: rgba(4,6,12,0.75); backdrop-filter: blur(2px);
-  font-family: monospace; color: #cfe3ff; display: none;
-  align-items: flex-start; justify-content: center; z-index: 55;
-  padding-top: 120px; /* fallback if system-label not measured */
-  box-sizing: border-box;
+  position: fixed; inset: 0; z-index: 55;
+  display: none;
+  pointer-events: none;
+  background: transparent;
+  font-family: monospace; color: var(--ui-text);
 }
+#inventory-ui.is-open { display: block; }
 #inventory-ui .panel {
-  width: min(920px, 94vw); max-height: calc(100vh - 140px); overflow-y: auto; padding: 18px 24px;
-  background: linear-gradient(135deg, rgba(12,20,36,0.95), rgba(7,12,22,0.9));
-  border: 1px solid rgba(111,216,242,0.4); border-left: 3px solid #6fd8f2;
-  box-shadow: 0 0 26px rgba(79,195,217,0.22), inset 0 0 26px rgba(79,195,217,0.05);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+  pointer-events: auto;
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 320px; min-height: 240px;
+  max-width: 96vw; max-height: 92vh;
+  padding: 14px 16px 18px;
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.96), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.92));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.22), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  overflow: hidden;
 }
+${floatingPanelElevationCss('#inventory-ui .panel')}
 #inventory-ui .inv-float-toast {
   position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%);
   pointer-events: none; z-index: 70; font-family: monospace; font-size: 14px;
@@ -44,35 +75,47 @@ ${ITEM_ICON_CSS}
 }
 #inventory-ui .inv-float-toast.show { opacity: 1; }
 
-#inventory-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(79,195,217,0.5); margin: 0; }
-#inventory-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7fe6ff; text-shadow: 0 0 6px rgba(79,195,217,0.6); margin: 0 0 10px; }
-#inventory-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; }
-#inventory-ui .header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+#inventory-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5); margin: 0; font-size: 16px; }
+#inventory-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6); margin: 0 0 10px; }
+#inventory-ui .header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 12px;
+  flex-shrink: 0; cursor: grab; user-select: none;
+  touch-action: none;
+}
+#inventory-ui .header.dragging { cursor: grabbing; }
+#inventory-ui .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; cursor: default; }
 #inventory-ui .credits-display {
   font-size: 13px; letter-spacing: 1px; color: #ffe08a;
   text-shadow: 0 0 8px rgba(255,210,70,0.4);
   white-space: nowrap;
 }
 #inventory-ui .tabs {
-  display: flex; gap: 2px; margin-bottom: 14px;
-  border-bottom: 1px solid rgba(111,216,242,0.25);
+  display: flex; gap: 2px; margin-bottom: 10px;
+  border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
   flex-wrap: nowrap;
   overflow-x: auto;
+  flex-shrink: 0;
 }
 #inventory-ui .tab {
   background: transparent; border: none; border-bottom: 2px solid transparent;
-  color: #8fb3d9; padding: 7px 10px; cursor: pointer; font-family: monospace;
+  color: var(--ui-dim); padding: 7px 10px; cursor: pointer; font-family: monospace;
   font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
   white-space: nowrap; flex-shrink: 0;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
-#inventory-ui .tab:hover { color: #cfe3ff; }
+#inventory-ui .tab:hover { color: var(--ui-text); }
 #inventory-ui .tab.active {
-  color: #7fe6ff; border-bottom-color: #6fd8f2;
-  text-shadow: 0 0 6px rgba(79,195,217,0.55);
+  color: var(--ui-accent); border-bottom-color: var(--ui-accent-mid);
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55);
+}
+#inventory-ui .content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 #inventory-ui table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-#inventory-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fa8c9; font-weight: normal; border-bottom: 1px solid rgba(111,216,242,0.3); white-space: nowrap; }
+#inventory-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ui-dim); font-weight: normal; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.3); white-space: nowrap; }
 #inventory-ui td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
 #inventory-ui td:not(:first-child) { white-space: nowrap; }
 #inventory-ui button.close {
@@ -95,7 +138,7 @@ ${ITEM_ICON_CSS}
   white-space: nowrap;
   text-shadow: 0 0 6px rgba(127,224,160,0.35);
 }
-#inventory-ui .parts-badge.none { color: #8fb3d9; opacity: 0.65; }
+#inventory-ui .parts-badge.none { color: var(--ui-dim); opacity: 0.65; }
 #inventory-ui .empty { opacity: 0.5; font-size: 12px; }
 #inventory-ui button.discard-item {
   background: rgba(224,90,90,0.1); border: 1px solid rgba(224,90,90,0.45); color: #ffb3b3;
@@ -104,9 +147,14 @@ ${ITEM_ICON_CSS}
 #inventory-ui button.discard-item:hover {
   background: rgba(224,90,90,0.22); box-shadow: 0 0 10px rgba(224,90,90,0.35);
 }
-#inventory-ui button.use-skillbook {
-  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+#inventory-ui button.use-skillbook,
+#inventory-ui button.dock-action {
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
   padding: 3px 10px; cursor: pointer; font-family: monospace; font-size: 11px;
+}
+#inventory-ui button.dock-action:hover,
+#inventory-ui button.use-skillbook:hover {
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22);
 }
 #inventory-ui .tab-meta {
   font-size: 12px; opacity: 0.75; margin: 0 0 12px 0; line-height: 1.4;
@@ -114,11 +162,29 @@ ${ITEM_ICON_CSS}
 #inventory-ui .hull-status {
   font-size: 12px; opacity: 0.9; margin-bottom: 10px;
 }
+#inventory-ui .xfer-hint {
+  font-size: 11px; opacity: 0.65; line-height: 1.4; margin: 0 0 10px 0;
+}
+#inventory-ui .xfer-item {
+  cursor: grab; user-select: none;
+}
+#inventory-ui .xfer-item:active { cursor: grabbing; }
+#inventory-ui tr.xfer-item td { transition: background 0.12s ease; }
+#inventory-ui tr.xfer-item:hover td { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); }
+#inventory-ui .xfer-item.xfer-dragging { opacity: 0.45; }
+#inventory-ui .panel.xfer-drop-target.drag-over {
+  outline: 1px solid rgba(127,224,160,0.55);
+  box-shadow: 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.22), inset 0 0 18px rgba(127,224,160,0.12);
+}
+#inventory-ui .xfer-parts {
+  display: inline-block; padding: 2px 8px; margin-top: 2px;
+  border: 1px dashed rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.35); border-radius: 2px;
+}
 #inventory-ui .remote-station {
   margin-bottom: 12px; padding: 10px 12px;
-  background: rgba(79,195,217,0.05); border-left: 2px solid rgba(111,216,242,0.35);
+  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.35);
 }
-#inventory-ui .remote-station h4 { margin: 0 0 2px 0; font-size: 13px; color: #7fe6ff; font-weight: normal; }
+#inventory-ui .remote-station h4 { margin: 0 0 2px 0; font-size: 13px; color: var(--ui-accent); font-weight: normal; }
 #inventory-ui .remote-station .location {
   font-size: 11px; opacity: 0.75; margin-bottom: 6px; letter-spacing: 0.3px;
 }
@@ -129,22 +195,25 @@ ${ITEM_ICON_CSS}
 #inventory-ui .remote-station .assets { font-size: 12px; line-height: 1.45; opacity: 0.95; }
 #inventory-ui .job-row {
   margin-bottom: 12px; padding: 10px 12px;
-  background: rgba(79,195,217,0.05); border-left: 2px solid rgba(127,224,160,0.45);
+  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05); border-left: 2px solid rgba(127,224,160,0.45);
 }
-#inventory-ui .job-row .job-name { color: #cfe3ff; margin-bottom: 4px; }
+#inventory-ui .job-row .job-name { color: var(--ui-text); margin-bottom: 4px; }
 #inventory-ui .job-row .job-meta { font-size: 11px; opacity: 0.75; margin-bottom: 6px; line-height: 1.4; }
 #inventory-ui .job-row .job-loc { color: #ffe08a; }
 #inventory-ui .craft-progress {
   height: 8px; background: #0c1424; border: 1px solid #2a3a55; overflow: hidden;
 }
 #inventory-ui .craft-progress .fill {
-  height: 100%; background: linear-gradient(90deg, #2e8fa8, #7fe6ff);
+  height: 100%; background: linear-gradient(90deg, var(--ui-deep), var(--ui-accent));
 }
+${floatingResizeHandleCss('#inventory-ui .float-resize')}
 `
 
 // Cargo / ore / stored assets / industry jobs — tabbed inventory.
 // Ship-part repair is in the header (consumes one part via useShipPart).
-export function createInventoryUI(container, gameState) {
+// While docked, cargo/ore/parts/blueprints drag onto Station Services.
+export function createInventoryUI(container, gameState, hooks = {}) {
+  const { onStorageChanged } = hooks
   const style = document.createElement('style')
   style.textContent = STYLE
   document.head.appendChild(style)
@@ -172,16 +241,41 @@ export function createInventoryUI(container, gameState) {
         <button type="button" class="tab" data-tab="industry">Industry</button>
       </div>
       <div class="content"></div>
+      <div class="float-resize" title="Resize" aria-label="Resize inventory"></div>
     </div>
   `
   container.appendChild(root)
 
+  const panelEl = root.querySelector('.panel')
+  const headerEl = root.querySelector('.header')
   const contentEl = root.querySelector('.content')
   const creditsEl = root.querySelector('.credits-display')
   const partsBadgeEl = root.querySelector('.parts-badge')
   const repairBtn = root.querySelector('.repair-btn')
+  const resizeEl = root.querySelector('.float-resize')
   const tabButtons = [...root.querySelectorAll('.tab')]
   let currentTab = 'cargo'
+  let isOpen = false
+
+  const floating = wireFloatingPanel({
+    panelEl,
+    headerEl,
+    resizeEl,
+    storageKey: GEOM_LS_KEY,
+    minW: 320,
+    minH: 240,
+    isActive: () => isOpen,
+    defaultGeom: () =>
+      defaultPanelGeom({
+        fracW: 0.38,
+        fracH: 0.62,
+        maxW: 560,
+        maxH: 640,
+        minW: 320,
+        minH: 240,
+        align: 'right'
+      })
+  })
 
   function formatCredits(n) {
     return `${Math.max(0, Math.floor(Number(n) || 0)).toLocaleString()} cr`
@@ -191,6 +285,27 @@ export function createInventoryUI(container, gameState) {
     if (kind === 'station') return 'Station'
     if (kind === 'settlement') return 'Settlement'
     return kind || 'Facility'
+  }
+
+  function dockedBayId() {
+    const id = gameState.player.dockedBodyId
+    if (!id) return null
+    const body = findBody(gameState.galaxy, id)
+    if (!body || (body.kind !== 'station' && body.kind !== 'settlement')) return null
+    return id
+  }
+
+  function xferEnabled() {
+    return dockedBayId() != null
+  }
+
+  function xferAttrs(kind, id, qty) {
+    if (!xferEnabled() || qty <= 0) return ''
+    return ` draggable="true" data-from="ship" data-kind="${kind}" data-id="${escapeHtml(String(id))}" data-qty="${qty}"`
+  }
+
+  function xferClass(qty) {
+    return xferEnabled() && qty > 0 ? ' xfer-item' : ''
   }
 
   function qtyMapBits(map, label, nameOf) {
@@ -240,6 +355,147 @@ export function createInventoryUI(container, gameState) {
     return Math.min(max, n)
   }
 
+  function itemLabel(kind, id) {
+    if (kind === 'parts') return 'Ship Parts'
+    if (kind === 'blueprint') {
+      try { return getBlueprint(id).name } catch { return id }
+    }
+    if (kind === 'cargo' || kind === 'ore') {
+      try { return getGood(id).name } catch { return id }
+    }
+    return id
+  }
+
+  async function resolveTransferQty(available, shiftKey, label) {
+    if (available <= 0) return 0
+    if (shiftKey || available === 1) return available
+    const ans = await gamePrompt(
+      'Transfer quantity',
+      String(available),
+      {
+        body: `How many “${label}” to transfer? (max ${available})`,
+        okLabel: 'Transfer',
+        cancelLabel: 'Cancel',
+        maxLength: 10
+      }
+    )
+    if (ans == null) return 0
+    const n = Math.floor(Number(String(ans).trim()))
+    if (!Number.isFinite(n) || n < 1) return 0
+    return Math.min(available, n)
+  }
+
+  function liveAvailable(payload, direction) {
+    const bodyId = dockedBayId()
+    if (!bodyId || !payload) return 0
+    const { kind, id, from } = payload
+    const fromShip = direction === 'toStation' || from === 'ship'
+    const ship = gameState.player.ship
+    const storage = gameState.stationStorage[bodyId] ?? {}
+    if (kind === 'parts') {
+      return fromShip ? (ship.shipParts ?? 0) : (storage.shipParts ?? 0)
+    }
+    if (kind === 'blueprint') {
+      const map = fromShip ? (ship.blueprints ?? {}) : (storage.blueprints ?? {})
+      return map[id] ?? 0
+    }
+    if (kind === 'cargo') {
+      const map = fromShip ? (ship.cargo ?? {}) : (storage.cargo ?? {})
+      return map[id] ?? 0
+    }
+    if (kind === 'ore') {
+      const map = fromShip ? (ship.miningHold ?? {}) : (storage.miningHold ?? {})
+      return map[id] ?? 0
+    }
+    return 0
+  }
+
+  async function performStorageTransfer(payload, direction, shiftKey) {
+    const bodyId = dockedBayId()
+    if (!bodyId || !payload) return
+    const { kind, id } = payload
+    const available = liveAvailable(payload, direction)
+    const label = itemLabel(kind, id)
+    const want = await resolveTransferQty(available, shiftKey, label)
+    if (want < 1) return
+
+    let result
+    if (kind === 'blueprint') {
+      result = transferBlueprintItem(gameState, bodyId, id, want, direction)
+    } else {
+      result = transferStorageItem(gameState, bodyId, kind, id, want, direction)
+    }
+
+    if (result.capacityLimited) {
+      const hold = kind === 'ore' ? 'ore hold' : 'cargo hold'
+      await gameNotice(
+        'Hold full',
+        result.moved > 0
+          ? `Your ${hold} is full. Transferred ${result.moved} of ${want} ${label}; the rest stays where it was.`
+          : `Your ${hold} is full — nothing transferred.`
+      )
+    }
+    render()
+    onStorageChanged?.()
+  }
+
+  function wireXferItems(rootEl) {
+    rootEl.querySelectorAll('.xfer-item[draggable="true"]').forEach((el) => {
+      el.addEventListener('dragstart', (e) => {
+        const payload = {
+          from: el.dataset.from,
+          kind: el.dataset.kind,
+          id: el.dataset.id,
+          qty: Number(el.dataset.qty)
+        }
+        e.dataTransfer.setData(XFER_MIME, JSON.stringify(payload))
+        e.dataTransfer.setData('text/plain', JSON.stringify(payload))
+        e.dataTransfer.effectAllowed = 'move'
+        el.classList.add('xfer-dragging')
+        e.dataTransfer.setData('application/x-witv-shift', e.shiftKey ? '1' : '0')
+      })
+      el.addEventListener('dragend', () => {
+        el.classList.remove('xfer-dragging')
+        panelEl.classList.remove('drag-over')
+      })
+    })
+  }
+
+  function wireDropZone() {
+    if (panelEl._xferDropWired) return
+    panelEl._xferDropWired = true
+    panelEl.classList.add('xfer-drop-target')
+    panelEl.addEventListener('dragover', (e) => {
+      if (!xferEnabled()) return
+      const types = [...(e.dataTransfer?.types ?? [])]
+      if (types.includes(XFER_MIME) || types.includes('text/plain') || types.includes('Text')) {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        panelEl.classList.add('drag-over')
+      }
+    })
+    panelEl.addEventListener('dragleave', (e) => {
+      if (!panelEl.contains(e.relatedTarget)) panelEl.classList.remove('drag-over')
+    })
+    panelEl.addEventListener('drop', async (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      panelEl.classList.remove('drag-over')
+      if (!xferEnabled()) return
+      let payload = null
+      try {
+        payload = JSON.parse(e.dataTransfer.getData(XFER_MIME) || e.dataTransfer.getData('text/plain') || 'null')
+      } catch {
+        return
+      }
+      // Only accept station → ship on the inventory panel.
+      if (!payload || payload.from !== 'station') return
+      const shiftKey = e.shiftKey || e.dataTransfer.getData('application/x-witv-shift') === '1'
+      await performStorageTransfer(payload, 'toShip', shiftKey)
+    })
+  }
+  wireDropZone()
+
   function wireInventoryDiscard(kind) {
     contentEl.querySelectorAll('button.discard-item').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -258,6 +514,7 @@ export function createInventoryUI(container, gameState) {
           else discardCargo(gameState, id, qty, 'ship')
           await gameNotice(`Destroyed ${qty}× ${label}.`)
           render()
+          onStorageChanged?.()
         } catch (err) {
           await gameNotice(err?.message || String(err))
         }
@@ -265,30 +522,57 @@ export function createInventoryUI(container, gameState) {
     })
   }
 
+  function dockedXferHint(extra = '') {
+    if (!xferEnabled()) return ''
+    return `<p class="xfer-hint">Docked — drag items onto Station Services to store (or drop station items here).${extra ? ` ${extra}` : ''}</p>`
+  }
+
   function renderCargoTab(ship, shipClass) {
     const cargoRows = Object.entries(ship.cargo).filter(([, qty]) => qty > 0)
     const used = cargoRows.reduce((a, [, q]) => a + q, 0)
     contentEl.innerHTML = `
+      ${dockedXferHint()}
       <div class="hull-status" style="margin-bottom:10px;opacity:0.7">${used}/${shipClass.stats.cargoCapacity}</div>
       ${cargoRows.length
         ? `<table>
             <thead><tr><th>Good</th><th>Qty</th><th></th></tr></thead>
             <tbody>${cargoRows.map(([id, qty]) =>
-              `<tr><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty}</td><td><button type="button" class="discard-item" data-id="${escapeHtml(id)}" data-qty="${qty}">✕</button></td></tr>`
+              `<tr class="${xferClass(qty).trim()}"${xferAttrs('cargo', id, qty)}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty}</td><td><button type="button" class="discard-item" data-id="${escapeHtml(id)}" data-qty="${qty}">✕</button></td></tr>`
             ).join('')}</tbody>
           </table>`
         : '<div class="empty">Empty</div>'}
     `
     wireInventoryDiscard('cargo')
+    if (xferEnabled()) wireXferItems(contentEl)
   }
 
   function renderPartsTab(ship, shipClass) {
     const parts = ship.shipParts ?? 0
     const hull = Math.round(ship.hull)
     const armor = Math.round(ship.armor)
+    const spareWeaponRows = Object.entries(ship.spareWeapons ?? {}).filter(([, qty]) => qty > 0)
+    const bodyId = dockedBayId()
     contentEl.innerHTML = `
+      ${dockedXferHint('Ship parts transfer to bay storage.')}
       <div class="hull-status">${parts} part${parts === 1 ? '' : 's'} · Hull ${hull}/${shipClass.stats.hull} · Armour ${armor}/${shipClass.stats.armor}</div>
+      ${parts > 0
+        ? `<div class="xfer-parts${xferClass(parts)}"${xferAttrs('parts', 'ship_parts', parts)}>${itemNameCell(itemIcon('parts'), `${parts} on board`)} — drag to station</div>`
+        : ''}
+      ${bodyId && spareWeaponRows.length
+        ? `<p class="tab-meta" style="margin-top:14px">Salvaged weapons (×${spareWeaponRows.reduce((a, [, q]) => a + q, 0)}) — store at this bay or sell in Shipyard → Armoury.
+            <button type="button" class="dock-action store-weapons">Store at bay</button></p>`
+        : spareWeaponRows.length
+          ? `<p class="tab-meta" style="margin-top:14px">Salvaged weapons: sell or store when docked (Shipyard → Armoury).</p>`
+          : ''}
     `
+    contentEl.querySelector('.store-weapons')?.addEventListener('click', () => {
+      const id = dockedBayId()
+      if (!id) return
+      storeCarriedWeapons(gameState, id)
+      render()
+      onStorageChanged?.()
+    })
+    if (xferEnabled()) wireXferItems(contentEl)
   }
 
   function renderOreTab(ship, shipClass) {
@@ -296,17 +580,19 @@ export function createInventoryUI(container, gameState) {
     const used = oreRows.reduce((a, [, q]) => a + q, 0)
     const cap = effectiveMiningCapacity(ship, shipClass)
     contentEl.innerHTML = `
+      ${dockedXferHint()}
       <div class="hull-status" style="margin-bottom:10px;opacity:0.7">${used}/${cap}</div>
       ${oreRows.length
         ? `<table>
             <thead><tr><th>Ore</th><th>Qty</th><th></th></tr></thead>
             <tbody>${oreRows.map(([id, qty]) =>
-              `<tr><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty}</td><td><button type="button" class="discard-item" data-id="${escapeHtml(id)}" data-qty="${qty}">✕</button></td></tr>`
+              `<tr class="${xferClass(qty).trim()}"${xferAttrs('ore', id, qty)}><td>${itemNameCell(goodIcon(id), getGood(id).name)}</td><td>${qty}</td><td><button type="button" class="discard-item" data-id="${escapeHtml(id)}" data-qty="${qty}">✕</button></td></tr>`
             ).join('')}</tbody>
           </table>`
         : '<div class="empty">Empty</div>'}
     `
     wireInventoryDiscard('ore')
+    if (xferEnabled()) wireXferItems(contentEl)
   }
 
   function renderSkillsTab(ship) {
@@ -367,6 +653,7 @@ export function createInventoryUI(container, gameState) {
   }
 
   function renderBlueprintsTab(ship) {
+    ensureBlueprintMaps(gameState)
     const bpRows = Object.entries(ship.blueprints ?? {}).filter(([, qty]) => qty > 0)
     const total = bpRows.reduce((a, [, q]) => a + q, 0)
     const byKind = { ship: [], accessory: [], weapon: [], other: [] }
@@ -384,6 +671,7 @@ export function createInventoryUI(container, gameState) {
     for (const list of Object.values(byKind)) {
       list.sort((a, b) => String(a.name).localeCompare(String(b.name)))
     }
+    const bodyId = dockedBayId()
     function section(title, rows, blueprintKind) {
       if (!rows.length) return ''
       return `
@@ -391,7 +679,7 @@ export function createInventoryUI(container, gameState) {
         <table>
           <thead><tr><th>Blueprint</th><th>Builds</th><th>Qty</th></tr></thead>
           <tbody>${rows.map((r) => `
-            <tr>
+            <tr class="${xferClass(r.qty).trim()}"${xferAttrs('blueprint', r.id, r.qty)}>
               <td>${itemNameCell(itemIcon('blueprint', { blueprintKind }), r.name)}</td>
               <td>${escapeHtml(r.itemName ?? '—')}</td>
               <td>×${r.qty}</td>
@@ -399,11 +687,23 @@ export function createInventoryUI(container, gameState) {
         </table>`
     }
     contentEl.innerHTML = total
-      ? `${section('Ships', byKind.ship, 'ship')}
+      ? `${dockedXferHint('Blueprints assemble from station Industry storage.')}
+           ${bodyId
+             ? `<p class="tab-meta"><button type="button" class="dock-action store-all-bps">Store all at bay</button></p>`
+             : ''}
+           ${section('Ships', byKind.ship, 'ship')}
            ${section('Accessories', byKind.accessory, 'accessory')}
            ${section('Weapons', byKind.weapon, 'weapon')}
            ${section('Other', byKind.other, 'ship')}`
-      : '<div class="empty">Empty</div>'
+      : `<div class="empty">Empty</div>${dockedXferHint()}`
+    contentEl.querySelector('.store-all-bps')?.addEventListener('click', () => {
+      const id = dockedBayId()
+      if (!id) return
+      storeBlueprints(gameState, id)
+      render()
+      onStorageChanged?.()
+    })
+    if (xferEnabled()) wireXferItems(contentEl)
   }
 
   function renderStoredTab() {
@@ -485,6 +785,7 @@ export function createInventoryUI(container, gameState) {
   }
 
   function render() {
+    if (!isOpen) return
     creditsEl.textContent = formatCredits(gameState.player.credits)
     updatePartsAndRepair()
     const ship = gameState.player.ship
@@ -521,17 +822,6 @@ export function createInventoryUI(container, gameState) {
     floatToastTimer = setTimeout(() => el.classList.remove('show'), 2200)
   }
 
-  /** Anchor the panel 50px below the HUD system-name box. */
-  function positionBelowSystemLabel() {
-    const sys = document.querySelector('#hud .system-label')
-    if (!sys) {
-      root.style.paddingTop = '120px'
-      return
-    }
-    const bottom = sys.getBoundingClientRect().bottom
-    root.style.paddingTop = `${Math.max(60, Math.round(bottom + 50))}px`
-  }
-
   repairBtn.addEventListener('click', async () => {
     const ship = gameState.player.ship
     const shipClass = getShipClass(ship.classId)
@@ -548,25 +838,35 @@ export function createInventoryUI(container, gameState) {
     render()
   })
 
-  root.querySelector('.close').addEventListener('click', () => {
+  let onCloseCallback = null
+
+  function hidePanel() {
+    isOpen = false
+    root.classList.remove('is-open')
     root.style.display = 'none'
+  }
+
+  root.querySelector('.close').addEventListener('click', () => {
+    hidePanel()
     onCloseCallback?.()
   })
-
-  let onCloseCallback = null
 
   return {
     show(onClose) {
       onCloseCallback = onClose
       currentTab = 'cargo'
-      positionBelowSystemLabel()
+      isOpen = true
+      floating.restore()
+      root.classList.add('is-open')
+      root.style.display = 'block'
       render()
-      root.style.display = 'flex'
-      // Re-measure after layout (HUD may have just become visible).
-      requestAnimationFrame(positionBelowSystemLabel)
     },
-    hide() {
-      root.style.display = 'none'
+    hide: hidePanel,
+    refresh() {
+      if (isOpen) render()
+    },
+    isOpen() {
+      return isOpen
     },
     element: root
   }

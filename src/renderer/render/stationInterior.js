@@ -160,7 +160,7 @@ function mat(hex, mapsKey, extra = {}) {
     emissiveIntensity: extra.emissiveIntensity ?? 0,
     transparent: extra.transparent ?? false,
     opacity: extra.opacity ?? 1,
-    ...stationMaterialMaps(mapsKey, extra.mapScale ?? 0.4)
+    ...stationMaterialMaps(mapsKey, extra.mapScale ?? 0.72)
   })
 }
 

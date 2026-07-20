@@ -19,8 +19,46 @@ import {
   applyLawBonusForPirateKill,
   policeHostileToPlayer,
   civiliansHostileToPlayer,
-  lawPenaltyAppliesInSystem
+  lawPenaltyAppliesInSystem,
+  getSystemSecurity
 } from './security.js'
+
+/**
+ * Random destroy bounty for an NPC hull. Higher pay in lower-security systems
+ * (same (6−sec) bias as alien base rewards). Police / free hulls use hull HP
+ * as a stand-in for market price.
+ *
+ * @returns {number} credits awarded (always ≥ 100 when called with a class id)
+ */
+export function rollShipBounty(shipClassId, securityRating, rng = Math.random) {
+  let price = 0
+  let hull = 80
+  try {
+    const cls = getShipClass(shipClassId)
+    price = Math.max(0, Number(cls?.price) || 0)
+    hull = Math.max(40, Number(cls?.stats?.hull) || 80)
+  } catch {
+    /* unknown class — keep hull fallback */
+  }
+  // Paid hulls: % of market value. Free/police: ~hull×80 synthetic value.
+  const valueBase = price > 0 ? price : hull * 80
+  // ~1.5–5% of value, then security multiplier.
+  const frac = 0.015 + rng() * 0.035
+  const sec = Math.max(0, Math.min(6, Math.floor(Number(securityRating) || 0)))
+  const secMult = 1 + (6 - sec) * 0.22
+  return Math.max(100, Math.round(valueBase * frac * secMult))
+}
+
+/** Award destroy bounty credits + toast. Returns credits paid. */
+export function applyShipBounty(gameState, target, securityRating, rng = Math.random) {
+  if (!gameState?.player || !target) return 0
+  const shipClassId = target.shipClassId ?? target.classId
+  const credits = rollShipBounty(shipClassId, securityRating, rng)
+  gameState.player.credits = (gameState.player.credits ?? 0) + credits
+  gameState._pendingToasts = gameState._pendingToasts ?? []
+  gameState._pendingToasts.push(`Bounty +${credits} cr`)
+  return credits
+}
 
 /**
  * Track NPCs the player has shot or that have shot the player.
@@ -34,10 +72,15 @@ export function markPlayerCombatEngagement(gameState, proj, target, isPlayerTarg
     // Law penalty only in Sec 3–6, and only for non-hostiles who never shot first.
     // Pirates/aliens are fair game; police attacks still cost standing in high security.
     if (!already && target.faction !== 'pirate' && target.faction !== 'alien') {
-      const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-      if (system) ensureSystemSecurity(system)
-      if (lawPenaltyAppliesInSystem(system)) {
-        applyLawPenaltyForAttack(gameState, false)
+      // Fixtures / early boot may omit galaxy — skip law standing then.
+      const system = gameState.galaxy
+        ? getSystem(gameState.galaxy, gameState.player.currentSystemId)
+        : null
+      if (system) {
+        ensureSystemSecurity(system)
+        if (lawPenaltyAppliesInSystem(system)) {
+          applyLawPenaltyForAttack(gameState, false)
+        }
       }
     }
     gameState.player.combatEngagedNpcIds[target.id] = true
@@ -190,6 +233,10 @@ export function fireProjectile(
   const hardpoints = shooterShipClass?.hardpoints
   if (!hardpoints?.length) return
 
+  // Stable indices among all mounts of each type (not just those ready this frame).
+  const laserHps = hardpoints.filter((h) => h.type !== 'missile')
+  const missileHps = hardpoints.filter((h) => h.type === 'missile')
+
   for (const hp of hardpoints) {
     const mountType = hp.type === 'missile' ? 'missile' : 'laser'
     if (weaponTypeFilter && mountType !== weaponTypeFilter) continue
@@ -208,19 +255,53 @@ export function fireProjectile(
     shooter.hardpointCooldowns[hp.id] = gameState.simTime + weapon.cooldownS
 
     const hpPos = hp.position ?? [0, 0, 0]
-    let localX = hpPos[0]
-    let localY = hpPos[1]
-    let localZ = hpPos[2]
-    // Player lasers: centerline + pure ship +Z (nose hardpoint Z, no X/Y wing offset).
-    // Spawn at the muzzle — downrange jumps made bolts tiny/invisible in chase cam.
-    if (ownerId === 'player' && mountType === 'laser') {
-      localX = 0
-      localY = 0
-      localZ = Math.max(localZ, 8)
-    }
-    const worldPos = new THREE.Vector3(localX, localY, localZ).applyQuaternion(quat).add(shooterPos)
+    let localX = Number(hpPos[0]) || 0
+    let localY = Number(hpPos[1]) || 0
+    let localZ = Number(hpPos[2]) || 0
+
     // Player lasers always fly pure ship +Z (Tab-lock does not bend the beam).
-    // Missiles / NPCs still aim at aimWorld when provided.
+    // Single turret: centerline muzzle for chase-cam readability.
+    // Multi turret: keep hardpoint lateral offsets (with a minimum fan) so
+    // LMB visibly fires every laser. Missiles use hardpoint offsets similarly.
+    if (ownerId === 'player' && mountType === 'laser') {
+      localZ = Math.max(localZ, 7)
+      if (laserHps.length <= 1) {
+        localX = 0
+        localY = 0
+        localZ = Math.max(localZ, 8)
+      } else {
+        const idx = Math.max(0, laserHps.findIndex((h) => h.id === hp.id))
+        // Ensure wing pairs (and stacked gen hardpoints) separate slightly.
+        const minLat = 0.65
+        if (Math.hypot(localX, localY) < minLat) {
+          // Fan left/right (±) then a bit of Y for 3+ guns.
+          const side = idx % 2 === 0 ? -1 : 1
+          const rank = Math.floor(idx / 2)
+          localX = side * (minLat + rank * 0.35)
+          localY = (rank % 2 === 1 ? 0.25 : 0) + (idx >= 2 ? 0.12 : 0)
+        } else {
+          // Emphasize existing wing mounts a little so bolts don't hide in the hull.
+          localX *= 1.12
+          localY *= 1.05
+        }
+      }
+    } else if (ownerId === 'player' && mountType === 'missile') {
+      localZ = Math.max(localZ, 5)
+      if (missileHps.length > 1) {
+        const idx = Math.max(0, missileHps.findIndex((h) => h.id === hp.id))
+        const minLat = 0.55
+        if (Math.hypot(localX, localY) < minLat) {
+          const side = idx % 2 === 0 ? -1 : 1
+          const rank = Math.floor(idx / 2)
+          localX = side * (minLat + rank * 0.4)
+          localY = rank * 0.2
+        } else {
+          localX *= 1.1
+        }
+      }
+    }
+
+    const worldPos = new THREE.Vector3(localX, localY, localZ).applyQuaternion(quat).add(shooterPos)
     if (ownerId === 'player' && mountType === 'laser') {
       _projDir.copy(forward)
     } else {
@@ -353,6 +434,9 @@ export function updateProjectiles(gameState, dt, onHit) {
           if (target.faction === 'pirate') {
             applyLawBonusForPirateKill(gameState)
           }
+          // Random bounty credits — higher in lower-security systems.
+          if (currentSystem) ensureSystemSecurity(currentSystem)
+          applyShipBounty(gameState, target, getSystemSecurity(currentSystem), Math.random)
         }
         onHit?.({
           position: newPos.toArray(),
@@ -464,7 +548,9 @@ export function truceActive(gameState) {
  * re-walk the galaxy / re-roll law checks for every ship (was a combat hitch).
  */
 export function prepareCombatFrame(gameState) {
-  const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  const system = gameState.galaxy
+    ? getSystem(gameState.galaxy, gameState.player.currentSystemId)
+    : null
   if (system) ensureSystemSecurity(system)
   const truce = truceActive(gameState)
   // Pre-index live hostiles by faction for O(1) opponent lists.

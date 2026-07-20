@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { mulberry32, range, intRange, pick } from '../procgen/prng.js'
-import { stationMaterialMaps } from './textures.js'
+import { stationMaterialMaps, STATION_NORMAL_STRENGTH } from './textures.js'
 import {
   buildStationFromFreeModel,
   STATION_TYPE_COUNT,
@@ -13,38 +13,42 @@ function hashString(str) {
   return Math.abs(h)
 }
 
-// Smooth-shaded PBR (no flatShading) — faceted flat shading was the main
-// "blocky" read once maps were applied. Soft normals + modest tile repeats
-// keep plating readable without giant plate tiles.
-const stationMaps = (role) => stationMaterialMaps(role, 0.36)
+// Smooth-shaded PBR — denser tile maps + stronger normals for plated detail.
+const stationMaps = (role, strength = STATION_NORMAL_STRENGTH) =>
+  stationMaterialMaps(role, strength)
 
-function hullMaterials(rng) {
+function hullMaterials(rng, { settlement = false } = {}) {
   // Industrial metal: desaturated greys with a cool or warm bias.
   const warm = rng() < 0.45
   const hue = warm ? range(rng, 25, 45) : range(rng, 200, 220)
   const hullColor = new THREE.Color().setHSL(hue / 360, range(rng, 0.06, 0.18), range(rng, 0.42, 0.58))
   const accentColor = new THREE.Color().setHSL(((hue + range(rng, 100, 180)) % 360) / 360, range(rng, 0.35, 0.55), range(rng, 0.45, 0.6))
   const panelColor = hullColor.clone().offsetHSL(0, 0, -0.12)
+  // Settlements use denser armor/plate maps for a grittier surface read.
+  const hullRole = settlement ? 'settlementHull' : 'hull'
+  const panelRole = settlement ? 'settlementPanel' : 'panel'
+  const nStr = settlement ? STATION_NORMAL_STRENGTH * 1.08 : STATION_NORMAL_STRENGTH
   return {
     hull: new THREE.MeshStandardMaterial({
       color: hullColor,
-      metalness: 0.92,
-      roughness: 0.72,
-      envMapIntensity: 0.85,
-      ...stationMaps('hull')
+      metalness: 0.9,
+      roughness: 0.52,
+      envMapIntensity: 1.05,
+      ...stationMaps(hullRole, nStr)
     }),
     accent: new THREE.MeshStandardMaterial({
       color: accentColor,
-      metalness: 0.78,
-      roughness: 0.68,
-      envMapIntensity: 0.9,
-      ...stationMaps('accent')
+      metalness: 0.82,
+      roughness: 0.48,
+      envMapIntensity: 1.1,
+      ...stationMaps('accent', nStr)
     }),
     panel: new THREE.MeshStandardMaterial({
       color: panelColor,
       metalness: 0.88,
-      roughness: 0.7,
-      ...stationMaps('panel')
+      roughness: 0.55,
+      envMapIntensity: 0.95,
+      ...stationMaps(panelRole, nStr)
     }),
     window: new THREE.MeshStandardMaterial({
       color: 0x1a3040,
@@ -58,18 +62,20 @@ function hullMaterials(rng) {
     solar: new THREE.MeshStandardMaterial({
       color: 0xd0e0f5,
       emissive: 0x061428,
-      emissiveIntensity: 0.14,
+      emissiveIntensity: 0.18,
       metalness: 0.95,
-      roughness: 0.55,
-      ...stationMaps('solar')
+      roughness: 0.42,
+      envMapIntensity: 1.0,
+      ...stationMaps('solar', nStr * 0.9)
     }),
     radiator: new THREE.MeshStandardMaterial({
       color: 0x6a5048,
-      metalness: 0.9,
-      roughness: 0.78,
+      metalness: 0.88,
+      roughness: 0.58,
       emissive: 0x1a0a08,
-      emissiveIntensity: 0.1,
-      ...stationMaps('radiator')
+      emissiveIntensity: 0.12,
+      envMapIntensity: 0.9,
+      ...stationMaps('radiator', nStr)
     })
   }
 }
@@ -554,7 +560,7 @@ function buildDomeStation(rng) {
 // --- Surface settlements (distinct from free-floating stations) ------------
 
 function buildSettlementDomeCluster(rng) {
-  const mats = hullMaterials(rng)
+  const mats = hullMaterials(rng, { settlement: true })
   const group = new THREE.Group()
 
   // Multi-tier landing pad.
@@ -618,7 +624,7 @@ function buildSettlementDomeCluster(rng) {
 }
 
 function buildSettlementOutpost(rng) {
-  const mats = hullMaterials(rng)
+  const mats = hullMaterials(rng, { settlement: true })
   const group = new THREE.Group()
 
   // Raised platform with edge lip.
@@ -672,7 +678,7 @@ function buildSettlementOutpost(rng) {
 }
 
 function buildSettlementMinehead(rng) {
-  const mats = hullMaterials(rng)
+  const mats = hullMaterials(rng, { settlement: true })
   const group = new THREE.Group()
 
   // Ground apron.
@@ -739,7 +745,7 @@ function buildSettlementMinehead(rng) {
 }
 
 function buildSettlementFarmBubble(rng) {
-  const mats = hullMaterials(rng)
+  const mats = hullMaterials(rng, { settlement: true })
   const group = new THREE.Group()
 
   const growMat = new THREE.MeshStandardMaterial({

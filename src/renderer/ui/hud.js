@@ -1,45 +1,35 @@
+import { getUiPalette } from './uiTheme.js'
+
 const STYLE = `
-#hud { font-family: monospace; color: #cfe3ff; user-select: none; }
+#hud { font-family: monospace; color: var(--ui-text); user-select: none; }
 
 /*
- * Unified HUD chrome surface.
- * Default cut: top-right. Right-side panels (radar) flip to top-left + right accent.
- * Velocity: both top corners cut.
+ * Unified HUD chrome surface — square corners, thin cyan border.
  */
 #hud .status-panel,
 #hud .velocity-panel,
 #hud .system-label,
 #hud .target-panel,
 #hud #radar .radar-frame {
-  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.82));
-  border: 1px solid rgba(111,216,242,0.45);
-  border-left: 3px solid #6fd8f2;
-  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 22px rgba(79,195,217,0.06);
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 16px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 22px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.06);
   filter:
     drop-shadow(0 2px 3px rgba(0,0,0,0.7))
     drop-shadow(0 4px 10px rgba(0,0,0,0.4));
 }
 
-/* Velocity: cut both top corners; thick cyan accent on both sides */
+/* Velocity: thin cyan on both sides */
 #hud .velocity-panel {
-  border-left: 3px solid #6fd8f2;
-  border-right: 3px solid #6fd8f2;
-  clip-path: polygon(
-    14px 0,
-    calc(100% - 14px) 0,
-    100% 14px,
-    100% 100%,
-    0 100%,
-    0 14px
-  );
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
 }
 
-/* Radar (right column): top-left cut + accent stripe on the right */
+/* Radar (right column): thin cyan edge */
 #hud #radar .radar-frame {
-  border-left: 1px solid rgba(111,216,242,0.45);
-  border-right: 3px solid #6fd8f2;
-  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% 100%, 0 100%);
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
 }
 
 /* Cockpit chrome: four corner braces plus a faint full-screen scanline wash,
@@ -47,10 +37,10 @@ const STYLE = `
    viewport. pointer-events: none throughout — pure decoration. */
 #hud .cockpit-frame { position: fixed; inset: 10px; pointer-events: none; z-index: 5; }
 #hud .cockpit-frame .corner {
-  position: absolute; width: 34px; height: 34px; border: 2px solid rgba(111,216,242,0.5);
+  position: absolute; width: 34px; height: 34px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5);
   filter:
     drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-    drop-shadow(0 0 6px rgba(79,195,217,0.55));
+    drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
 }
 #hud .cockpit-frame .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
 #hud .cockpit-frame .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
@@ -58,7 +48,7 @@ const STYLE = `
 #hud .cockpit-frame .corner.br { bottom: 0; right: 0; border-left: none; border-top: none; }
 #hud .scanlines {
   position: fixed; inset: 0; pointer-events: none; z-index: 4; opacity: 0.35;
-  background: repeating-linear-gradient(0deg, rgba(79,195,217,0.025) 0px, rgba(79,195,217,0.025) 1px, transparent 1px, transparent 4px);
+  background: repeating-linear-gradient(0deg, rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.025) 0px, rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.025) 1px, transparent 1px, transparent 4px);
 }
 
 #hud .status-panel {
@@ -66,11 +56,79 @@ const STYLE = `
   width: 240px;
   padding: 12px 18px 10px 20px;
 }
+
+/* Plotted warp-gate route — plain floating text (no panel chrome). */
+#hud .route-hud {
+  position: fixed; left: 20px; top: 178px; z-index: 6;
+  width: min(280px, 36vw); max-height: min(42vh, 360px);
+  padding: 0;
+  display: none;
+  pointer-events: none;
+  overflow: hidden;
+  background: none;
+  border: none;
+  box-shadow: none;
+  filter: none;
+  color: #ffffff;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.9),
+    0 2px 6px rgba(0,0,0,0.75),
+    0 0 10px rgba(0,0,0,0.45);
+}
+#hud .route-hud.visible { display: block; }
+#hud .route-hud .rh-title {
+  font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: #ffffff; opacity: 0.92; margin: 0 0 6px 0;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.9),
+    0 2px 6px rgba(0,0,0,0.75),
+    0 0 10px rgba(0,0,0,0.45);
+}
+#hud .route-hud .rh-title .rh-count {
+  opacity: 0.75; letter-spacing: 1px; font-size: 10px; margin-left: 6px;
+  text-transform: none;
+}
+#hud .route-hud .rh-list {
+  list-style: none; margin: 0; padding: 0;
+  max-height: min(34vh, 300px); overflow: hidden;
+}
+#hud .route-hud .rh-list li {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 2px 0;
+  margin: 0;
+  font-size: 13px; letter-spacing: 0.3px; line-height: 1.45;
+  background: none;
+  border: none;
+  color: #ffffff;
+  opacity: 0.88;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.9),
+    0 2px 6px rgba(0,0,0,0.7);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#hud .route-hud .rh-list li.next {
+  opacity: 1;
+  font-weight: 600;
+}
+#hud .route-hud .rh-list li.dest { opacity: 0.95; }
+#hud .route-hud .rh-list .hop {
+  opacity: 0.7; font-size: 11px; min-width: 1.4em; flex-shrink: 0;
+}
+#hud .route-hud .rh-list .name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+#hud .route-hud .rh-list .tag {
+  font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  opacity: 0.7; color: #ffffff; flex-shrink: 0;
+}
+#hud.docked .route-hud {
+  top: 88px;
+}
 #hud .panel-title {
-  font-size: 10px; letter-spacing: 3px; opacity: 0.65; color: #7fe6ff;
+  font-size: 10px; letter-spacing: 3px; opacity: 0.65; color: var(--ui-accent);
   text-shadow:
     0 1px 2px rgba(0,0,0,0.85),
-    0 0 6px rgba(79,195,217,0.7);
+    0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7);
   margin-bottom: 8px;
 }
 #hud .row { margin-bottom: 7px; }
@@ -84,7 +142,6 @@ const STYLE = `
 #hud .bar {
   position: relative; width: 100%; height: 9px;
   background: #0c1424; border: 1px solid #2a3a55; overflow: hidden;
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 6px 100%, 0 calc(100% - 6px));
 }
 #hud .bar .fill { position: relative; height: 100%; transition: width 0.15s linear; }
 /* Segment tick lines over every bar — the classic sci-fi cell-battery read
@@ -92,7 +149,7 @@ const STYLE = `
    as the fill crosses each tick. */
 #hud .bar::after {
   content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: repeating-linear-gradient(90deg, transparent 0px, transparent 9px, rgba(7,12,22,0.85) 9px, rgba(7,12,22,0.85) 11px);
+  background: repeating-linear-gradient(90deg, transparent 0px, transparent 9px, rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.85) 9px, rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.85) 11px);
 }
 #hud .bar .fill::after {
   content: ''; position: absolute; inset: 0;
@@ -100,32 +157,23 @@ const STYLE = `
   background-size: 220% 100%;
   animation: hud-shine 3.2s linear infinite;
 }
-#hud .shield .fill { background: linear-gradient(90deg, #2e8fa8, #7fe6ff); box-shadow: 0 0 6px rgba(127,230,255,0.6); }
+#hud .shield .fill { background: linear-gradient(90deg, var(--ui-deep), var(--ui-accent)); box-shadow: 0 0 6px rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.6); }
 #hud .armor .fill { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
 #hud .hull .fill { background: linear-gradient(90deg, #7a2626, #c24a4a); box-shadow: 0 0 6px rgba(194,74,74,0.5); }
 #hud .hull .fill.critical { animation: hud-critical-pulse 0.6s ease-in-out infinite; }
 
-#hud .bar.velocity { position: relative; clip-path: none; }
+#hud .bar.velocity { position: relative; }
 #hud .bar.velocity .zero-marker { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: rgba(207,227,255,0.4); }
 #hud .bar.velocity .fill { position: absolute; top: 0; background: linear-gradient(90deg, #3a8f5c, #7fe0a0); box-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #hud .bar.velocity .fill.reversing { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
 
-/* Current system — top center, clear of status (left) and radar (right).
-   Same dual-top-corner cut + dual side accents as the velocity panel. */
+/* Current system — top center, clear of status (left) and radar (right). */
 #hud .system-label {
   position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
   pointer-events: none; z-index: 6;
   text-align: center; padding: 6px 18px 7px;
-  border-left: 3px solid #6fd8f2;
-  border-right: 3px solid #6fd8f2;
-  clip-path: polygon(
-    14px 0,
-    calc(100% - 14px) 0,
-    100% 14px,
-    100% 100%,
-    0 100%,
-    0 14px
-  );
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
 }
 /* Docked: strip flight chrome; location chip top-left. */
 #hud.docked .status-panel,
@@ -146,21 +194,21 @@ const STYLE = `
 #hud.docked .system-label .nearest-body .nb-tag { content: none; }
 #hud .system-label .sys-tag {
   display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
-  color: #7fe6ff; opacity: 0.7;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(79,195,217,0.6);
+  color: var(--ui-accent); opacity: 0.7;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6);
   margin-bottom: 2px;
 }
 #hud .system-label .sys-name {
-  display: block; font-size: 14px; letter-spacing: 1.5px; color: #eaffff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 8px rgba(127,230,255,0.55);
+  display: block; font-size: 14px; letter-spacing: 1.5px; color: var(--ui-bright);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 8px rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.55);
   white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
 }
 #hud .system-label .sys-name .sec-badge {
   display: inline-block; margin-left: 10px; padding: 1px 8px 2px;
   font-size: 11px; letter-spacing: 1px; vertical-align: middle;
-  border: 1px solid rgba(111,216,242,0.45); border-radius: 2px;
-  color: #7fe6ff; background: rgba(79,195,217,0.1);
-  text-shadow: 0 0 6px rgba(79,195,217,0.5);
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45); border-radius: 2px;
+  color: var(--ui-accent); background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.1);
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
 }
 #hud .system-label .sys-name .sec-badge.sec-high {
   color: #7fe0a0; border-color: rgba(127,224,160,0.5); background: rgba(127,224,160,0.1);
@@ -173,16 +221,16 @@ const STYLE = `
 }
 #hud .system-label .nearest-body {
   display: none; margin-top: 4px; font-size: 11px; letter-spacing: 1px;
-  color: #b8d4f0; opacity: 0.9;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(79,195,217,0.4);
+  color: var(--ui-soft); opacity: 0.9;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.4);
   white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
 }
 #hud .system-label .nearest-body.visible { display: block; }
 #hud .system-label .nearest-body .nb-tag {
-  color: #7fe6ff; opacity: 0.75; letter-spacing: 1.5px; text-transform: uppercase; font-size: 9px;
+  color: var(--ui-accent); opacity: 0.75; letter-spacing: 1.5px; text-transform: uppercase; font-size: 9px;
   margin-right: 6px;
 }
-#hud .system-label .nearest-body .nb-name { color: #eaffff; }
+#hud .system-label .nearest-body .nb-name { color: var(--ui-bright); }
 
 /* Tab-target readout — sits between system name (center) and radar (right). */
 #hud .target-panel {
@@ -197,17 +245,17 @@ const STYLE = `
 }
 #hud .target-panel .tp-tag {
   font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
-  color: #7fe6ff; opacity: 0.75; margin-bottom: 2px;
+  color: var(--ui-accent); opacity: 0.75; margin-bottom: 2px;
   text-shadow: 0 1px 2px rgba(0,0,0,0.85);
 }
 #hud .target-panel.hostile .tp-tag { color: #ff9a7a; }
 #hud .target-panel .tp-name {
-  font-size: 13px; letter-spacing: 0.8px; color: #eaffff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(127,230,255,0.4);
+  font-size: 13px; letter-spacing: 0.8px; color: var(--ui-bright);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;
 }
 #hud .target-panel .tp-meta {
-  font-size: 10px; letter-spacing: 0.5px; color: #8fb3d9; opacity: 0.9;
+  font-size: 10px; letter-spacing: 0.5px; color: var(--ui-dim); opacity: 0.9;
   margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #hud .target-panel .tp-row { margin-bottom: 5px; }
@@ -244,7 +292,7 @@ const STYLE = `
 #radar {
   position: fixed; right: 16px; top: 16px;
   width: 176px; height: 176px;
-  font-family: monospace; color: #cfe3ff; user-select: none; text-align: center;
+  font-family: monospace; color: var(--ui-text); user-select: none; text-align: center;
   pointer-events: none;
   z-index: 8;
 }
@@ -253,8 +301,7 @@ const STYLE = `
   padding: 6px;
   box-sizing: border-box;
 }
-/* Between radar and system overview on the right column.
-   Top-right corner cut to match other HUD chrome. */
+/* Between radar and system overview on the right column. */
 #hud .system-scan-btn {
   position: fixed; right: 16px; top: 198px; z-index: 9;
   width: 176px; box-sizing: border-box;
@@ -262,30 +309,29 @@ const STYLE = `
   font-family: monospace; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
   padding: 7px 8px;
   color: #c9e8ff;
-  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.82));
-  border: 1px solid rgba(111,216,242,0.45);
-  border-left: 1px solid rgba(111,216,242,0.45);
-  border-right: 3px solid #6fd8f2;
-  box-shadow: 0 0 12px rgba(79,195,217,0.25),
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 12px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25),
     0 2px 3px rgba(0,0,0,0.7),
     0 4px 10px rgba(0,0,0,0.35);
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
   filter:
     drop-shadow(0 2px 3px rgba(0,0,0,0.7))
     drop-shadow(0 4px 10px rgba(0,0,0,0.35));
 }
 #hud .system-scan-btn:hover {
-  background: rgba(111,216,242,0.14);
-  color: #eaffff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.14);
+  color: var(--ui-bright);
 }
 #hud.docked .system-scan-btn { display: none; }
 #radar canvas {
   display: block;
   width: 100%; height: 100%;
   background: radial-gradient(circle at 50% 48%, rgba(10,22,34,0.92) 0%, rgba(6,12,22,0.96) 72%, rgba(5,10,18,0.98) 100%);
-  border: 1px solid rgba(111,216,242,0.28);
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28);
   border-radius: 2px;
-  box-shadow: inset 0 0 18px rgba(79,195,217,0.18);
+  box-shadow: inset 0 0 18px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.18);
 }
 #hud .velocity-panel .row-label,
 #hud .velocity-panel .speed {
@@ -296,6 +342,7 @@ const STYLE = `
 /* Supercruise: stronger chromatic HUD glitch (still sparser than title ~6.5s). */
 #hud.cruise-glitch .status-panel,
 #hud.cruise-glitch .target-panel,
+#hud.cruise-glitch .route-hud,
 #hud.cruise-glitch #radar .radar-frame {
   animation: hudCruisePanelGlitch 12s steps(1) infinite;
 }
@@ -312,6 +359,7 @@ const STYLE = `
 #hud.cruise-glitch .status-panel { animation-delay: 0s; }
 #hud.cruise-glitch .system-label { animation-delay: 0.05s; }
 #hud.cruise-glitch .target-panel { animation-delay: 0.04s; }
+#hud.cruise-glitch .route-hud { animation-delay: 0.02s; }
 #hud.cruise-glitch #radar .radar-frame { animation-delay: 0.1s; }
 #hud.cruise-glitch .velocity-panel { animation-delay: 0.07s; }
 #hud.cruise-glitch .cockpit-frame .corner.tl { animation-delay: 0s; }
@@ -441,14 +489,14 @@ const STYLE = `
   0%, 78%, 100% {
     filter:
       drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-      drop-shadow(0 0 6px rgba(79,195,217,0.55));
+      drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
   }
   79% {
     filter:
       drop-shadow(0 2px 3px rgba(0,0,0,0.75))
       drop-shadow(-4px 0 0 rgba(255, 40, 90, 0.9))
       drop-shadow(4px 0 0 rgba(40, 220, 255, 0.9))
-      drop-shadow(0 0 10px rgba(79,195,217,0.8));
+      drop-shadow(0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.8));
   }
   80% {
     filter:
@@ -459,7 +507,7 @@ const STYLE = `
   81%, 82% {
     filter:
       drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-      drop-shadow(0 0 6px rgba(79,195,217,0.55));
+      drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
   }
   90% {
     filter:
@@ -470,7 +518,7 @@ const STYLE = `
   91%, 92% {
     filter:
       drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-      drop-shadow(0 0 6px rgba(79,195,217,0.55));
+      drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
   }
 }
 @keyframes hudCruiseScanGlitch {
@@ -570,10 +618,14 @@ export function createHud(container) {
       <div class="row drones-bay" style="display:none;margin-top:4px">
         <div class="row-label"><span>Drones</span><span class="value drones-bay-count"></span></div>
       </div>
-      <div class="drones-block" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid rgba(111,216,242,0.25)">
+      <div class="drones-block" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25)">
         <div class="panel-title" style="margin-bottom:6px">Drones (deployed)</div>
         <div class="drone-rows"></div>
       </div>
+    </div>
+    <div class="route-hud" aria-live="polite">
+      <div class="rh-title">Route <span class="rh-count"></span></div>
+      <ol class="rh-list"></ol>
     </div>
     <div class="velocity-panel">
       <div class="row-label"><span>Velocity</span><span class="speed"></span></div>
@@ -603,16 +655,20 @@ export function createHud(container) {
   const radarSize = radarCanvas.width
   const radarCenter = radarSize / 2
 
-  const CONTACT_COLORS = {
-    hostile: '#e05a5a',
-    neutral: '#5ee6ff',
-    body: '#5a7a9a',
-    waypoint: '#7fe0a0',
-    mission: '#ff8a3d',
-    wreck: '#c27a3a',
-    anomaly: '#d080ff',
-    nodule: '#60f0ff',
-    alien_base: '#ff6040'
+  // Neutral contacts use live accent (canvas cannot parse CSS vars).
+  const contactColor = (kind) => {
+    if (kind === 'neutral') return getUiPalette().accent
+    const fixed = {
+      hostile: '#e05a5a',
+      body: '#5a7a9a',
+      waypoint: '#7fe0a0',
+      mission: '#ff8a3d',
+      wreck: '#c27a3a',
+      anomaly: '#d080ff',
+      nodule: '#60f0ff',
+      alien_base: '#ff6040'
+    }
+    return fixed[kind] ?? fixed.body
   }
   // Below this fraction the hull bar pulses red as an urgent low-hull cue.
   const CRITICAL_HULL_FRACTION = 0.25
@@ -632,8 +688,12 @@ export function createHud(container) {
   const targetNameEl = hud.querySelector('.target-panel .tp-name')
   const targetMetaEl = hud.querySelector('.target-panel .tp-meta')
   const targetBarsEl = hud.querySelector('.target-panel .tp-bars')
+  const routeHudEl = hud.querySelector('.route-hud')
+  const routeCountEl = hud.querySelector('.route-hud .rh-count')
+  const routeListEl = hud.querySelector('.route-hud .rh-list')
   let lastSystemLabelKey = null
   let lastNearestBodyName = undefined
+  let lastRouteKey = null
 
   function pct(value, max) {
     return Math.max(0, Math.min(100, (value / max) * 100))
@@ -778,14 +838,70 @@ export function createHud(container) {
       }
       targetBarsEl.innerHTML = parts.join('')
     },
+    /**
+     * Warp-gate plotted route on the far left.
+     * @param {null|Array<{ id?: string, name: string }|string>} hops remaining systems (dest last)
+     */
+    updatePlottedRoute(hops) {
+      if (!routeHudEl || !routeListEl) return
+      const list = Array.isArray(hops) ? hops : []
+      if (!list.length) {
+        if (lastRouteKey !== '') {
+          lastRouteKey = ''
+          routeHudEl.classList.remove('visible')
+          routeListEl.innerHTML = ''
+          if (routeCountEl) routeCountEl.textContent = ''
+        }
+        return
+      }
+      const rows = list.map((h) => {
+        if (h && typeof h === 'object') {
+          return { id: String(h.id ?? h.name ?? ''), name: String(h.name ?? h.id ?? '—') }
+        }
+        return { id: String(h), name: String(h) }
+      })
+      const key = rows.map((r) => r.id || r.name).join('\0')
+      if (key === lastRouteKey) return
+      lastRouteKey = key
+      routeHudEl.classList.add('visible')
+      const n = rows.length
+      if (routeCountEl) {
+        routeCountEl.textContent = `· ${n} jump${n === 1 ? '' : 's'}`
+      }
+      // Escape names for safety (system names are generated, but keep consistent).
+      const esc = (s) =>
+        String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+      routeListEl.innerHTML = rows
+        .map((r, i) => {
+          const isNext = i === 0
+          const isDest = i === n - 1
+          const tags = [
+            isNext ? '<span class="tag">next</span>' : '',
+            isDest ? '<span class="tag">dest</span>' : ''
+          ].join('')
+          return `<li class="${isNext ? 'next' : ''} ${isDest ? 'dest' : ''}">
+            <span class="hop">${i + 1}.</span>
+            <span class="name">${esc(r.name)}</span>
+            ${tags}
+          </li>`
+        })
+        .join('')
+    },
     // contacts: [{ x, z, kind }], already transformed into ship-local space
     // (x = right, z = forward) and pre-filtered to radar range by the caller.
     // elapsed drives the rotating sweep — gameState.simTime, never wall-clock.
     updateRadar(contacts, range, elapsed = 0) {
       radarCtx.clearRect(0, 0, radarSize, radarSize)
+      // Canvas cannot parse CSS vars — use the live theme palette.
+      const { accentRgb, accent } = getUiPalette()
+      const ar = (a) => `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},${a})`
 
       // Range rings + crosshair, brighter than before so the grid itself reads.
-      radarCtx.strokeStyle = 'rgba(127,230,255,0.3)'
+      radarCtx.strokeStyle = ar(0.3)
       radarCtx.lineWidth = 1
       for (const frac of [0.5, 0.95]) {
         radarCtx.beginPath()
@@ -795,7 +911,7 @@ export function createHud(container) {
 
       // Bearing tick marks around the rim, every 15deg (longer every 45) —
       // reads as a proper sensor dial rather than a bare circle.
-      radarCtx.strokeStyle = 'rgba(127,230,255,0.45)'
+      radarCtx.strokeStyle = ar(0.45)
       for (let i = 0; i < 24; i++) {
         const a = (i / 24) * Math.PI * 2
         const len = i % 3 === 0 ? 6 : 3
@@ -820,17 +936,18 @@ export function createHud(container) {
       radarCtx.arc(radarCenter, radarCenter, radarCenter, sweepAngle - 0.6, sweepAngle)
       radarCtx.closePath()
       if (sweepGradient) {
-        sweepGradient.addColorStop(0, 'rgba(127,230,255,0)')
-        sweepGradient.addColorStop(1, 'rgba(127,230,255,0.35)')
+        sweepGradient.addColorStop(0, ar(0))
+        sweepGradient.addColorStop(1, ar(0.35))
         radarCtx.fillStyle = sweepGradient
       } else {
-        radarCtx.fillStyle = 'rgba(127,230,255,0.2)'
+        radarCtx.fillStyle = ar(0.2)
       }
       radarCtx.fill()
       radarCtx.restore()
 
-      radarCtx.fillStyle = '#eaffff'
-      radarCtx.shadowColor = '#7fe6ff'
+      const palette = getUiPalette()
+      radarCtx.fillStyle = palette.bright
+      radarCtx.shadowColor = accent
       radarCtx.shadowBlur = 6
       radarCtx.beginPath()
       radarCtx.arc(radarCenter, radarCenter, 2.5, 0, Math.PI * 2)
@@ -840,7 +957,7 @@ export function createHud(container) {
       for (const contact of contacts) {
         const px = radarCenter + contact.x * scale
         const py = radarCenter - contact.z * scale
-        const color = CONTACT_COLORS[contact.kind] ?? CONTACT_COLORS.body
+        const color = contactColor(contact.kind)
         const pulse = contact.kind === 'hostile' ? 1 + 0.35 * Math.sin(elapsed * 8) : 1
         radarCtx.fillStyle = color
         radarCtx.shadowColor = color

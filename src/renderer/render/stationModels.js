@@ -243,9 +243,10 @@ export function preloadStationModels() {
 }
 
 function tintMaterials(root, hullColor, accentColor, panelColor) {
-  const mapsHull = stationMaterialMaps('hull', 0.32)
-  const mapsAccent = stationMaterialMaps('accent', 0.32)
-  const mapsPanel = stationMaterialMaps('panel', 0.32)
+  // Match exterior station detail density (stronger normals + denser tiles).
+  const mapsHull = stationMaterialMaps('hull')
+  const mapsAccent = stationMaterialMaps('accent')
+  const mapsPanel = stationMaterialMaps('panel')
   let i = 0
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return
@@ -263,8 +264,9 @@ function tintMaterials(root, hullColor, accentColor, panelColor) {
       const c = color.clone().offsetHSL(0, 0, 0.08)
       return new THREE.MeshStandardMaterial({
         color: c,
-        metalness: 0.72,
-        roughness: 0.48,
+        metalness: 0.82,
+        roughness: 0.42,
+        envMapIntensity: 1.05,
         map: maps.map,
         normalMap: maps.normalMap,
         roughnessMap: maps.roughnessMap,

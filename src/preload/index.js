@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSfxEnabled: (enabled) => ipcRenderer.invoke('set-sfx-enabled', enabled),
   getMusicEnabled: () => ipcRenderer.invoke('get-music-enabled'),
   setMusicEnabled: (enabled) => ipcRenderer.invoke('set-music-enabled', enabled),
+  getUiHue: () => ipcRenderer.invoke('get-ui-hue'),
+  setUiHue: (hue) => ipcRenderer.invoke('set-ui-hue', hue),
+  getUiBgHue: () => ipcRenderer.invoke('get-ui-bg-hue'),
+  setUiBgHue: (hue) => ipcRenderer.invoke('set-ui-bg-hue', hue),
   // Main fires this if the OS enters/leaves fullscreen (e.g. green button).
   onFullscreenChanged: (cb) => {
     const handler = (_event, isFullscreen) => cb(isFullscreen)

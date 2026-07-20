@@ -12,40 +12,48 @@ import {
 } from '../game/systemScan.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { escapeHtml } from './escapeHtml.js'
+import {
+  defaultPanelGeom,
+  floatingPanelElevationCss,
+  floatingResizeHandleCss,
+  wireFloatingPanel
+} from './floatingPanel.js'
+
+const GEOM_LS_KEY = 'witv.systemScanPanel'
 
 const STYLE = `
-/* Full-screen dim scrim; actual UI is the ~60% centered panel. */
+/* Dim scrim; panel is free-floating (move / resize, geometry remembered). */
 #system-scan-map {
   position: fixed; inset: 0; z-index: 56; display: none;
-  align-items: center; justify-content: center;
-  background: rgba(2, 6, 14, 0.55);
+  background: rgba(var(--ui-bg-scrim-r),var(--ui-bg-scrim-g),var(--ui-bg-scrim-b), 0.55);
   backdrop-filter: blur(2px);
-  font-family: monospace; color: #cfe3ff;
-  padding: 3vh 3vw;
+  font-family: monospace; color: var(--ui-text);
   box-sizing: border-box;
+  pointer-events: auto;
 }
-#system-scan-map.visible { display: flex; }
+#system-scan-map.visible { display: block; }
 #system-scan-map .ssm-panel {
-  width: min(60vw, 1100px);
-  height: min(60vh, 720px);
-  max-width: 100%;
-  max-height: 100%;
+  position: fixed;
   display: flex; flex-direction: column;
+  box-sizing: border-box;
+  min-width: 420px; min-height: 300px;
   background: rgba(4,8,16,0.96);
-  border: 1px solid rgba(111,216,242,0.4);
-  border-right: 3px solid #6fd8f2;
-  box-shadow: 0 0 28px rgba(79,195,217,0.28), 0 12px 40px rgba(0,0,0,0.55);
-  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% 100%, 0 100%);
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 28px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.28);
   overflow: hidden;
 }
+${floatingPanelElevationCss('#system-scan-map .ssm-panel')}
 #system-scan-map .ssm-header {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 16px; border-bottom: 1px solid rgba(111,216,242,0.3);
+  padding: 10px 16px; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.3);
   flex-shrink: 0;
+  cursor: grab; user-select: none; touch-action: none;
 }
+#system-scan-map .ssm-header.dragging { cursor: grabbing; }
 #system-scan-map .ssm-header h2 {
   margin: 0; font-weight: normal; letter-spacing: 2px; font-size: 15px;
-  text-shadow: 0 0 8px rgba(79,195,217,0.5);
+  text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
 }
 #system-scan-map .ssm-header .ssm-sub { font-size: 10px; opacity: 0.65; margin-left: 10px; }
 #system-scan-map button.ssm-close {
@@ -71,27 +79,27 @@ const STYLE = `
 #system-scan-map .ssm-legend {
   position: absolute; right: 10px; bottom: 8px; font-size: 9px;
   pointer-events: none; line-height: 1.5; text-align: right;
-  color: #b8d0f0; opacity: 0.9;
+  color: var(--ui-soft); opacity: 0.9;
 }
 #system-scan-map .ssm-legend .lg-a { color: #e090ff; font-weight: bold; }
-#system-scan-map .ssm-legend .lg-p { color: #5ee6ff; }
+#system-scan-map .ssm-legend .lg-p { color: var(--ui-accent); }
 #system-scan-map .ssm-legend .lg-y { color: #60ff90; }
 #system-scan-map .ssm-side {
-  width: 240px; flex-shrink: 0; border-left: 1px solid rgba(111,216,242,0.25);
+  width: 240px; flex-shrink: 0; border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
   padding: 10px 12px; overflow-y: auto; background: rgba(8,14,24,0.92);
 }
 #system-scan-map .ssm-side h3 {
   margin: 0 0 8px; font-weight: normal; font-size: 11px; letter-spacing: 1.5px;
-  text-transform: uppercase; color: #7fe6ff;
+  text-transform: uppercase; color: var(--ui-accent);
 }
 #system-scan-map .ssm-probe {
-  padding: 8px; margin-bottom: 6px; border: 1px solid rgba(111,216,242,0.25);
-  background: rgba(111,216,242,0.06); font-size: 11px; cursor: pointer;
+  padding: 8px; margin-bottom: 6px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.06); font-size: 11px; cursor: pointer;
 }
-#system-scan-map .ssm-probe.active { border-color: #7fe6ff; box-shadow: 0 0 10px rgba(79,195,217,0.35); }
+#system-scan-map .ssm-probe.active { border-color: var(--ui-accent); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35); }
 #system-scan-map .ssm-probe .lab { opacity: 0.6; font-size: 9px; letter-spacing: 1px; }
 #system-scan-map .ssm-sig {
-  margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(111,216,242,0.2);
+  margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
 }
 #system-scan-map .ssm-sig-row {
   display: grid; grid-template-columns: 1fr auto; gap: 4px; font-size: 11px;
@@ -108,18 +116,19 @@ const STYLE = `
   margin-top: 2px;
 }
 #system-scan-map .ssm-bar > i {
-  display: block; height: 100%; background: linear-gradient(90deg, #6a4cff, #7fe6ff);
+  display: block; height: 100%; background: linear-gradient(90deg, #6a4cff, var(--ui-accent));
   width: 0%;
 }
 #system-scan-map .ssm-actions { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 #system-scan-map .ssm-actions button {
   font-family: monospace; padding: 8px; cursor: pointer; letter-spacing: 0.5px;
-  background: rgba(111,216,242,0.1); border: 1px solid rgba(111,216,242,0.4); color: #cfe3ff;
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
 }
-#system-scan-map .ssm-actions button:hover { background: rgba(111,216,242,0.2); }
+#system-scan-map .ssm-actions button:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2); }
 #system-scan-map .ssm-actions button.primary {
   background: rgba(127,224,160,0.12); border-color: rgba(127,224,160,0.5); color: #bdf5cf;
 }
+${floatingResizeHandleCss('#system-scan-map .float-resize')}
 `
 
 /**
@@ -169,13 +178,37 @@ export function createSystemScanMap(container, gameState, hooks = {}) {
           </div>
         </div>
       </div>
+      <div class="float-resize" title="Resize" aria-label="Resize system scan"></div>
     </div>
   `
   container.appendChild(root)
 
+  const panelEl = root.querySelector('.ssm-panel')
+  const headerEl = root.querySelector('.ssm-header')
   const canvas = root.querySelector('.ssm-canvas')
   const probesEl = root.querySelector('.ssm-probes')
   const sigListEl = root.querySelector('.ssm-sig-list')
+  let open = false
+
+  const floating = wireFloatingPanel({
+    panelEl,
+    headerEl,
+    resizeEl: root.querySelector('.float-resize'),
+    storageKey: GEOM_LS_KEY,
+    minW: 420,
+    minH: 300,
+    isActive: () => open,
+    defaultGeom: () =>
+      defaultPanelGeom({
+        fracW: 0.6,
+        fracH: 0.6,
+        maxW: 1100,
+        maxH: 720,
+        minW: 420,
+        minH: 300,
+        align: 'center'
+      })
+  })
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   const scene = new THREE.Scene()
@@ -210,7 +243,6 @@ export function createSystemScanMap(container, gameState, hooks = {}) {
   /** @type {{ id: number, active: boolean, position: number[], mesh: THREE.Mesh }[]} */
   let probes = []
   let selectedProbe = 0
-  let open = false
   let raf = 0
   let lastT = 0
   let orbitYaw = 0.6
@@ -963,6 +995,7 @@ export function createSystemScanMap(container, gameState, hooks = {}) {
   function show() {
     open = true
     panKeys.clear()
+    floating.restore()
     root.classList.add('visible')
     ensureProbes()
     if (!probes.some((p) => p.active)) deployFormation()

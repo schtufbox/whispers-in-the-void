@@ -11,14 +11,13 @@ const STYLE = `
    Button ends ~230px; 6px gap → top 236. */
 #system-overview {
   position: fixed; top: 236px; right: 16px; width: 176px; max-height: calc(100vh - 252px);
-  z-index: 8; font-family: monospace; color: #cfe3ff; pointer-events: none;
+  z-index: 8; font-family: monospace; color: var(--ui-text); pointer-events: none;
   display: none;
-  background: linear-gradient(135deg, rgba(12,20,36,0.92), rgba(7,12,22,0.82));
-  border: 1px solid rgba(111,216,242,0.45);
-  border-left: 1px solid rgba(111,216,242,0.45);
-  border-right: 3px solid #6fd8f2;
-  box-shadow: 0 0 16px rgba(79,195,217,0.3), inset 0 0 22px rgba(79,195,217,0.06);
-  clip-path: polygon(0 14px, 14px 0, 100% 0, 100% 100%, 0 100%);
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  box-shadow: 0 0 16px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 22px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.06);
   filter:
     drop-shadow(0 2px 3px rgba(0,0,0,0.7))
     drop-shadow(0 4px 10px rgba(0,0,0,0.4));
@@ -27,12 +26,12 @@ const STYLE = `
 /* Clickable only when not in flight-mode (Space to free the mouse). */
 #system-overview.interactive { pointer-events: auto; z-index: 12; }
 #system-overview .ov-head {
-  padding: 6px 8px 5px; border-bottom: 1px solid rgba(111,216,242,0.25);
+  padding: 6px 8px 5px; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
   display: flex; justify-content: space-between; align-items: baseline; gap: 4px;
 }
 #system-overview .ov-title {
-  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #7fe6ff;
-  text-shadow: 0 0 6px rgba(79,195,217,0.5);
+  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ui-accent);
+  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
 }
 #system-overview .ov-hint {
   font-size: 8px; opacity: 0.55; letter-spacing: 0.3px; white-space: nowrap;
@@ -48,8 +47,8 @@ const STYLE = `
 }
 #system-overview.interactive .ov-row { cursor: pointer; }
 #system-overview.interactive .ov-row:hover {
-  background: rgba(111,216,242,0.1);
-  border-left-color: rgba(111,216,242,0.5);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1);
+  border-left-color: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5);
 }
 #system-overview .ov-row.waypoint {
   color: #7fe0a0; border-left-color: #7fe0a0;

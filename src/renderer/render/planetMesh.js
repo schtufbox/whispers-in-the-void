@@ -91,110 +91,18 @@ function buildRocky(radius, rng) {
   return geometry
 }
 
-// Gas giant — smooth surface, horizontal cloud bands by latitude.
+// Gas giant — smooth sphere; cloud belts come from free procedural PBR maps
+// (textures.js makeGasGiantTextureSet). Mild vertex tint for per-body variety.
 function buildGasGiant(radius, rng) {
   const geometry = sphereGeometryForRadius(radius)
-  const hue1 = range(rng, 0, 360) / 360
-  const hue2 = (hue1 + range(rng, 0.06, 0.16)) % 1
-  const base = new THREE.Color().setHSL(hue1, 0.5, 0.55)
-  const accent = new THREE.Color().setHSL(hue2, 0.55, 0.62)
-  const bandFreq = range(rng, 4, 8)
-  const bandPhase = rng() * Math.PI * 2
-
-  const pos = geometry.attributes.position
-  const colors = []
-  const v = new THREE.Vector3()
-  const c = new THREE.Color()
-  for (let i = 0; i < pos.count; i++) {
-    v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize()
-    const band = Math.sin(v.y * bandFreq + bandPhase) * 0.5 + 0.5
-    c.copy(base).lerp(accent, band)
-    colors.push(c.r, c.g, c.b)
-  }
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  const hue = range(rng, 0, 360) / 360
+  const base = new THREE.Color().setHSL(hue, range(rng, 0.25, 0.45), range(rng, 0.52, 0.68))
+  const accent = base.clone().offsetHSL(range(rng, -0.06, 0.08), 0.05, range(rng, -0.08, 0.1))
+  // Soft large-scale tint only — fine cloud detail is in the albedo map.
+  paintVertexColors(geometry, base, accent, seededOffsets(rng), (n) =>
+    Math.max(0, Math.min(1, n * 0.35 + 0.35))
+  )
   return geometry
-}
-
-/**
- * Soft cloud shell for every gas giant. `stormy` adds darker, faster-swirling
- * bands and higher opacity so the world reads as a stormy atmosphere.
- */
-function buildGasGiantAtmosphere(radius, rng, stormy = false) {
-  const shellR = radius * (stormy ? 1.065 : 1.05)
-  // Slightly lower segment count than the surface — soft volume, not terrain.
-  const lat = Math.max(32, Math.min(64, Math.round(radius / 7)))
-  const geometry = new THREE.SphereGeometry(shellR, lat * 2, lat)
-
-  const hue = range(rng, 20, 55) / 360
-  const baseColor = stormy
-    ? new THREE.Color().setHSL(hue, 0.35, 0.55)
-    : new THREE.Color().setHSL(hue, 0.22, 0.78)
-  const stormColor = stormy
-    ? new THREE.Color().setHSL((hue + 0.08) % 1, 0.45, 0.28)
-    : new THREE.Color().setHSL(hue, 0.15, 0.9)
-
-  const material = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    side: THREE.FrontSide,
-    uniforms: {
-      uTime: { value: 0 },
-      uStormy: { value: stormy ? 1.0 : 0.0 },
-      uBase: { value: baseColor },
-      uStorm: { value: stormColor },
-      uOpacity: { value: stormy ? 0.42 : 0.28 }
-    },
-    vertexShader: /* glsl */ `
-      varying vec3 vNormal;
-      varying vec3 vWorldPos;
-      varying vec3 vLocal;
-      void main() {
-        vNormal = normalize(normalMatrix * normal);
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorldPos = wp.xyz;
-        vLocal = normalize(position);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float uTime;
-      uniform float uStormy;
-      uniform vec3 uBase;
-      uniform vec3 uStorm;
-      uniform float uOpacity;
-      varying vec3 vNormal;
-      varying vec3 vWorldPos;
-      varying vec3 vLocal;
-      void main() {
-        vec3 viewDir = normalize(cameraPosition - vWorldPos);
-        float fresnel = pow(1.0 - max(0.0, dot(normalize(vNormal), viewDir)), 2.2);
-        // Soft latitude bands + longitudinal drift (cloud flow).
-        float lat = vLocal.y;
-        float lon = atan(vLocal.z, vLocal.x);
-        float bands = 0.5 + 0.5 * sin(lat * 14.0 + uTime * (0.12 + uStormy * 0.35));
-        float swirl = 0.5 + 0.5 * sin(lon * 3.0 + lat * 6.0 - uTime * (0.25 + uStormy * 0.7));
-        // Stormy: darker blotches / oval storms
-        float oval = 0.0;
-        if (uStormy > 0.5) {
-          float d = length(vec2(lat * 1.4, fract(lon * 0.5 + uTime * 0.05) - 0.5));
-          oval = smoothstep(0.35, 0.08, d) * (0.6 + 0.4 * sin(uTime * 0.8));
-        }
-        float cloud = mix(bands, swirl, 0.45 + uStormy * 0.2) + oval * 0.55;
-        vec3 col = mix(uBase, uStorm, clamp(cloud * (0.55 + uStormy * 0.35), 0.0, 1.0));
-        // Stronger at limb so the atmosphere reads as a volume shell.
-        float alpha = uOpacity * (0.35 + fresnel * 0.75 + cloud * 0.2);
-        alpha = clamp(alpha * (0.55 + fresnel), 0.0, 0.85);
-        gl_FragColor = vec4(col, alpha);
-      }
-    `
-  })
-
-  const shell = new THREE.Mesh(geometry, material)
-  shell.userData.atmosphere = true
-  shell.userData.stormyAtmosphere = stormy
-  // Spin slightly faster/slower than the body for relative cloud drift.
-  shell.userData.atmosphereSpin = (stormy ? 0.018 : 0.008) * (rng() < 0.5 ? 1 : -1)
-  return shell
 }
 
 // Ice world — mostly smooth, pale base with brighter cracks and whiter poles.
@@ -230,8 +138,8 @@ function buildVolcanic(radius, rng) {
 }
 
 // Named rather than a plain array of functions so buildPlanetMesh can look up
-// the matching getSurfaceTextures() entry (gasGiant has none — cloud bands
-// don't suit a tiled photo texture, so it stays purely vertex-colored).
+// the matching getSurfaceTextures() entry (gas giants use free procedural
+// cloud-band maps — same material path as rocky/ice/lush/volcanic).
 const PLANET_ARCHETYPES = {
   rocky: buildRocky,
   gasGiant: buildGasGiant,
@@ -297,25 +205,30 @@ export function buildPlanetMesh(body) {
   const archetypeName = body.kind === 'moon' ? 'rocky' : pick(rng, PLANET_ARCHETYPE_NAMES)
   const geometry = body.kind === 'moon' ? buildMoon(radius, rng) : PLANET_ARCHETYPES[archetypeName](radius, rng)
 
-  // Real CC0 photo textures (see render/textures.js) layered under the
-  // existing per-body vertex-color tint. Smooth shading only — flatShading
-  // and EdgesGeometry were what made bodies read as shattered polyhedra.
+  // Real free textures (ambientCG CC0 for rock/ice/lush/lava; procedural
+  // cloud belts for gas giants) layered under per-body vertex-color tint.
+  // Smooth shading only — flatShading made bodies read as shattered polyhedra.
   const textures = getSurfaceTextures(archetypeName)
+  const isGas = body.kind === 'planet' && archetypeName === 'gasGiant'
   const material = new THREE.MeshStandardMaterial({
     vertexColors: true,
     flatShading: false,
-    roughness: 0.9,
+    roughness: isGas ? 0.78 : 0.9,
     metalness: 0,
-    ...textures
+    ...(textures
+      ? {
+          map: textures.map,
+          normalMap: textures.normalMap,
+          roughnessMap: textures.roughnessMap,
+          normalScale: new THREE.Vector2(isGas ? 0.55 : 0.75, isGas ? 0.55 : 0.75)
+        }
+      : {})
   })
   const mesh = new THREE.Mesh(geometry, material)
-
-  // Every gas giant gets a cloudy atmosphere shell; ~38% are stormy.
-  if (body.kind === 'planet' && archetypeName === 'gasGiant') {
-    const stormy = rng() < 0.38
-    mesh.add(buildGasGiantAtmosphere(radius, rng, stormy))
-    mesh.userData.hasAtmosphere = true
-    mesh.userData.stormyAtmosphere = stormy
+  if (isGas) {
+    // Mark for spin only — cloud detail is on the surface map now (no extra shell).
+    mesh.userData.hasAtmosphere = false
+    mesh.userData.stormyAtmosphere = rng() < 0.38
   }
 
   // ~3% of planets (never moons) get a ring — purely cosmetic, so it's
