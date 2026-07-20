@@ -1,8 +1,19 @@
 # Whispers In The Void
 
-<p align="center">
-  <img src="logo.jpg" alt="Whispers In The Void" width="420" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center" valign="middle">
+      <img src="logo.jpg" alt="Whispers In The Void" width="420" />
+    </td>
+    <td align="center" valign="middle" width="220">
+      <a href="https://ko-fi.com/laughinginpurgatory">
+        <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" />
+      </a>
+      <br/><br/>
+      Please support me on KOFI, every bit helps!
+    </td>
+  </tr>
+</table>
 
 <p align="center">
   <strong>A procedurally generated 3D space trading, combat, and exploration game</strong><br/>
@@ -136,18 +147,6 @@ Main menu and pause menu both open **Settings**: **Sound Effects**, **Music**, *
 - SFX samples: [Kenney Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds) (CC0)
 - Ship/alien PBR textures: [ambientCG](https://ambientcg.com/) (CC0)
 - Station bay kit pieces: [Kenney Space Station Kit](https://kenney.nl/assets/space-station-kit) (CC0); selected props from [Quaternius Ultimate Space Kit](https://quaternius.com/packs/ultimatespacekit.html) (CC0)
-
-## Support
-
-<p align="center">
-  <a href="https://ko-fi.com/laughinginpurgatory">
-    <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi" height="36" />
-  </a>
-</p>
-
-<p align="center">
-  Please support me on KOFI, every bit helps!
-</p>
 
 ## License / credit
 
