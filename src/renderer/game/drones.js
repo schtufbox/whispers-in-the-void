@@ -2,6 +2,7 @@ import { getDrone, droneBayCount, DEFAULT_DRONE_ID } from '../data/drones.js'
 import { getShipClass } from '../data/shipClasses.js'
 import { getWeapon } from '../data/weapons.js'
 import { playerSkillBonuses } from './skills.js'
+import { effectiveDroneBayCount } from '../data/accessories.js'
 
 // Combat drones are **player-only**. NPCs never summon, carry, or fire drones —
 // even if they fly a hull class that has droneBays for the player shipyard.
@@ -36,7 +37,8 @@ export function ensureDrones(ship, shipClass = null) {
     return ship.drones
   }
   const cls = shipClass ?? getShipClass(ship.classId)
-  const bays = droneBayCount(cls)
+  // Player ships may gain a bay from Extra Drone Bay accessory.
+  const bays = effectiveDroneBayCount(ship, cls)
   ship.drones ??= []
   // Drop invalid entries and any past bay capacity (no free refill).
   ship.drones = ship.drones.filter((d) => d && typeof d === 'object')
@@ -53,7 +55,7 @@ export function ensureDrones(ship, shipClass = null) {
 export function freeDroneBayCount(ship, shipClass = null) {
   if (!ship) return 0
   const cls = shipClass ?? getShipClass(ship.classId)
-  const bays = droneBayCount(cls)
+  const bays = effectiveDroneBayCount(ship, cls)
   ensureDrones(ship, cls)
   return Math.max(0, bays - ship.drones.length)
 }
@@ -65,7 +67,7 @@ export function freeDroneBayCount(ship, shipClass = null) {
 export function installDroneOnShip(ship, typeId = DEFAULT_DRONE_ID, shipClass = null) {
   if (!ship) throw new Error('No ship')
   const cls = shipClass ?? getShipClass(ship.classId)
-  const bays = droneBayCount(cls)
+  const bays = effectiveDroneBayCount(ship, cls)
   if (bays < 1) throw new Error('No drone bays on this hull')
   ensureDrones(ship, cls)
   if (ship.drones.length >= bays) throw new Error('All drone bays are full')

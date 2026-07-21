@@ -182,7 +182,7 @@ export function createDeathScreen(container, onReturnToMenu) {
       root.querySelector('.summary').innerHTML = `
         Final credits: ${Math.floor(credits || 0)}cr<br/>
         Reputation earned: ${reputation ?? 0}<br/>
-        There is no respawn for ${name}. Your last save is still available to continue from.
+        ${name} is gone. Load your last save — or jump to a clone if you left one at a Clone Bay.
       `
 
       root.querySelector('.pun').textContent = pickPun()

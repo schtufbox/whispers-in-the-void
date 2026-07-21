@@ -49,11 +49,16 @@ import {
 import { spawnHitImpact, updateHitImpact, disposeHitImpact, preloadHitImpactFx } from './render/hitImpactFx.js'
 import { createMissileTrailSystem } from './render/missileTrailFx.js'
 import { createGameState } from './game/state.js'
-import { CANONICAL_GALAXY_SEED } from './procgen/galaxy.js'
+import {
+  CANONICAL_GALAXY_SEED,
+  WHISPERS_SYSTEM_NAME,
+  generateGalaxy
+} from './procgen/galaxy.js'
 import { DEV_TEST_SETUP, createDevTestGameState } from './game/devTestSetup.js'
 
 import { advanceGameClock, reanchorGameClock } from './game/gameClock.js'
 import { createInputState, createMouseAimState, updateFlight } from './game/flight.js'
+import { effectiveMaxSpeed, effectiveMaxShields, effectiveMaxArmor } from './data/accessories.js'
 import { updateSupercruise, ignoreBodyAsCruiseObstacle } from './game/supercruise.js'
 import {
   spawnEncounterNear,
@@ -359,7 +364,10 @@ function hideHudGlitch(el) {
 const AMBIENT_SPAWN_INTERVAL_S = 90
 const AMBIENT_NPC_CAP = 3
 // Ship/wreck/rock radar contacts (planets/waypoint may still paint farther).
-const RADAR_RANGE = 100000
+// 10 km (1 unit = 1 m).
+const RADAR_RANGE = 10000
+// Floating prompts sit just under the bare radar canvas (top 0, h 160, w 420).
+const BELOW_RADAR_TOP_PX = 168
 const IMPACT_FLASH_TTL = 0.25
 // Warp-gate jump: fly into origin aperture → spool/tunnel → emerge from dest aperture.
 const JUMP_ENTER_GATE_S = 1.55
@@ -1164,58 +1172,132 @@ const droneMeshes = new Map()
 let nextAmbientSpawnAt = 0
 
 let menuStarMesh = null
+/** @type {THREE.Object3D[]} */
+let menuBodyMeshes = []
 let menuAnimT = 0
+let menuActive = false
+/** Cached Whispers system from CANONICAL_GALAXY_SEED (same layout as New Game). */
+let menuWhispersSystem = null
+// Camera frames the real-scale system (companions + SerNub can sit ~0.5M out).
+let menuOrbitRadius = 900000
+let menuOrbitHeight = 180000
 
-// Real multi-stars (see render/starMesh.js) are thousands of units across
-// post-STAR_SIZE_SCALE — far too big for this tiny fixed-camera stage. Rather
-// than a hardcoded shrink factor (which would need re-tuning every time
-// STAR_SIZE_SCALE changes, as happened once already), the built mesh is
-// measured with a bounding sphere and normalized to a fixed on-screen size —
-// self-adjusting regardless of how big the underlying game-scale stars get.
-// The scale still applies to the same pre-scale local coordinates
-// updateStarMesh already animates in (orbit radius, spark positions, etc.),
-// so nothing about that logic needs to know it's being shown shrunk down.
-const MENU_STAR_DISPLAY_RADIUS = 26
-// Star at origin, dead screen-center — title sits above it, menu over it.
-const MENU_STAR_CENTER = new THREE.Vector3(0, 0, 0)
+const MENU_ORBIT_PERIOD_S = 72
+const MENU_LOOK_AT = new THREE.Vector3(0, 0, 0)
+
+function getMenuWhispersSystem() {
+  if (menuWhispersSystem) return menuWhispersSystem
+  // Same seed / layout as createGameState — star id and bodies match in-game Whispers.
+  const galaxy = generateGalaxy(CANONICAL_GALAXY_SEED)
+  menuWhispersSystem =
+    galaxy.systems.find((s) => s.name === WHISPERS_SYSTEM_NAME) ?? galaxy.systems[0]
+  return menuWhispersSystem
+}
+
+function clearMenuBodies() {
+  for (const mesh of menuBodyMeshes) scene.remove(mesh)
+  menuBodyMeshes = []
+}
+
+function applyMenuStarAmbient() {
+  const starColor = menuStarMesh?.userData?.stars?.[0]?.color
+  setStarfieldStarTint(starfield, starColor ?? null)
+  if (starColor?.clone) {
+    const bg = starColor.clone().lerp(new THREE.Color(0x05070d), 0.94)
+    bg.multiplyScalar(0.42)
+    scene.background = bg
+  } else {
+    scene.background = new THREE.Color(0x05070d)
+  }
+}
+
+/** Real-scale Whispers trinary + planets / moons / palace / gates for the title. */
+function buildMenuSystemVisuals(system) {
+  if (!system || !menuActive || gameState) return
+
+  if (menuStarMesh) scene.remove(menuStarMesh)
+  clearMenuBodies()
+
+  // No forceType / fake id — same buildStarMesh path as loadBodiesForCurrentSystem.
+  menuStarMesh = buildStarMesh(system)
+  scene.add(menuStarMesh)
+  applyMenuStarAmbient()
+
+  for (const body of system.bodies) {
+    const mesh = buildBodyMesh(body, system)
+    mesh.position.fromArray(body.position)
+    if (body.kind === 'settlement' && body.surfaceOffset) {
+      orientSettlementOnSurface(mesh, body.surfaceOffset)
+    }
+    menuBodyMeshes.push(mesh)
+    scene.add(mesh)
+  }
+
+  // Frame companions (halo) and outermost body so the whole system reads.
+  let maxR = 0
+  for (const star of menuStarMesh.userData.stars ?? []) {
+    const reach = (star.radius ?? 0) * 3.6
+    maxR = star.orbit ? Math.max(maxR, star.orbit.radius + reach) : Math.max(maxR, reach)
+  }
+  for (const body of system.bodies) {
+    const r = Math.hypot(body.position[0], body.position[1], body.position[2])
+    const shell =
+      body.radius ??
+      (body.kind === 'station' || body.kind === 'settlement' || body.kind === 'warpGate' ? 4000 : 0)
+    maxR = Math.max(maxR, r + shell)
+  }
+  // Frame companions closely — title wants the trinary large, system still visible behind.
+  menuOrbitRadius = Math.max(maxR * 0.42, 35000)
+  menuOrbitHeight = menuOrbitRadius * 0.12
+}
 
 function startMenuBackground() {
-  if (menuStarMesh) return
-  // Neutral starfield on the title; in-system sun hue is applied on loadBodies.
+  if (menuActive) return
+  menuActive = true
+  menuAnimT = 0
   setStarfieldStarTint(starfield, null)
   scene.background = new THREE.Color(0x05070d)
-  // Same trinary path as Whispers (forceType + starType so components/rings match).
-  menuStarMesh = buildStarMesh({ id: 'menu-whispers-trinary', starType: 'trinary' }, 'trinary')
-  const bounds = new THREE.Box3().setFromObject(menuStarMesh).getBoundingSphere(new THREE.Sphere())
-  menuStarMesh.scale.setScalar(MENU_STAR_DISPLAY_RADIUS / bounds.radius)
-  menuStarMesh.position.copy(MENU_STAR_CENTER)
-  scene.add(menuStarMesh)
-  menuAnimT = 0
   audio.playTitleMusic()
+
+  const mount = () => {
+    if (!menuActive || gameState) return
+    buildMenuSystemVisuals(getMenuWhispersSystem())
+  }
+  // Yield so the menu chrome can paint before ~2s galaxy gen on cold start.
+  if (menuWhispersSystem) mount()
+  else setTimeout(mount, 0)
 }
 
 function stopMenuBackground() {
+  menuActive = false
   if (menuStarMesh) scene.remove(menuStarMesh)
   menuStarMesh = null
+  clearMenuBodies()
+  setStarfieldStarTint(starfield, null)
+  scene.background = new THREE.Color(0x05070d)
   audio.stopTitleMusic()
 }
 
-const MENU_ORBIT_PERIOD_S = 42
-const MENU_ORBIT_RADIUS = 48
-const MENU_ORBIT_HEIGHT = 10
-
 function updateMenuBackground(dt) {
-  if (!menuStarMesh) return
+  if (!menuActive) return
   menuAnimT += dt
-  updateStarMesh(menuStarMesh, menuAnimT, dt, camera)
-  // Lazy orbit; lookAt keeps the trinary centered under the UI.
+  if (menuStarMesh) updateStarMesh(menuStarMesh, menuAnimT, dt, camera)
+  for (const mesh of menuBodyMeshes) {
+    if (mesh.userData?.kind === 'warpGate') {
+      updateWarpGateMesh(mesh, dt, menuAnimT)
+    } else {
+      updateStationMesh(mesh, menuAnimT, dt)
+      updatePlanetAtmosphere(mesh, menuAnimT, dt)
+    }
+  }
+  // Slow orbit around the real system origin (primary + companions at true scale).
   const angle = (menuAnimT / MENU_ORBIT_PERIOD_S) * Math.PI * 2
   camera.position.set(
-    MENU_STAR_CENTER.x + Math.cos(angle) * MENU_ORBIT_RADIUS,
-    MENU_STAR_CENTER.y + MENU_ORBIT_HEIGHT,
-    MENU_STAR_CENTER.z + Math.sin(angle) * MENU_ORBIT_RADIUS
+    Math.cos(angle) * menuOrbitRadius,
+    menuOrbitHeight,
+    Math.sin(angle) * menuOrbitRadius
   )
-  camera.lookAt(MENU_STAR_CENTER)
+  camera.lookAt(MENU_LOOK_AT)
 }
 
 function showGameSavedToast(durationMs = 2200) {
@@ -2128,7 +2210,36 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
     // Bought ships only become active via Storage activate — rebuild the
     // visual hull so a class swap doesn't keep looking like the previous ship.
     onPlayerShipChanged: () => rebuildPlayerShipMesh(),
-    onStorageChanged: () => inventoryUI?.refresh?.()
+    onStorageChanged: () => inventoryUI?.refresh?.(),
+    onCloneTravel: (result) => {
+      // Leave bay UI / interior if we jumped while docked.
+      if (docked || dockEffect) {
+        dockEffect = null
+        docked = false
+        dockedApproach = null
+        clearDockedSaveFields()
+        try {
+          swapToExterior()
+        } catch {
+          /* already exterior */
+        }
+      }
+      if (result?.systemChanged) {
+        loadBodiesForCurrentSystem()
+        // Re-seed ambient traffic / missions for the destination system.
+        try {
+          ensureBountyNpcsForSystem(gameState, gameState.player.currentSystemId, Math.random)
+        } catch {
+          /* */
+        }
+      }
+      if (playerMesh) syncMeshToEntity(playerMesh, gameState.player.ship)
+      snapChaseCamera(camera, gameState.player.ship)
+      hud?.setDocked(false)
+      systemOverview?.show()
+      flashToast('Clone jump complete', 3.5)
+      reenterFlightMode()
+    }
   })
   pauseMenu = createPauseMenu(appEl, {
     onResume: () => {
@@ -2207,16 +2318,18 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   const floatText = (extra = '') =>
     `font-family:monospace;background:transparent;border:none;box-shadow:none;padding:0;text-shadow:${FLOAT_TEXT_SHADOW};filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));${extra}`
 
+  // Interaction prompts — stacked just below the top-center radar (see updateBelowRadarPrompts).
+  const belowRadarCss = `position:fixed;left:50%;top:${BELOW_RADAR_TOP_PX}px;transform:translateX(-50%);display:none;white-space:nowrap;z-index:20;text-align:center;`
   dockPromptEl = document.createElement('div')
   dockPromptEl.id = 'dock-prompt'
   dockPromptEl.style.cssText =
-    `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);color:var(--ui-text);display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
+    `${belowRadarCss}color:var(--ui-text);${floatText('font-size:13px;letter-spacing:0.5px;')}`
   appEl.appendChild(dockPromptEl)
 
   probePromptEl = document.createElement('div')
   probePromptEl.id = 'probe-prompt'
   probePromptEl.style.cssText =
-    `position:fixed;bottom:120px;left:50%;transform:translateX(-50%);color:var(--ui-text);display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
+    `${belowRadarCss}color:var(--ui-text);${floatText('font-size:13px;letter-spacing:0.5px;')}`
   appEl.appendChild(probePromptEl)
 
   // Floating multi-line probe return readout (not a blocking alert dialog).
@@ -2224,7 +2337,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   probeResultsEl.id = 'probe-results'
   probeResultsEl.style.cssText = [
     'position:fixed',
-    'top:18%',
+    `top:${BELOW_RADAR_TOP_PX}px`,
     'left:50%',
     'transform:translateX(-50%)',
     'max-width:min(520px,90vw)',
@@ -2276,7 +2389,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   wreckPromptEl = document.createElement('div')
   wreckPromptEl.id = 'wreck-prompt'
   wreckPromptEl.style.cssText =
-    `position:fixed;bottom:240px;left:50%;transform:translateX(-50%);color:#ff8a3d;display:none;${floatText('font-size:13px;letter-spacing:0.5px;')}`
+    `${belowRadarCss}color:#ff8a3d;${floatText('font-size:13px;letter-spacing:0.5px;')}`
   wreckPromptEl.textContent = 'Press F to salvage wreck'
   appEl.appendChild(wreckPromptEl)
 
@@ -2287,12 +2400,12 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
     `position:fixed;top:calc(50% - 52px);left:50%;transform:translateX(-50%);z-index:15;pointer-events:none;color:#e0c878;display:none;${floatText('font-size:13px;letter-spacing:0.4px;text-align:center;max-width:min(640px,92vw);')}`
   appEl.appendChild(miningToastEl)
 
-  // Craft start/complete floating text — top-center, above docking UI (z-index 50).
+  // Craft start/complete floating text — just below radar.
   // Wall-clock hide so it works while docked (simTime freezes in the bay).
   craftToastEl = document.createElement('div')
   craftToastEl.id = 'craft-toast'
   craftToastEl.style.cssText =
-    `position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:none;max-width:min(720px,90vw);text-align:center;color:#a8f0c8;${floatText('font-size:13px;letter-spacing:0.4px;')}`
+    `position:fixed;top:${BELOW_RADAR_TOP_PX}px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:none;max-width:min(720px,90vw);text-align:center;color:#a8f0c8;${floatText('font-size:13px;letter-spacing:0.4px;')}`
   appEl.appendChild(craftToastEl)
 
   // Above pause menu (z 60) — yellow glitch "GAME SAVED" confirmation.
@@ -2355,7 +2468,7 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   factionToastEl = document.createElement('div')
   factionToastEl.id = 'faction-toast'
   factionToastEl.style.cssText =
-    `position:fixed;bottom:200px;left:50%;transform:translateX(-50%);color:#7fe0a0;display:none;${floatText('font-size:13px;letter-spacing:0.4px;text-align:center;max-width:min(640px,92vw);')}`
+    `${belowRadarCss}color:#7fe0a0;max-width:min(640px,92vw);white-space:normal;${floatText('font-size:13px;letter-spacing:0.4px;')}`
   appEl.appendChild(factionToastEl)
 
   waypointEl = document.createElement('div')
@@ -2398,12 +2511,12 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   `
   appEl.appendChild(targetDirEl)
 
-  // Drive status (supercruise / hyperdrive) — below system + optional nearest-body
-  // banner (that block can grow to ~100px tall). Glitch enter/exit + chromatic slices.
+  // Drive status (supercruise / hyperdrive) — just below radar.
+  // Glitch enter/exit + chromatic slices.
   cruiseIndicatorEl = document.createElement('div')
   cruiseIndicatorEl.id = 'cruise-indicator'
   cruiseIndicatorEl.style.cssText =
-    `position:fixed;top:118px;left:50%;transform:translateX(-50%);color:#ffd246;display:none;${floatText('font-size:13px;letter-spacing:2.5px;font-weight:600;')}`
+    `position:fixed;top:${BELOW_RADAR_TOP_PX}px;left:50%;transform:translateX(-50%);color:#ffd246;display:none;z-index:20;${floatText('font-size:13px;letter-spacing:2.5px;font-weight:600;')}`
   setHudGlitchText(cruiseIndicatorEl, 'SUPERCRUISE ENGAGED')
   appEl.appendChild(cruiseIndicatorEl)
 
@@ -3152,85 +3265,158 @@ function updateProbeEffect(dt) {
   }
 }
 
-// The chase camera sits behind+above the ship via lookAt() with a world-up
-// vector. For a camera to stay right-side-up while its view direction
-// matches the ship's forward, its own "right" ends up equal to the ship's
-// LOCAL -X (a forced consequence of the camera's -Z-forward convention vs.
-// the ship's +Z-forward convention — proven by comparing camera.matrixWorld's
-// right-vector column against the ship's local +X under this setup). So
-// ship-local +X actually renders on screen-left, not screen-right; negate x
-// here so radar "right" matches what the player actually sees on screen.
-function computeRadarContacts() {
-  const shipPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
-  const shipQuatInverse = new THREE.Quaternion().fromArray(gameState.player.ship.quaternion).invert()
-  const contacts = []
+/** Surface settlements sit on a planet/moon — radar shows the host only. */
+function isPlanetSurfaceSettlement(body) {
+  if (body.kind !== 'settlement') return false
+  if (body.inAsteroidField) return false
+  return !!body.parentId || !!body.surfaceOffset
+}
 
+function radarKindForBody(body, isWaypoint, isMission) {
+  // Warp gates always paint purple (not mission/waypoint overrides).
+  if (body.kind === 'warpGate') return 'gate'
+  if (isWaypoint) return 'waypoint'
+  if (isMission) return 'mission'
+  if (body.kind === 'station') return 'station'
+  if (body.kind === 'planet') return 'planet'
+  if (body.kind === 'moon') return 'moon'
+  if (body.kind === 'asteroidField') return 'belt'
+  if (body.kind === 'settlement') return 'station'
+  return 'body'
+}
+
+// Cap individual belt rocks painted on radar (nearest first).
+const RADAR_MAX_ASTEROID_ROCKS = 48
+
+// Scratch for ship-relative radar (heading-up: rotates with the ship).
+const _radarShipPos = new THREE.Vector3()
+const _radarRel = new THREE.Vector3()
+const _radarQuatInv = new THREE.Quaternion()
+
+/**
+ * Heading-up radar: contacts in ship-local space so the view turns with the hull.
+ * Ship +Z = forward (F), +Y = up, +X = right; negate x for on-screen right.
+ * @param {boolean} [targeted] Tab-lock highlight on radar
+ */
+function pushRadarContact(contacts, worldPos, kind, maxRange = RADAR_RANGE, targeted = false) {
+  _radarRel.fromArray(worldPos).sub(_radarShipPos)
+  if (_radarRel.length() > maxRange) return false
+  _radarRel.applyQuaternion(_radarQuatInv)
+  contacts.push({ x: -_radarRel.x, y: _radarRel.y, z: _radarRel.z, kind, targeted: !!targeted })
+  return true
+}
+
+function computeRadarContacts() {
+  const ship = gameState.player.ship
+  _radarShipPos.fromArray(ship.position)
+  _radarQuatInv.fromArray(ship.quaternion).invert()
+  const contacts = []
+  const t = currentTarget
+
+  // Ships / NPCs (yellow on radar)
   for (const npc of gameState.npcs) {
     if (npc.destroyed) continue
-    const rel = new THREE.Vector3().fromArray(npc.position).sub(shipPos)
-    if (rel.length() > RADAR_RANGE) continue
-    rel.applyQuaternion(shipQuatInverse)
-    contacts.push({ x: -rel.x, z: rel.z, kind: isHostileToPlayer(npc) ? 'hostile' : 'neutral' })
+    const targeted = t?.kind === 'npc' && t.id === npc.id
+    pushRadarContact(
+      contacts,
+      npc.position,
+      isHostileToPlayer(npc) ? 'hostile' : 'neutral',
+      RADAR_RANGE,
+      targeted
+    )
   }
 
   const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-  const missionBodies = missionMarkedBodyIds(gameState, currentSystem.id)
-  const waypointBodyId = gameState.player.waypointBodyId
-  for (const body of currentSystem.bodies) {
-    const rel = new THREE.Vector3().fromArray(body.position).sub(shipPos)
-    const isWaypoint = body.id === waypointBodyId
-    // Selected waypoint always paints on radar; other bodies stay range-limited.
-    if (!isWaypoint && rel.length() > RADAR_RANGE) continue
-    rel.applyQuaternion(shipQuatInverse)
-    let kind = 'body'
-    if (isWaypoint) kind = 'waypoint'
-    else if (missionBodies.has(body.id)) kind = 'mission'
-    contacts.push({ x: -rel.x, z: rel.z, kind })
+  if (!currentSystem) return contacts
+
+  // System star / sun at origin (green with planets/moons)
+  {
+    const isStarWp = gameState.player.waypointBodyId === SYSTEM_STAR_WAYPOINT_ID
+    const targeted = t?.kind === 'star'
+    if (isStarWp || targeted || _radarShipPos.length() <= RADAR_RANGE) {
+      pushRadarContact(
+        contacts,
+        [0, 0, 0],
+        isStarWp ? 'waypoint' : 'sun',
+        isStarWp || targeted ? Infinity : RADAR_RANGE,
+        targeted
+      )
+    }
   }
 
-  // Free-space mission waypoint (bounty hunt marker) when no body is set —
-  // always shown so a tracked target isn't lost past radar range.
+  const missionBodies = missionMarkedBodyIds(gameState, currentSystem.id)
+  const waypointBodyId = gameState.player.waypointBodyId
+
+  // Planets, moons, stations, belts, gates — not surface settlements (host only).
+  for (const body of currentSystem.bodies) {
+    if (isPlanetSurfaceSettlement(body)) continue
+    const isWaypoint = body.id === waypointBodyId
+    const targeted = t?.kind === 'body' && t.id === body.id
+    pushRadarContact(
+      contacts,
+      body.position,
+      radarKindForBody(body, isWaypoint, missionBodies.has(body.id)),
+      isWaypoint || targeted ? Infinity : RADAR_RANGE,
+      targeted
+    )
+
+    // Nearby belt rocks so asteroids read as a field, not a single pin.
+    if (body.kind === 'asteroidField') {
+      const rocks = getAsteroidRocks(body)
+      if (rocks?.length) {
+        const near = []
+        for (let i = 0; i < rocks.length; i++) {
+          if (!isRockAlive(gameState, body.id, i)) continue
+          const wp = asteroidWorldPosition(body, rocks[i])
+          const d = Math.hypot(
+            wp[0] - _radarShipPos.x,
+            wp[1] - _radarShipPos.y,
+            wp[2] - _radarShipPos.z
+          )
+          const rockTargeted = t?.kind === 'asteroid' && t.fieldId === body.id && t.index === i
+          if (d > RADAR_RANGE && !rockTargeted) continue
+          near.push({ wp, d, i, rockTargeted })
+        }
+        near.sort((a, b) => a.d - b.d)
+        // Always include locked rock even if beyond the nearest-N cap.
+        const picked = near.slice(0, RADAR_MAX_ASTEROID_ROCKS)
+        if (t?.kind === 'asteroid' && t.fieldId === body.id) {
+          const locked = near.find((n) => n.i === t.index)
+          if (locked && !picked.some((n) => n.i === locked.i)) picked.push(locked)
+        }
+        for (const n of picked) {
+          pushRadarContact(contacts, n.wp, 'asteroid', Infinity, n.rockTargeted)
+        }
+      }
+    }
+  }
+
+  // Free-space mission waypoint (bounty hunt marker) when no body is set.
   if (gameState.player.waypointPosition && !gameState.player.waypointBodyId) {
-    const rel = new THREE.Vector3().fromArray(gameState.player.waypointPosition).sub(shipPos)
-    rel.applyQuaternion(shipQuatInverse)
-    contacts.push({ x: -rel.x, z: rel.z, kind: 'mission' })
+    const targeted = t?.kind === 'navpoint'
+    pushRadarContact(contacts, gameState.player.waypointPosition, 'mission', Infinity, targeted)
   }
 
   for (const wreck of gameState.wrecks) {
-    const rel = new THREE.Vector3().fromArray(wreck.position).sub(shipPos)
-    if (rel.length() > RADAR_RANGE) continue
-    rel.applyQuaternion(shipQuatInverse)
-    contacts.push({ x: -rel.x, z: rel.z, kind: 'wreck' })
+    const targeted = t?.kind === 'wreck' && t.id === wreck.id
+    pushRadarContact(contacts, wreck.position, 'wreck', targeted ? Infinity : RADAR_RANGE, targeted)
   }
 
   // Fully scanned Spatial Anomaly sites (relic, nodules, exposed alien base).
-  if (currentSystem) {
-    ensureSystemAnomalies(currentSystem, gameState.galaxy)
-    for (const a of currentSystem.spatialAnomalies ?? []) {
-      if (!a.fullyScanned) continue
-      if (a.status === 'completed' || a.status === 'despawning') continue
-      if (a.type === 'datacore') {
-        {
-          const rel = new THREE.Vector3().fromArray(a.position).sub(shipPos)
-          if (rel.length() <= RADAR_RANGE) {
-            rel.applyQuaternion(shipQuatInverse)
-            contacts.push({ x: -rel.x, z: rel.z, kind: 'anomaly' })
-          }
-        }
-        for (const n of a.nodules ?? []) {
-          if (n.status === 'destroyed') continue
-          const rel = new THREE.Vector3().fromArray(n.position).sub(shipPos)
-          if (rel.length() > RADAR_RANGE) continue
-          rel.applyQuaternion(shipQuatInverse)
-          contacts.push({ x: -rel.x, z: rel.z, kind: 'nodule' })
-        }
-      } else if (a.type === 'alien_incursion' && alienSiteRuntime?.anomalyId === a.id) {
-        const rel = new THREE.Vector3().fromArray(a.position).sub(shipPos)
-        if (rel.length() <= RADAR_RANGE) {
-          rel.applyQuaternion(shipQuatInverse)
-          contacts.push({ x: -rel.x, z: rel.z, kind: 'alien_base' })
-        }
+  ensureSystemAnomalies(currentSystem, gameState.galaxy)
+  for (const a of currentSystem.spatialAnomalies ?? []) {
+    if (!a.fullyScanned) continue
+    if (a.status === 'completed' || a.status === 'despawning') continue
+    if (a.type === 'datacore') {
+      const targeted = t?.kind === 'anomaly' && t.id === a.id
+      pushRadarContact(contacts, a.position, 'datacore', targeted ? Infinity : RADAR_RANGE, targeted)
+      for (const n of a.nodules ?? []) {
+        if (n.status === 'destroyed') continue
+        pushRadarContact(contacts, n.position, 'nodule')
       }
+    } else if (a.type === 'alien_incursion' && alienSiteRuntime?.anomalyId === a.id) {
+      const targeted = t?.kind === 'anomaly' && t.id === a.id
+      pushRadarContact(contacts, a.position, 'alien_base', targeted ? Infinity : RADAR_RANGE, targeted)
     }
   }
 
@@ -4179,7 +4365,8 @@ function beginDocking(body) {
   exitFlightMode()
   dockPromptEl.style.display = 'none'
   probePromptEl.style.display = 'none'
-  jumpFlashEl.style.background = DOCK_FLASH_COLOR
+  // Black out during the approach → bay cut (cyan flash was confusing).
+  jumpFlashEl.style.background = '#000'
   jumpFlashEl.style.opacity = '0'
   jumpFlashEl.style.display = 'block'
   audio.playDock()
@@ -4217,7 +4404,7 @@ function beginUndocking() {
     awayQuat,
     backAwayPoint
   }
-  jumpFlashEl.style.background = DOCK_FLASH_COLOR
+  jumpFlashEl.style.background = '#000'
   jumpFlashEl.style.opacity = '0'
   jumpFlashEl.style.display = 'block'
   audio.playUndock()
@@ -4241,6 +4428,9 @@ function updateDockEffect(dt) {
   const approachEnd = DOCK_ANIM_DURATION_S * 0.42
   const alignEnd = DOCK_ANIM_DURATION_S * 0.55
   const swapAt = alignEnd
+  // Longer black hold through the scene swap, then fade back as motion ends.
+  const fadeInEnd = DOCK_ANIM_DURATION_S * 0.22
+  const blackHoldEnd = DOCK_ANIM_DURATION_S * 0.72
   const flashWindow = DOCK_FLASH_FADE_S
 
   if (!dockEffect.undocking) {
@@ -4327,30 +4517,24 @@ function updateDockEffect(dt) {
     syncChaseCamera(camera, gameState.player.ship)
   }
 
-  // Bright flash centered on the scene swap, fading out over flashWindow.
-  const sinceSwap = dockEffect.elapsed - swapAt
-  if (dockEffect.undocking) {
-    const half = DOCK_ANIM_DURATION_S / 2
-    const uSince = dockEffect.elapsed - half
-    if (uSince >= 0 && uSince < flashWindow) {
-      jumpFlashEl.style.opacity = String(Math.max(0, 1 - uSince / flashWindow))
-    } else if (uSince >= flashWindow) {
-      jumpFlashEl.style.opacity = '0'
-    } else {
-      const untilSwap = half - dockEffect.elapsed
-      jumpFlashEl.style.opacity = untilSwap < 0.2 ? String(1 - untilSwap / 0.2) : '0'
+  // Full black veil: fade in → hold across interior/exterior swap → fade out.
+  {
+    const t = dockEffect.elapsed
+    const total = DOCK_ANIM_DURATION_S
+    let op = 0
+    if (t < fadeInEnd) {
+      op = easeInOutCubic(t / Math.max(1e-6, fadeInEnd))
+    } else if (t < blackHoldEnd) {
+      op = 1
+    } else if (t < total) {
+      op = 1 - easeInOutCubic((t - blackHoldEnd) / Math.max(1e-6, total - blackHoldEnd))
     }
-  } else if (sinceSwap >= 0 && sinceSwap < flashWindow) {
-    jumpFlashEl.style.opacity = String(Math.max(0, 1 - sinceSwap / flashWindow))
-  } else if (sinceSwap >= flashWindow) {
-    jumpFlashEl.style.opacity = '0'
-  } else {
-    // Soft ramp-up into the swap so the cut isn't a hard pop.
-    const untilSwap = swapAt - dockEffect.elapsed
-    jumpFlashEl.style.opacity = untilSwap < 0.22 ? String(1 - untilSwap / 0.22) : '0'
+    jumpFlashEl.style.background = '#000'
+    jumpFlashEl.style.opacity = String(Math.max(0, Math.min(1, op)))
   }
 
   if (dockEffect.elapsed >= DOCK_ANIM_DURATION_S) {
+    jumpFlashEl.style.opacity = '0'
     jumpFlashEl.style.display = 'none'
     if (!dockEffect.undocking) {
       const finishedBody = dockEffect.body
@@ -5516,6 +5700,31 @@ const _wpTarget = new THREE.Vector3()
 const _wpShip = new THREE.Vector3()
 const _wpCamLocal = new THREE.Vector3()
 const _wpProj = new THREE.Vector3()
+/**
+ * Stack dock / probe / wreck / faction / cruise / craft floating lines just
+ * below the top-center radar (fixed HUD band, not world-anchored).
+ */
+function updateBelowRadarPrompts() {
+  const visible = [
+    cruiseIndicatorEl,
+    craftToastEl,
+    factionToastEl,
+    dockPromptEl,
+    probePromptEl,
+    wreckPromptEl,
+    probeResultsEl
+  ].filter((el) => el && el.style.display === 'block')
+  if (!visible.length) return
+
+  let y = BELOW_RADAR_TOP_PX
+  for (const el of visible) {
+    el.style.left = '50%'
+    el.style.top = `${y}px`
+    el.style.bottom = 'auto'
+    el.style.transform = 'translateX(-50%)'
+    y += (el.offsetHeight || 18) + 6
+  }
+}
 
 function updateWaypointIndicator() {
   const wp = getActiveWaypoint()
@@ -5805,7 +6014,11 @@ function animate() {
         flightMode ? keys : EMPTY_KEYS,
         mouseAim,
         dt,
-        { speedMult: skillB.speedMult, turnMult: skillB.turnMult }
+        {
+          speedMult: skillB.speedMult,
+          turnMult: skillB.turnMult,
+          maxSpeed: effectiveMaxSpeed(gameState.player.ship, playerShipClass)
+        }
       )
     }
     thrustState = !flightMode ? null : keys.has('KeyW') ? 'accel' : keys.has('KeyS') ? 'brake' : null
@@ -5922,7 +6135,7 @@ function animate() {
     hullLength: playerShipClass.hull.length
   })
   damageEffects.update(dt, {
-    armorFraction: gameState.player.ship.armor / playerShipClass.stats.armor,
+    armorFraction: gameState.player.ship.armor / Math.max(1, effectiveMaxArmor(gameState.player.ship, playerShipClass)),
     hullFraction: gameState.player.ship.hull / playerShipClass.stats.hull,
     shipPos: new THREE.Vector3().fromArray(gameState.player.ship.position),
     shipQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
@@ -6267,6 +6480,11 @@ function animate() {
   const hudSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
   if (hudSystem) ensureSystemSecurity(hudSystem)
   const nearestHudBody = findNearestHudBody()
+  {
+    const ps = gameState.player.ship
+    ps.maxShields = effectiveMaxShields(ps, playerShipClass)
+    ps.maxArmor = effectiveMaxArmor(ps, playerShipClass)
+  }
   hud.update(
     gameState.player.ship,
     playerShipClass,
@@ -6400,6 +6618,9 @@ function animate() {
     hideHudGlitch(probeResultsEl)
   }
 
+  // Dock / probe / wreck / faction / cruise / craft lines sit under the radar.
+  updateBelowRadarPrompts()
+
   updateWaypointIndicator()
   updateCrosshair()
   updateTargetIndicator()
@@ -6420,7 +6641,11 @@ function animate() {
 animate()
 
 // Kick station + interior GLB preload early so New Game / Load hit ready models.
-preloadStationModels()
+preloadStationModels().then(() => {
+  // Title uses free-model stations too — rebuild once Kenney GLBs are ready.
+  if (gameState || !menuActive || !menuWhispersSystem) return
+  if (stationModelsReady()) buildMenuSystemVisuals(menuWhispersSystem)
+})
 preloadInteriorModels().then(() => {
   // If already docked on a procedural-only bay, rebuild with kit props.
   if (!gameState || !docked || !interiorMesh) return

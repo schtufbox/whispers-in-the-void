@@ -14,7 +14,7 @@ import {
   discardCargo, discardOre,
   buyDrone, sellStoredDrone, equipDrone, unequipDrone, sellShipDrone
 } from '../game/economy.js'
-import { DRONES, getDrone, droneBayCount, DEFAULT_DRONE_ID } from '../data/drones.js'
+import { DRONES, getDrone, DEFAULT_DRONE_ID } from '../data/drones.js'
 import { freeDroneBayCount } from '../game/drones.js'
 import {
   startCraft,
@@ -34,16 +34,40 @@ import {
 } from '../data/blueprints.js'
 import { purchasableShipClasses, getShipClass } from '../data/shipClasses.js'
 import { WEAPONS, BASE_WEAPON_ID, ALIEN_BASE_WEAPON_ID, getWeapon, weaponsForCategory, allWeaponsForCategory } from '../data/weapons.js'
-import { ACCESSORIES, getAccessory, accessorySlotCount, effectiveMiningCapacity } from '../data/accessories.js'
+import {
+  ACCESSORIES,
+  getAccessory,
+  accessorySlotCount,
+  effectiveMiningCapacity,
+  effectiveCargoCapacity,
+  effectiveHardpoints,
+  effectiveDroneBayCount,
+  effectiveMaxShields,
+  effectiveMaxArmor,
+  effectiveMaxSpeed
+} from '../data/accessories.js'
 import { EXPLORER_PROBE_LOOT_BONUS } from '../game/probe.js'
 import { playerSkillBonuses, scaleOreCost } from '../game/skills.js'
 import { findBody, findSystemOfBody } from '../procgen/galaxy.js'
 import { acceptMission } from '../game/missions.js'
 import { refillMissionsIfExhausted } from '../data/missionTemplates.js'
 import { escapeHtml } from './escapeHtml.js'
-import { gameNotice, gamePrompt } from './gameDialog.js'
+import { gameNotice, gamePrompt, gameConfirm } from './gameDialog.js'
 import { goodIcon, itemIcon, itemNameCell, ITEM_ICON_CSS } from './itemIcons.js'
 import { createShipyardPreview } from './shipyardPreview.js'
+import {
+  cloneListForUi,
+  createClone,
+  jumpToClone,
+  discardClone,
+  maxCloneCapacity,
+  canCloneJump,
+  ensureClones,
+  ensureStationCloneBayFlag,
+  CLONE_CREATE_COST,
+  CLONE_JUMP_COST
+} from '../game/clones.js'
+import { getPlayerSkillLevel } from '../game/skills.js'
 
 const STYLE = `
 ${ITEM_ICON_CSS}
@@ -170,27 +194,45 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel.loadout-side .lo-badge.warn {
   border-color: rgba(224,90,90,0.45); color: #ffb3b3;
 }
+/* Native <select> chrome — match panel buttons / theme (not OS grey). */
+#docking-ui select,
 #docking-ui .side-panel.loadout-side select.equip-select,
 #docking-ui .side-panel.loadout-side select.equip-accessory,
 #docking-ui .side-panel.loadout-side select.equip-drone {
   width: 100%; max-width: 100%; box-sizing: border-box;
-  background: rgba(var(--ui-bg-track-r),var(--ui-bg-track-g),var(--ui-bg-track-b),0.92);
-  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: rgba(var(--ui-bg-track-r),var(--ui-bg-track-g),var(--ui-bg-track-b),0.95);
+  background-image: linear-gradient(45deg, transparent 50%, var(--ui-accent) 50%),
+    linear-gradient(135deg, var(--ui-accent) 50%, transparent 50%);
+  background-position: calc(100% - 14px) calc(50% - 2px), calc(100% - 9px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
+  border-radius: var(--ui-radius-sm, 6px);
   color: var(--ui-text);
-  padding: 6px 8px;
+  padding: 7px 28px 7px 10px;
   font-family: monospace;
   font-size: 11px;
   letter-spacing: 0.3px;
+  color-scheme: dark;
+  cursor: pointer;
 }
+#docking-ui select:focus,
 #docking-ui .side-panel.loadout-side select.equip-select:focus,
 #docking-ui .side-panel.loadout-side select.equip-accessory:focus,
 #docking-ui .side-panel.loadout-side select.equip-drone:focus {
   outline: none;
   border-color: var(--ui-accent-mid);
-  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25);
+  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3);
 }
+#docking-ui select:disabled,
 #docking-ui .side-panel.loadout-side select:disabled {
   opacity: 0.4; cursor: not-allowed;
+}
+#docking-ui select option {
+  background: rgb(var(--ui-bg-r), var(--ui-bg-g), var(--ui-bg-b));
+  color: var(--ui-text);
 }
 #docking-ui .side-panel.loadout-side button.unequip-drone {
   width: 100%; box-sizing: border-box;
@@ -519,7 +561,7 @@ ${ITEM_ICON_CSS}
 `
 
 export function createDockingUI(container, gameState, rng, hooks = {}) {
-  const { onCraftStarted, onPlayerShipChanged, onStorageChanged } = hooks
+  const { onCraftStarted, onPlayerShipChanged, onStorageChanged, onCloneTravel } = hooks
   const style = document.createElement('style')
   style.textContent = STYLE
   document.head.appendChild(style)
@@ -544,6 +586,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
           <button data-tab="missions" class="tab">Missions</button>
           <button data-tab="storage" class="tab">Storage</button>
           <button data-tab="industry" class="tab">Industry</button>
+          <button data-tab="clones" class="tab tab-clones" style="display:none">Clones</button>
         </div>
         <div class="tab-content"></div>
       </div>
@@ -766,7 +809,110 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     else if (currentTab === 'industry') renderIndustry()
     else if (currentTab === 'shipyard') renderShipyard()
     else if (currentTab === 'trade') renderTrade()
+    else if (currentTab === 'clones') renderClones()
     if (notify) onStorageChanged?.()
+  }
+
+  function updateCloneTabVisibility() {
+    const tab = root.querySelector('.tab-clones')
+    if (!tab) return
+    const show =
+      currentBody?.kind === 'station' && ensureStationCloneBayFlag(currentBody)
+    tab.style.display = show ? '' : 'none'
+    if (!show && currentTab === 'clones') {
+      currentTab = 'trade'
+      tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'trade'))
+    }
+  }
+
+  function renderClones() {
+    ensureClones(gameState)
+    updateHeaderCredits()
+    const clones = cloneListForUi(gameState)
+    const max = maxCloneCapacity(gameState)
+    const used = clones.length
+    const cloningLv = getPlayerSkillLevel(gameState, 'cloning')
+    const jumpOk = canCloneJump(gameState)
+    const credits = gameState.player.credits ?? 0
+
+    contentEl.innerHTML = `
+      <div class="credits">Clone Bay · Capacity ${used}/${max} · Cloning skill L${cloningLv} · Credits: ${credits.toLocaleString()} cr</div>
+      <p style="opacity:0.7;font-size:12px;margin:0 0 12px;line-height:1.4">
+        Create a clone here for <strong>${CLONE_CREATE_COST.toLocaleString()} cr</strong> (uses a capacity slot).
+        Jumping to a clone costs <strong>${CLONE_JUMP_COST.toLocaleString()} cr</strong>, leaves a clone where you are now,
+        and clears the destination clone (place a new one there later). Jump requires <strong>Cloning ≥ 1</strong>.
+      </p>
+      <button type="button" class="clone-create" ${used >= max || credits < CLONE_CREATE_COST ? 'disabled' : ''}>
+        Create clone here (${CLONE_CREATE_COST.toLocaleString()} cr)
+      </button>
+      <h3 style="margin-top:16px">Your clones</h3>
+      ${clones.length
+        ? `<table>
+            <thead><tr><th>Location</th><th></th></tr></thead>
+            <tbody>
+              ${clones.map((c) => `
+                <tr>
+                  <td>
+                    ${escapeHtml(c.label || c.systemId)}
+                    ${c.isCurrentSystem ? ' <span style="opacity:0.55">(this system)</span>' : ''}
+                  </td>
+                  <td style="white-space:nowrap">
+                    <button type="button" class="clone-jump" data-id="${escapeHtml(c.id)}"
+                      ${!jumpOk || credits < CLONE_JUMP_COST ? 'disabled' : ''}
+                      title="${!jumpOk ? 'Requires Cloning skill level 1+' : 'Jump to this clone'}">
+                      Jump (${CLONE_JUMP_COST.toLocaleString()} cr)
+                    </button>
+                    <button type="button" class="clone-discard" data-id="${escapeHtml(c.id)}">Discard</button>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>`
+        : '<p class="empty" style="opacity:0.55">No clones placed yet.</p>'}
+      ${!jumpOk ? '<p style="opacity:0.55;font-size:11px;margin-top:10px">Train Cloning (skillbooks) to unlock multi-clone jumps.</p>' : ''}
+    `
+
+    contentEl.querySelector('.clone-create')?.addEventListener('click', async () => {
+      try {
+        const { clone } = createClone(gameState)
+        await showNotice('Clone created', `Body backup at ${clone.label}. Capacity ${gameState.player.clones.length}/${maxCloneCapacity(gameState)}.`)
+      } catch (err) {
+        await showNotice('Clone bay', err.message)
+      }
+      renderClones()
+    })
+
+    contentEl.querySelectorAll('.clone-jump').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id
+        const ok = await gameConfirm(
+          'Clone jump',
+          `Spend ${CLONE_JUMP_COST.toLocaleString()} cr?\nA clone is left where you are now; the destination clone is consumed.`,
+          { okLabel: 'Jump', cancelLabel: 'Cancel' }
+        )
+        if (!ok) return
+        try {
+          const result = jumpToClone(gameState, id)
+          setServicesOpen(false)
+          root.style.display = 'none'
+          onUndock = null
+          onCloneTravel?.(result)
+        } catch (err) {
+          await showNotice('Clone jump failed', err.message)
+          renderClones()
+        }
+      })
+    )
+
+    contentEl.querySelectorAll('.clone-discard').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        try {
+          discardClone(gameState, btn.dataset.id)
+        } catch (err) {
+          await showNotice('Discard failed', err.message)
+        }
+        renderClones()
+      })
+    )
   }
 
   function liveAvailable(payload, direction) {
@@ -1316,7 +1462,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     const spareWeapons = ship.spareWeapons ?? {}
     const accSlots = accessorySlotCount(activeClass)
     const equippedAcc = Array.isArray(ship.equippedAccessories) ? ship.equippedAccessories : []
-    const droneBays = droneBayCount(activeClass)
+    const droneBays = effectiveDroneBayCount(ship, activeClass)
     const shipDrones = ship.drones ?? []
 
     const roleLabel = selectedClass.role ? capitalizeLabel(selectedClass.role) : '—'
@@ -1390,11 +1536,15 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       ${selectedDroneBays > 0 ? `<div class="stat">Drone bays: ${selectedDroneBays}</div>` : ''}
       ${SHIP_STAT_ROWS.map(([key, label]) => {
         let val = selectedClass.stats[key]
-        // When viewing your active hull, show live mining capacity with accessories.
-        if (key === 'miningCapacity' && selectedShipClassId === ship.classId) {
-          val = effectiveMiningCapacity(ship, selectedClass)
-          if (val !== selectedClass.stats.miningCapacity) {
-            return `<div class="stat">${label}: ${val} <span style="opacity:0.55">(base ${selectedClass.stats.miningCapacity})</span></div>`
+        // Active hull: show live stats with accessories.
+        if (selectedShipClassId === ship.classId) {
+          if (key === 'miningCapacity') val = effectiveMiningCapacity(ship, selectedClass)
+          if (key === 'cargoCapacity') val = effectiveCargoCapacity(ship, selectedClass)
+          if (key === 'shields') val = effectiveMaxShields(ship, selectedClass)
+          if (key === 'armor') val = effectiveMaxArmor(ship, selectedClass)
+          if (key === 'speed') val = Math.round(effectiveMaxSpeed(ship, selectedClass))
+          if (val !== selectedClass.stats[key]) {
+            return `<div class="stat">${label}: ${val} <span style="opacity:0.55">(base ${selectedClass.stats[key]})</span></div>`
           }
         }
         return `<div class="stat">${label}: ${val}</div>`
@@ -1407,11 +1557,13 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         ? bonusLines.map((line) => `<div class="stat bonus">${escapeHtml(line)}</div>`).join('')
         : '<div class="stat bonus-none">None</div>'}
     `
-    const weaponBlocks = activeClass.hardpoints.map((hp, hpIndex) => {
+    const loadoutHardpoints = effectiveHardpoints(ship, activeClass)
+    const weaponBlocks = loadoutHardpoints.map((hp, hpIndex) => {
       const mountType = hp.type === 'missile' ? 'missile' : 'laser'
       const mountLabel = mountType === 'missile' ? 'Launcher' : 'Turret'
       const baseIds = activeClass.alien ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
-      const equippedId = ship.equippedWeapons?.[hp.id] ?? baseIds[mountType]
+      // Accessory mounts never imply a free stock weapon.
+      const equippedId = ship.equippedWeapons?.[hp.id] ?? (hp.accessory ? null : baseIds[mountType])
       // Shop list is human-only; equip list includes owned/equipped alien tech.
       const catalog = allWeaponsForCategory(mountType).filter((w) => {
         if (!w.alien) return true
@@ -1422,13 +1574,18 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       let equippedName = equippedId
       let equippedMeta = ''
       let equippedAlien = false
-      try {
-        const ew = getWeapon(equippedId)
-        equippedName = ew.name
-        equippedAlien = !!ew.alien
-        equippedMeta = `Dmg ${ew.damage}`
-      } catch { /* */ }
-      const options = catalog.map((w) => {
+      if (equippedId) {
+        try {
+          const ew = getWeapon(equippedId)
+          equippedName = ew.name
+          equippedAlien = !!ew.alien
+          equippedMeta = `Dmg ${ew.damage}`
+        } catch { /* */ }
+      }
+      const emptyOpt = hp.accessory
+        ? `<option value="" ${!equippedId ? 'selected' : ''}>— empty (fit a weapon) —</option>`
+        : ''
+      const options = emptyOpt + catalog.map((w) => {
         const isEquipped = w.id === equippedId
         const inStorage = storageWeapons[w.id] ?? 0
         const onShip = spareWeapons[w.id] ?? 0
@@ -1440,17 +1597,21 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
         const label = bits.length ? `${w.name} (${bits.join(', ')})` : `${w.name}`
         return `<option value="${w.id}" ${isEquipped ? 'selected' : ''} ${!owned ? 'disabled' : ''}>${escapeHtml(label)}</option>`
       }).join('')
+      const accBadge = hp.accessory ? '<span class="lo-badge">Accessory</span>' : ''
       return `
         <div class="lo-row">
           <div class="lo-row-head">
             <span class="lo-mount">${escapeHtml(mountLabel)} ${hpIndex + 1}</span>
             <span class="lo-tag">${escapeHtml(hp.id)}</span>
+            ${accBadge}
           </div>
-          <div class="lo-equipped">
+          ${equippedId
+            ? `<div class="lo-equipped">
             ${itemNameCell(itemIcon('weapon', { weaponCategory: mountType, alien: equippedAlien }), equippedName)}
             ${equippedAlien ? '<span class="lo-badge">Alien</span>' : ''}
             ${equippedMeta ? `<span class="lo-meta">${escapeHtml(equippedMeta)}</span>` : ''}
-          </div>
+          </div>`
+            : '<div class="lo-empty-slot">No weapon fitted</div>'}
           <select class="equip-select" data-hardpoint="${hp.id}" aria-label="${escapeHtml(mountLabel)} ${hpIndex + 1}">${options}</select>
         </div>`
     }).join('')
@@ -1566,7 +1727,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     loadoutSideEl.innerHTML = `
       <div class="panel-kicker">Ship Loadout</div>
       <div class="lo-ship">${escapeHtml(ship.instanceName)}<span class="lo-class">· ${escapeHtml(activeClass.name)}</span></div>
-      <div class="lo-section">Hardpoints (${activeClass.hardpoints.length})</div>
+      <div class="lo-section">Hardpoints (${loadoutHardpoints.length})</div>
       ${weaponBlocks || '<div class="empty">No hardpoints</div>'}
       ${accessoryBlocks}
       ${droneBlocks}
@@ -1574,7 +1735,23 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     loadoutSideEl.querySelectorAll('.equip-select').forEach((select) =>
       select.addEventListener('change', async () => {
         try {
-          equipWeapon(gameState, currentBody.id, select.dataset.hardpoint, select.value)
+          const wid = select.value
+          if (!wid) {
+            // Accessory mount: clear fitted weapon back to storage.
+            const ship = gameState.player.ship
+            const hpId = select.dataset.hardpoint
+            const prev = ship.equippedWeapons?.[hpId]
+            if (prev) {
+              const st = gameState.stationStorage[currentBody.id] ??= {
+                cargo: {}, miningHold: {}, shipParts: 0, ships: [], weapons: {}, accessories: {}, blueprints: {}, drones: {}
+              }
+              st.weapons ??= {}
+              st.weapons[prev] = (st.weapons[prev] ?? 0) + 1
+              delete ship.equippedWeapons[hpId]
+            }
+          } else {
+            equipWeapon(gameState, currentBody.id, select.dataset.hardpoint, wid)
+          }
         } catch (err) {
           await showNotice('Equip failed', err.message)
         }
@@ -2472,14 +2649,17 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
     shipyard: renderShipyard,
     missions: renderMissions,
     storage: renderStorage,
-    industry: renderIndustry
+    industry: renderIndustry,
+    clones: renderClones
   }
 
   function renderCurrentTab() {
     updateHeaderCredits()
+    updateCloneTabVisibility()
     if (currentTab !== 'shipyard' && currentTab !== 'industry') hideLeftSideBoxes()
     else if (currentTab !== 'shipyard') hideShipyardSideBoxes()
-    renderers[currentTab]()
+    const fn = renderers[currentTab]
+    if (fn) fn()
   }
 
   tabButtons.forEach((btn) =>
@@ -2536,6 +2716,7 @@ export function createDockingUI(container, gameState, rng, hooks = {}) {
       storageSubTab = 'local'
       currentTab = 'trade'
       tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === 'trade'))
+      updateCloneTabVisibility()
       // Menu closed by default — only Station Services + Undock until opened.
       setServicesOpen(false)
       root.style.display = 'flex'

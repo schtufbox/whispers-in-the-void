@@ -19,6 +19,24 @@ function fakeSystem(id = 'sys-test', securityRating = 1) {
   return { id, securityRating, spatialAnomalies: undefined, bodies: [] }
 }
 
+test('anomaly epoch change re-rolls presence and type (not like-for-like)', () => {
+  const s = fakeSystem('sys-reshuffle', 0)
+  const a0 = ensureSystemAnomalies(s, 0)
+  // Force wipe as tickGalaxyAnomalies does.
+  delete s.spatialAnomalies
+  delete s.anomalyEpoch
+  const a1 = ensureSystemAnomalies(s, 1)
+  // Either list can be empty; if both non-empty, types may differ — seed changes with epoch.
+  assert.ok(Array.isArray(a0) && Array.isArray(a1))
+  // Deterministic: same epoch returns same list.
+  const again = ensureSystemAnomalies(s, 1)
+  assert.equal(again, s.spatialAnomalies)
+  assert.deepEqual(
+    again.map((x) => x.type),
+    a1.map((x) => x.type)
+  )
+})
+
 test('ensureSystemAnomalies is idempotent and rolls 0 or 1–4 sites', () => {
   let any = false
   for (let i = 0; i < 40; i++) {

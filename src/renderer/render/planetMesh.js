@@ -215,6 +215,8 @@ export function buildPlanetMesh(body) {
     flatShading: false,
     roughness: isGas ? 0.78 : 0.9,
     metalness: 0,
+    depthWrite: true,
+    depthTest: true,
     ...(textures
       ? {
           map: textures.map,
@@ -225,6 +227,7 @@ export function buildPlanetMesh(body) {
       : {})
   })
   const mesh = new THREE.Mesh(geometry, material)
+  mesh.renderOrder = 0
   if (isGas) {
     // Mark for spin only — cloud detail is on the surface map now (no extra shell).
     mesh.userData.hasAtmosphere = false

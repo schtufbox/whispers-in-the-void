@@ -80,10 +80,14 @@ function buildLayer(count, radius, size, brightnessMin = 0.5) {
 // per-layer uniform animation instead of a per-star shader, and with the
 // stars scattered randomly across four out-of-phase groups it still reads
 // as individual stars twinkling rather than a synchronized blink.
-// Radius near the camera far plane (see render/scene.js) so the shell sits
-// behind typical in-system bodies when the field is re-centered on the camera.
-export function createStarfield(count = 9000, radius = 17000) {
+// Shell must sit beyond system play volume (bodies often 100k–600k out; suns
+// tens of k across) but inside the camera far plane (2e6 in scene.js). When
+// the field is re-centered on the camera, a short radius put stars *in front*
+// of the sun/planets so depthTest never hid them (starfield "through" the sun).
+export function createStarfield(count = 9000, radius = 1_600_000) {
   const group = new THREE.Group()
+  // Draw before in-system meshes; depth buffer from suns/planets then occludes.
+  group.renderOrder = -100
   group.add(buildLayer(Math.round(count * 0.85), radius, 2.2, 0.35))
   group.add(buildLayer(Math.round(count * 0.15), radius, 4.5, 0.6))
   group.add(buildLayer(60, radius, 11, 0.8))
@@ -99,6 +103,9 @@ export function createStarfield(count = 9000, radius = 17000) {
   group.userData.shellRadius = radius
   // Built lazily on first supercruise frame (samples star positions once).
   group.userData.cruiseBlur = null
+  group.traverse((o) => {
+    if (o.isPoints) o.renderOrder = -100
+  })
   return group
 }
 

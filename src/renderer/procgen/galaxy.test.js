@@ -593,5 +593,14 @@ test('Whispers is the outermost system, has SerNub station, and is ambient-hosti
 
     const palace = system.bodies.filter((b) => b.kind === 'station' && b.name === WHISPERS_STATION_NAME)
     assert.equal(palace.length, 1, `seed ${seed}: SerNub's Pleasure Palace station`)
+    const st = palace[0]
+    assert.equal(st.orbitsStar, true, `seed ${seed}: palace orbits the trinary (stationary star orbit)`)
+    assert.equal(st.parentId, undefined, `seed ${seed}: palace not bound to a planet/moon`)
+    const xz = Math.hypot(st.position[0], st.position[2])
+    // Outside worst-case halo-cleared outer companion (see WHISPERS_TRINARY_OUTER_CLEAR).
+    assert.ok(
+      xz >= 520000 * (system.sizeScale ?? 1) * 0.95,
+      `seed ${seed}: palace too close to trinary core (xz=${xz.toFixed(0)})`
+    )
   }
 })

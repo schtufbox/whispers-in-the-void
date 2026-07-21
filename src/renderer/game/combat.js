@@ -1,5 +1,9 @@
 import * as THREE from 'three'
 import { getShipClass } from '../data/shipClasses.js'
+import {
+  effectiveHardpoints,
+  effectiveMaxShields
+} from '../data/accessories.js'
 import { getSystem, ensureSystemSecurity } from '../procgen/galaxy.js'
 import {
   clearPositionOfBodies,
@@ -168,7 +172,7 @@ export function regenShields(entity, shipClass, simTime, dt, { player = false, i
   if (player && inCombat) return
   const idleSeconds = simTime - (entity.lastHitAt ?? -Infinity)
   if (idleSeconds <= SHIELD_REGEN_DELAY_S) return
-  const max = shipClass.stats.shields
+  const max = player ? effectiveMaxShields(entity, shipClass) : shipClass.stats.shields
   const rate = player
     ? (max * PLAYER_SHIELD_REGEN_FRACTION) / PLAYER_SHIELD_REGEN_PERIOD_S
     : SHIELD_REGEN_RATE
@@ -230,7 +234,11 @@ export function fireProjectile(
     _aimPoint.copy(shooterPos).addScaledVector(forward, DEFAULT_AIM_DISTANCE)
   }
 
-  const hardpoints = shooterShipClass?.hardpoints
+  // Player: include accessory-granted mounts; NPCs use class hardpoints only.
+  const hardpoints =
+    ownerId === 'player'
+      ? effectiveHardpoints(shooter, shooterShipClass)
+      : shooterShipClass?.hardpoints
   if (!hardpoints?.length) return
 
   // Stable indices among all mounts of each type (not just those ready this frame).
@@ -242,11 +250,17 @@ export function fireProjectile(
     if (weaponTypeFilter && mountType !== weaponTypeFilter) continue
     const alienHull = !!shooterShipClass?.alien
     const baseIds = alienHull ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
-    let weaponId = shooter.equippedWeapons?.[hp.id] ?? baseIds[mountType]
+    // Accessory hardpoints never get a free default — must equip a weapon.
+    let weaponId = shooter.equippedWeapons?.[hp.id]
+    if (!weaponId) {
+      if (hp.accessory) continue
+      weaponId = baseIds[mountType]
+    }
     let weapon
     try {
       weapon = getWeapon(weaponId)
     } catch {
+      if (hp.accessory) continue
       weaponId = baseIds[mountType]
       weapon = getWeapon(weaponId)
     }

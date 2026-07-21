@@ -292,10 +292,15 @@ function buildSingleStar(type, rng) {
     new THREE.MeshBasicMaterial({
       vertexColors: true,
       map: coreMap,
-      color: surfaceTint
+      color: surfaceTint,
+      // Must write depth so the starfield shell (far, additive) fails depth
+      // where the photosphere covers the sky.
+      depthWrite: true,
+      depthTest: true
     })
   )
   core.frustumCulled = false
+  core.renderOrder = 0
   group.add(core)
 
   // Corona / limb palette — star hue, pushed bright for a solar rim look.
@@ -963,6 +968,33 @@ function buildEnergyRing(separation, rng) {
 // Each star's core is self-lit (MeshBasicMaterial ignores scene lighting)
 // with a turbulent, mottled surface so it reads as a roiling ball of plasma
 // rather than a flat gem; corona shells give it a soft, pulsing halo.
+// Soft glow (haloFar) extends this far past the core radius — companion orbits
+// must clear primary + each other by at least this multiple or the stars look
+// like they merge / pass through each other.
+const STAR_HALO_REACH = 3.5
+const STAR_ORBIT_GAP = 4000
+
+/**
+ * Orbital radius for companion `companionR` around `primaryR`, outside
+ * `prevSep`/`prevCompanionR` so secondary and tertiary never intersect
+ * (including soft halos) at any angle.
+ */
+export function companionOrbitRadius(primaryR, companionR, prevSep = 0, prevCompanionR = 0) {
+  // Clear primary core + halo (and a classic packing factor).
+  let separation = Math.max(
+    (primaryR + companionR) * 2.2,
+    primaryR * STAR_HALO_REACH + companionR * STAR_HALO_REACH + STAR_ORBIT_GAP
+  )
+  if (prevSep > 0) {
+    // Coplanar min distance between companions = |sep - prevSep|.
+    // Need that ≥ sum of halo reaches so they never clip each other.
+    const clearSibling =
+      prevSep + prevCompanionR * STAR_HALO_REACH + companionR * STAR_HALO_REACH + STAR_ORBIT_GAP
+    separation = Math.max(separation, clearSibling)
+  }
+  return separation
+}
+
 // Binary / trinary: biggest component stays at the origin (primary + system
 // anchor); companions orbit it with plasma energy rings bridging each pair
 // (see updateStarMesh). Trinary only exists on Whispers (system.starType).
@@ -992,15 +1024,19 @@ export function buildStarMesh(system, forceType = null) {
     group.add(primary.group)
     group.userData.stars.push(primary)
 
-    // Companions: each separation clears corona reach; outer ones step out so
-    // they don't sit on top of the inner orbit (trinary hierarchical look).
+    // Companions: each separation clears primary + prior companion (incl. glow).
     let prevSep = 0
+    let prevCompanionR = 0
     for (let c = 1; c < order.length; c++) {
       const companion = stars[order[c]]
-      const baseSep = Math.max(220, (primary.radius + companion.radius) * 2.2)
-      // Outer companion farther than the previous so the triple reads clearly.
-      const separation = Math.max(baseSep, prevSep * 1.55 + primary.radius * 0.35)
+      const separation = companionOrbitRadius(
+        primary.radius,
+        companion.radius,
+        prevSep,
+        prevCompanionR
+      )
       prevSep = separation
+      prevCompanionR = companion.radius
       const orbitSpeed = (0.035 + rng() * 0.04) * (c === 1 ? 1 : 0.72)
       const orbit = {
         radius: separation,

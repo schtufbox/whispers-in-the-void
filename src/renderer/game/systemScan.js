@@ -46,7 +46,9 @@ function hashString(str) {
 }
 
 function systemRng(systemId, epoch = 0) {
-  return mulberry32(hashString(`anomaly:${systemId}:${epoch}`))
+  // Epoch is the reshuffle window — each window re-rolls presence, type, and
+  // count independently (not a like-for-like replace of the previous sites).
+  return mulberry32(hashString(`anomaly-v2:${systemId}:e${epoch}`))
 }
 
 /** Integer anomaly generation from campaign simTime. */
@@ -71,8 +73,9 @@ export function resolveAnomalyEpoch(epochOrGalaxy) {
 
 /**
  * Align galaxy.anomalyEpoch with simTime. When the 4h window advances,
- * clear every system's spatialAnomalies so the next ensure re-rolls
- * with a new seed (galaxy-wide refresh).
+ * wipe every system's sites so the next ensure re-rolls from scratch —
+ * different systems may gain/lose sites, and types need not match the
+ * previous window (not a like-for-like replace).
  *
  * Safe on first call / old saves: initializes epoch without wiping sites.
  *
@@ -100,6 +103,7 @@ export function tickGalaxyAnomalies(galaxy, simTime) {
   // Window rolled (may skip multiple if offline for a long time).
   galaxy.anomalyEpoch = epoch
   for (const system of galaxy.systems ?? []) {
+    // Full wipe — next ensureSystemAnomalies rolls presence + type anew.
     delete system.spatialAnomalies
     delete system.anomalyEpoch
   }

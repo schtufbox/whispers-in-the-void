@@ -17,7 +17,7 @@
 
 <p align="center">
   <strong>A procedurally generated 3D space trading, combat, and exploration game</strong><br/>
-  Electron + Three.js · one seeded galaxy · arcade flight · permadeath
+  Electron + Three.js · one seeded galaxy · arcade flight · saves & clones
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 
 ---
 
-A desktop space sim with ~**11,000+** planets across ~**3,500** star systems, **100+** ship classes (including exclusive alien hulls), real-time mouse-aim flight and combat, station industry crafting, system security and law standing, and **permadeath**.
+A desktop space sim with ~**11,000+** planets across ~**3,500** star systems, **100+** ship classes (including exclusive alien hulls), real-time mouse-aim flight and combat, station industry crafting, system security and law standing, saves, and clone bays.
 
 New Game starts you in a **Light Runner** at **Terra Prime** (galactic centre, always **Security 6**) with a normal starter loadout.
 
@@ -35,8 +35,9 @@ New Game starts you in a **Light Runner** at **Terra Prime** (galactic centre, a
 ## Features
 
 - **One seeded galaxy** — systems, planets, moons, stations, settlements, asteroid fields, and **warp gates** from a fixed canonical seed. Every New Game uses the same map; home is always **Terra Prime** (never a binary/trinary).
-- **Whispers** — outer-rim landmark system with a unique trinary sun, a named station, and no ambient hostiles.
-- **Textured worlds** — CC0 photo textures under procedural surface detail; gas giants use the same free texture path as other planets. Stars use procedural granulation, tight limb coronas, soft outer glow, flares, and binary/trinary energy rings.
+- **Whispers** — outer-rim landmark system with a unique trinary sun, **SerNub's Pleasure Palace** in a fixed star orbit outside the companions, and no ambient hostiles. Title screen flyby uses the real Whispers system (same seed as New Game).
+- **Textured worlds** — CC0 photo textures under procedural surface detail; gas giants use the same free texture path as other planets. Stars use procedural granulation, tight limb coronas, soft outer glow, flares, and binary/trinary energy rings. The starfield shell sits beyond the system so suns/planets occlude background stars correctly.
+- **Station exteriors** — worn plate albedo, triplanar re-UVs, and snug Kenney module packing so free-model stations read as plated hulls (not floating kit pieces).
 - **100+ ship classes** — hand-crafted archetypes plus a generated roster; hull silhouette, hardpoints, roles, and stats per class. **Explorer** hulls get a **+5%** probe-loot bonus. Some hulls carry **drone bays**. **Mining** hulls (8 models) trade combat for ore holds **200–2000**, tiny cargo (≤40), few/no accessory slots, and low speed/defences.
 - **Alien ships & weapons** — four exclusive organic hulls (Void Cyst, Spine Skimmer, Chor Lathe, Zealot Carapace) with alien guns and unique fire SFX. **Never sold.** Craft only if you salvage an **extremely rare** alien blueprint from an alien wreck (the only source of alien tech).
 - **Real-time flight and combat** — mouse-aim flight; **LMB** fires every laser hardpoint and **RMB** every launcher (visible wing offsets on multi-mount hulls); boresight weapons; shield/armour/hull; NPC AI. Core systems are busier; the rim is quieter and more alien, with tougher pirates. Pirates may truce with you against aliens.
@@ -59,11 +60,11 @@ New Game starts you in a **Light Runner** at **Terra Prime** (galactic centre, a
 - **Wrecks & salvage** — loot trade goods, occasional ship parts, rare blueprints; salvaged weapons equip or sell at the armoury. Alien wrecks can drop alien weapons and (rarely) alien blueprints. **F** prefers wreck loot over dock when both are in range.
 - **Warp gates & supercruise** — neighbor-linked warp gates; fly into the aperture to jump, emerge from the paired gate. Supercruise to waypoints with standoff arrival. **System Scan (B)** for probe scanning of Spatial Anomalies (alien incursions, datacores).
 - **Chase camera** — centered behind the ship; **hold Alt + mouse** free-look (only arms when the mouse moves — bare Alt does not stick free-look), release to snap back.
-- **HUD** — status bars, radar, System Scan button, canopy braces, scanlines, tab-target panel; subtle starfield tint from the local sun. **Galaxy map (M)** and **System Scan (B)** open as movable floating panels (geometry remembered). System overview under the radar (clickable with free mouse).
+- **HUD** — bottom-center ship status (compact velocity + shield/armour/hull row), top-center **3D heading-up radar** (10 km; contacts colour-coded; Tab-lock gets a flashing red box), top-left system chip (clickable **System Scan** / **B**), top-right overview + target panel. Dock/probe/wreck prompts stack just under the radar. **Galaxy map (M)** and **System Scan (B)** open as movable floating panels (geometry remembered).
 - **Music & SFX** — title/ambient/death music; sample thrusters, weapons, dock, and synthesized combat layers. **Separate Sound Effects and Music** toggles in **Settings** (saved). **Controls** list in Settings (intro + pause). Alien weapons use distinct synth fire sounds.
 - **UI Colour** — in **Settings → UI Colour**, retint **accent** (borders, labels, cyan-hinted text) and **panel background** fills (menus, HUD cards, docks — not space or interiors). Changes apply live and auto-save to `settings.json` / localStorage.
 - **Windowed app + fullscreen** — default **windowed** with OS frame (**1600×900 outer** including title bar/borders; size/position remembered). **Alt + Enter** toggles native fullscreen. **Settings** on main menu and pause menu. Preferences persist in app `settings.json`.
-- **Permadeath** — no respawns; death screen shows killer and law consequence.
+- **Saves & clones** — manual/quick save; death screen shows killer and law consequence (reload from last save). **Clone bays** at many stations for body backups and clone jumps (Cloning skill).
 
 ## Getting started
 
@@ -91,7 +92,7 @@ npm run build && npx electron-builder --mac --arm64 -c.mac.identity=null
 
 Artifacts land in `release/` (e.g. `release/mac-arm64/Whispers In The Void.app`). `.blockmap` files are for remote auto-update deltas and can be deleted for local testing.
 
-Prebuilt installers (macOS arm64/x64, Linux AppImage arm64/x64, Windows arm64/x64) are on the [Releases](https://github.com/LaughingInPurgatory/whispers-in-the-void/releases) page.
+Prebuilt installers (macOS arm64/x64, Linux AppImage arm64/x64, Windows arm64/x64) are on the [Releases](https://github.com/LaughingInPurgatory/whispers-in-the-void/releases) page. Pushing a `v*` tag (or running the **Release** workflow) builds installers on GitHub Actions and attaches them to that release (`.github/workflows/release.yml`).
 
 ### Testing
 
@@ -124,7 +125,7 @@ Flight is mouse-aim, toggled with **Space**. While flight mode is on, the pointe
 | **Ctrl/Cmd + Tab** | Set waypoint on body under crosshair |
 | **C** | Toggle supercruise (requires a waypoint) |
 | **M** | Galaxy map (flight or docked; search systems, plot routes) |
-| **B** | System Scan (probes / Spatial Anomalies) |
+| **B** | System Scan (or click the system name chip) |
 | **F** | Warp gate jump (within 2 km) · loot wreck · dock |
 | **P** | Hack datacore nodule · launch survey probe |
 | **G** | Launch drones (requires installed drones in bays) |

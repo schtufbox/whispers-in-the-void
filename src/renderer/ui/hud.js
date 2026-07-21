@@ -5,12 +5,11 @@ const STYLE = `
 
 /*
  * Unified HUD chrome surface — square corners, thin cyan border.
+ * Radar is bare canvas (no panel chrome).
  */
 #hud .status-panel,
-#hud .velocity-panel,
 #hud .system-label,
-#hud .target-panel,
-#hud #radar .radar-frame {
+#hud .target-panel {
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
@@ -20,14 +19,8 @@ const STYLE = `
     drop-shadow(0 4px 10px rgba(0,0,0,0.4));
 }
 
-/* Velocity: thin cyan on both sides */
-#hud .velocity-panel {
-  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-}
-
-/* Radar (right column): thin cyan edge */
-#hud #radar .radar-frame {
+/* Status (bottom center): thin cyan on both sides */
+#hud .status-panel {
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
 }
@@ -51,15 +44,17 @@ const STYLE = `
   background: repeating-linear-gradient(0deg, rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.025) 0px, rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.025) 1px, transparent 1px, transparent 4px);
 }
 
+/* Ship status + velocity — bottom center. */
 #hud .status-panel {
-  position: fixed; top: 16px; left: 16px;
-  width: 240px;
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  top: auto; right: auto;
+  width: 280px;
   padding: 12px 18px 10px 20px;
+  z-index: 8;
 }
-
-/* Plotted warp-gate route — plain floating text (no panel chrome). */
+/* Plotted warp-gate route — floating text under the top-left system box. */
 #hud .route-hud {
-  position: fixed; left: 20px; top: 178px; z-index: 6;
+  position: fixed; left: 20px; top: 128px; z-index: 6;
   width: min(280px, 36vw); max-height: min(42vh, 360px);
   padding: 0;
   display: none;
@@ -122,7 +117,7 @@ const STYLE = `
   opacity: 0.7; color: #ffffff; flex-shrink: 0;
 }
 #hud.docked .route-hud {
-  top: 88px;
+  top: 100px;
 }
 #hud .panel-title {
   font-size: 10px; letter-spacing: 3px; opacity: 0.65; color: var(--ui-accent);
@@ -138,6 +133,58 @@ const STYLE = `
   text-shadow: 0 1px 2px rgba(0,0,0,0.75);
 }
 #hud .row-label .value { opacity: 0.95; }
+
+/* Compact status typography (matches shield/armour/hull labels). */
+#hud .status-panel .sa-pair .row-label,
+#hud .status-panel .velocity-row .row-label,
+#hud .status-panel .drones-bay .row-label,
+#hud .status-panel .drones-block .row-label,
+#hud .status-panel .drones-block .panel-title {
+  font-size: 8px; letter-spacing: 1px; margin-bottom: 1px;
+}
+#hud .status-panel .velocity-row .speed {
+  font-size: 8px; letter-spacing: 1px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.75);
+}
+
+/* Shield + armour + hull side-by-side, compact bars. */
+#hud .status-panel .sa-pair {
+  display: flex; gap: 8px; margin-bottom: 6px;
+}
+#hud .status-panel .sa-pair .row {
+  flex: 1; min-width: 0; margin-bottom: 0;
+}
+#hud .status-panel .sa-pair .bar {
+  height: 5px;
+}
+#hud .status-panel .sa-pair .bar::after {
+  background: repeating-linear-gradient(90deg, transparent 0px, transparent 5px, rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.85) 5px, rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.85) 6px);
+}
+
+/* Velocity bar ~half height of the old full bar (9px → 4.5px). */
+#hud .status-panel .velocity-row {
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28);
+}
+#hud .status-panel .velocity-row .bar.velocity {
+  height: 4.5px;
+}
+#hud .status-panel .velocity-row .bar.velocity::after {
+  background: repeating-linear-gradient(90deg, transparent 0px, transparent 5px, rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.85) 5px, rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.85) 6px);
+}
+#hud .status-panel .velocity-row .bar.velocity .zero-marker {
+  top: -1px; bottom: -1px;
+}
+#hud .status-panel .drones-bay {
+  margin-top: 2px; margin-bottom: 2px;
+}
+#hud .status-panel .drones-block {
+  margin-top: 6px; padding-top: 6px;
+}
+#hud .status-panel .drones-block .panel-title {
+  margin-bottom: 4px; opacity: 0.65;
+}
 
 #hud .bar {
   position: relative; width: 100%; height: 9px;
@@ -167,31 +214,42 @@ const STYLE = `
 #hud .bar.velocity .fill { position: absolute; top: 0; background: linear-gradient(90deg, #3a8f5c, #7fe0a0); box-shadow: 0 0 6px rgba(127,224,160,0.5); }
 #hud .bar.velocity .fill.reversing { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
 
-/* Current system — top center, clear of status (left) and radar (right). */
+/* Current system — top left; whole chip opens System Scan (B). */
 #hud .system-label {
-  position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
-  pointer-events: none; z-index: 6;
-  text-align: center; padding: 6px 18px 7px;
+  position: fixed; top: 16px; left: 16px; transform: none;
+  pointer-events: auto; cursor: pointer; z-index: 9;
+  text-align: left; padding: 8px 16px 9px;
+  max-width: min(360px, 40vw);
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
 }
-/* Docked: strip flight chrome; location chip top-left. */
+#hud .system-label:hover {
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.96), rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.12));
+  border-color: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.65);
+}
+#hud .system-label:focus-visible {
+  outline: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.7);
+  outline-offset: 2px;
+}
+/* Docked: strip flight chrome; keep location chip top-left (not a scan button). */
 #hud.docked .status-panel,
-#hud.docked .velocity-panel,
 #hud.docked .target-panel,
 #hud.docked #radar {
   display: none !important;
 }
 #hud.docked .system-label {
-  left: 16px;
-  top: 16px;
-  transform: none;
-  text-align: left;
+  cursor: default;
+  pointer-events: none;
   max-width: min(420px, 48vw);
+}
+#hud.docked .system-label:hover {
+  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));
+  border-color: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
 }
 #hud.docked .system-label .sys-tag { letter-spacing: 2px; }
 #hud.docked .system-label .nearest-body.visible { display: block; }
 #hud.docked .system-label .nearest-body .nb-tag { content: none; }
+#hud.docked .system-label .sys-scan-hint { display: none; }
 #hud .system-label .sys-tag {
   display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
   color: var(--ui-accent); opacity: 0.7;
@@ -231,10 +289,18 @@ const STYLE = `
   margin-right: 6px;
 }
 #hud .system-label .nearest-body .nb-name { color: var(--ui-bright); }
+#hud .system-label .sys-scan-hint {
+  display: block; margin-top: 7px; padding-top: 6px;
+  border-top: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28);
+  font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: #c9e8ff; opacity: 0.9;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
+}
+#hud .system-label:hover .sys-scan-hint { color: var(--ui-bright); opacity: 1; }
 
-/* Tab-target readout — sits between system name (center) and radar (right). */
+/* Tab-target readout — top right, left of system overview. */
 #hud .target-panel {
-  position: fixed; top: 16px; right: 210px; z-index: 6;
+  position: fixed; top: 16px; right: 272px; z-index: 6;
   width: 200px; padding: 10px 12px 10px 14px;
   pointer-events: none; display: none;
 }
@@ -271,13 +337,7 @@ const STYLE = `
   background: linear-gradient(90deg, #6a5a2a, #d9b56a); box-shadow: 0 0 5px rgba(217,181,106,0.45);
 }
 
-/* Velocity gets its own bottom-center readout, separate from the shield/
-   armor/hull status panel now up in the top-left corner. */
-#hud .velocity-panel {
-  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-  width: 260px;
-  padding: 8px 16px;
-}
+
 
 @keyframes hud-shine { 0% { background-position: 220% 0; } 100% { background-position: -20% 0; } }
 @keyframes hud-critical-pulse {
@@ -285,73 +345,43 @@ const STYLE = `
   50% { box-shadow: 0 0 16px 2px rgba(255,90,90,0.95); }
 }
 
-/* Right column stack: radar (top) → System Scan → overview (systemOverview.js).
-   Radar frame: top 16, h 176 → bottom 192.
-   Scan btn: top 198 (6px gap), ~32px tall → bottom ~230.
-   Overview: top 236 (see systemOverview.js). */
+/* Radar — flush to top of viewport; bare canvas (no panel chrome). */
 #radar {
-  position: fixed; right: 16px; top: 16px;
-  width: 176px; height: 176px;
-  font-family: monospace; color: var(--ui-text); user-select: none; text-align: center;
+  position: fixed; left: 50%; top: 0; transform: translateX(-50%);
+  width: 420px; height: 160px;
+  margin: 0; padding: 0;
+  font-family: monospace; color: var(--ui-text); user-select: none;
   pointer-events: none;
   z-index: 8;
+  background: none;
+  border: none;
+  box-shadow: none;
+  filter: none;
 }
-#radar .radar-frame {
-  width: 176px; height: 176px;
-  padding: 6px;
-  box-sizing: border-box;
-}
-/* Between radar and system overview on the right column. */
-#hud .system-scan-btn {
-  position: fixed; right: 16px; top: 198px; z-index: 9;
-  width: 176px; box-sizing: border-box;
-  pointer-events: auto; cursor: pointer;
-  font-family: monospace; font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
-  padding: 7px 8px;
-  color: #c9e8ff;
-  background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));
-  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 12px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25),
-    0 2px 3px rgba(0,0,0,0.7),
-    0 4px 10px rgba(0,0,0,0.35);
-  filter:
-    drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-    drop-shadow(0 4px 10px rgba(0,0,0,0.35));
-}
-#hud .system-scan-btn:hover {
-  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.14);
-  color: var(--ui-bright);
-}
-#hud.docked .system-scan-btn { display: none; }
 #radar canvas {
   display: block;
   width: 100%; height: 100%;
-  background: radial-gradient(circle at 50% 48%, rgba(10,22,34,0.92) 0%, rgba(6,12,22,0.96) 72%, rgba(5,10,18,0.98) 100%);
-  border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28);
-  border-radius: 2px;
-  box-shadow: inset 0 0 18px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.18);
+  margin: 0; padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
-#hud .velocity-panel .row-label,
-#hud .velocity-panel .speed {
-  text-shadow: 0 1px 2px rgba(0,0,0,0.75);
-}
-
 /* Shared soft ground shadow — kept in glitch rest frames so animation doesn't wipe it. */
 /* Supercruise: stronger chromatic HUD glitch (still sparser than title ~6.5s). */
-#hud.cruise-glitch .status-panel,
 #hud.cruise-glitch .target-panel,
-#hud.cruise-glitch .route-hud,
-#hud.cruise-glitch #radar .radar-frame {
+#hud.cruise-glitch .route-hud {
   animation: hudCruisePanelGlitch 12s steps(1) infinite;
 }
 #hud.cruise-glitch .cockpit-frame .corner {
   animation: hudCruiseCornerGlitch 12s steps(1) infinite;
 }
-#hud.cruise-glitch .system-label,
-#hud.cruise-glitch .velocity-panel {
+#hud.cruise-glitch .status-panel,
+#hud.cruise-glitch #radar {
   animation: hudCruisePanelGlitchCenter 12s steps(1) infinite;
+}
+#hud.cruise-glitch .system-label {
+  animation: hudCruisePanelGlitch 12s steps(1) infinite;
 }
 #hud.cruise-glitch .scanlines {
   animation: hudCruiseScanGlitch 12s steps(1) infinite;
@@ -360,8 +390,7 @@ const STYLE = `
 #hud.cruise-glitch .system-label { animation-delay: 0.05s; }
 #hud.cruise-glitch .target-panel { animation-delay: 0.04s; }
 #hud.cruise-glitch .route-hud { animation-delay: 0.02s; }
-#hud.cruise-glitch #radar .radar-frame { animation-delay: 0.1s; }
-#hud.cruise-glitch .velocity-panel { animation-delay: 0.07s; }
+#hud.cruise-glitch #radar { animation-delay: 0.1s; }
 #hud.cruise-glitch .cockpit-frame .corner.tl { animation-delay: 0s; }
 #hud.cruise-glitch .cockpit-frame .corner.tr { animation-delay: 0.03s; }
 #hud.cruise-glitch .cockpit-frame .corner.bl { animation-delay: 0.06s; }
@@ -591,10 +620,11 @@ export function createHud(container) {
       <div class="corner tl"></div><div class="corner tr"></div>
       <div class="corner bl"></div><div class="corner br"></div>
     </div>
-    <div class="system-label">
+    <div class="system-label" role="button" tabindex="0" title="System Scan (B)" aria-label="System Scan">
       <span class="sys-tag">System</span>
       <span class="sys-name">—</span>
       <span class="nearest-body"><span class="nb-tag">Nearest Body</span><span class="nb-name"></span></span>
+      <span class="sys-scan-hint">System Scan (B)</span>
     </div>
     <div class="target-panel" aria-live="polite">
       <div class="tp-tag">Target</div>
@@ -603,17 +633,23 @@ export function createHud(container) {
       <div class="tp-bars"></div>
     </div>
     <div class="status-panel">
-      <div class="row shield">
-        <div class="row-label"><span>Shield</span><span class="value"></span></div>
-        <div class="bar"><div class="fill"></div></div>
+      <div class="row velocity-row">
+        <div class="row-label"><span>Velocity</span><span class="speed"></span></div>
+        <div class="bar velocity"><div class="zero-marker"></div><div class="fill"></div></div>
       </div>
-      <div class="row armor">
-        <div class="row-label"><span>Armour</span><span class="value"></span></div>
-        <div class="bar"><div class="fill"></div></div>
-      </div>
-      <div class="row hull">
-        <div class="row-label"><span>Hull</span><span class="value"></span></div>
-        <div class="bar"><div class="fill"></div></div>
+      <div class="sa-pair">
+        <div class="row shield">
+          <div class="row-label"><span>Shield</span><span class="value"></span></div>
+          <div class="bar"><div class="fill"></div></div>
+        </div>
+        <div class="row armor">
+          <div class="row-label"><span>Armour</span><span class="value"></span></div>
+          <div class="bar"><div class="fill"></div></div>
+        </div>
+        <div class="row hull">
+          <div class="row-label"><span>Hull</span><span class="value"></span></div>
+          <div class="bar"><div class="fill"></div></div>
+        </div>
       </div>
       <div class="row drones-bay" style="display:none;margin-top:4px">
         <div class="row-label"><span>Drones</span><span class="value drones-bay-count"></span></div>
@@ -627,44 +663,48 @@ export function createHud(container) {
       <div class="rh-title">Route <span class="rh-count"></span></div>
       <ol class="rh-list"></ol>
     </div>
-    <div class="velocity-panel">
-      <div class="row-label"><span>Velocity</span><span class="speed"></span></div>
-      <div class="bar velocity"><div class="zero-marker"></div><div class="fill"></div></div>
-    </div>
   `
   container.appendChild(hud)
 
   const radar = document.createElement('div')
   radar.id = 'radar'
-  radar.innerHTML = `
-    <div class="radar-frame">
-      <canvas width="164" height="164"></canvas>
-    </div>
-  `
+  // Bare canvas only — 3D rectangular grid drawn in updateRadar (no panel chrome).
+  const radarCanvas = document.createElement('canvas')
+  radarCanvas.width = 420
+  radarCanvas.height = 160
+  radar.appendChild(radarCanvas)
   // Nested inside hud (position:fixed makes placement independent of parent)
   // so removing hud.element also cleans up the radar — no separate tracking.
   hud.appendChild(radar)
-  // Between radar (above) and system overview (below) on the right column.
-  const systemScanBtn = document.createElement('button')
-  systemScanBtn.type = 'button'
-  systemScanBtn.className = 'system-scan-btn'
-  systemScanBtn.textContent = 'System Scan (B)'
-  hud.appendChild(systemScanBtn)
-  const radarCanvas = radar.querySelector('canvas')
   const radarCtx = radarCanvas.getContext('2d')
-  const radarSize = radarCanvas.width
-  const radarCenter = radarSize / 2
+  const radarW = radarCanvas.width
+  const radarH = radarCanvas.height
+  const systemLabelEl = hud.querySelector('.system-label')
 
-  // Neutral contacts use live accent (canvas cannot parse CSS vars).
+  // Ships yellow, stations blue, planets/moons/sun green, gates + datacores purple.
   const contactColor = (kind) => {
-    if (kind === 'neutral') return getUiPalette().accent
+    const PURPLE = '#b070ff'
     const fixed = {
-      hostile: '#e05a5a',
-      body: '#5a7a9a',
+      // Ships
+      neutral: '#f0d24a',
+      hostile: '#f0d24a',
+      // Stations / docks
+      station: '#4aa8ff',
+      // Planets, moons, sun
+      planet: '#5ee08a',
+      moon: '#5ee08a',
+      sun: '#5ee08a',
+      body: '#5ee08a',
+      // Warp gates + datacore anomalies
+      gate: PURPLE,
+      anomaly: PURPLE,
+      datacore: PURPLE,
+      // Other contacts
+      belt: '#9a8a6a',
+      asteroid: '#b0a070',
       waypoint: '#7fe0a0',
       mission: '#ff8a3d',
       wreck: '#c27a3a',
-      anomaly: '#d080ff',
       nodule: '#60f0ff',
       alien_base: '#ff6040'
     }
@@ -724,8 +764,14 @@ export function createHud(container) {
     // station/settlement; null/undefined hides the line.
     // securityRating: 0–6 system security shown beside the name.
     update(shipState, shipClass, speed, forwardSpeed, systemName = null, nearestBodyName = null, securityRating = null) {
-      const shieldPct = pct(shipState.shields, shipClass.stats.shields)
-      const armorPct = pct(shipState.armor, shipClass.stats.armor)
+      const maxSh = (typeof shipState.maxShields === 'number' && shipState.maxShields > 0)
+        ? shipState.maxShields
+        : shipClass.stats.shields
+      const maxAr = (typeof shipState.maxArmor === 'number' && shipState.maxArmor > 0)
+        ? shipState.maxArmor
+        : shipClass.stats.armor
+      const shieldPct = pct(shipState.shields, maxSh)
+      const armorPct = pct(shipState.armor, maxAr)
       const hullPct = pct(shipState.hull, shipClass.stats.hull)
       shieldFill.style.width = `${shieldPct}%`
       armorFill.style.width = `${armorPct}%`
@@ -891,92 +937,228 @@ export function createHud(container) {
         })
         .join('')
     },
-    // contacts: [{ x, z, kind }], already transformed into ship-local space
-    // (x = right, z = forward) and pre-filtered to radar range by the caller.
-    // elapsed drives the rotating sweep — gameState.simTime, never wall-clock.
+    // contacts: [{ x, y, z, kind }] ship-local (x=right, y=up, z=forward).
+    // 3D rectangular floor grid (heading-up) — rotates with ship via local frame.
+    // Bare canvas (no panel chrome). elapsed: gameState.simTime.
     updateRadar(contacts, range, elapsed = 0) {
-      radarCtx.clearRect(0, 0, radarSize, radarSize)
-      // Canvas cannot parse CSS vars — use the live theme palette.
+      radarCtx.clearRect(0, 0, radarW, radarH)
       const { accentRgb, accent } = getUiPalette()
       const ar = (a) => `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},${a})`
+      const invRange = 1 / Math.max(1, range)
 
-      // Range rings + crosshair, brighter than before so the grid itself reads.
-      radarCtx.strokeStyle = ar(0.3)
+      // Forward-tilted plane: bow (+z) toward top of canvas; pin to top edge.
+      const mapX = (x, _y, z) => x * (0.92 + 0.08 * (1 - z))
+      const mapY = (_x, y, z) => z * 0.42 + y * 0.9
+      const U = 1
+      // Bounds for floor + a little height so blips/stems aren't clipped.
+      let minIx = Infinity
+      let maxIx = -Infinity
+      let minIy = Infinity
+      let maxIy = -Infinity
+      for (const x of [-U, U]) {
+        for (const z of [-U, U]) {
+          for (const y of [0, 0.35]) {
+            const ix = mapX(x, y, z)
+            const iy = mapY(x, y, z)
+            if (ix < minIx) minIx = ix
+            if (ix > maxIx) maxIx = ix
+            if (iy < minIy) minIy = iy
+            if (iy > maxIy) maxIy = iy
+          }
+        }
+      }
+      const padX = 6
+      const padTop = 2
+      const padBot = 4
+      // Stretch to fill the full canvas (no empty gap under the title bar).
+      const scaleX = (radarW - padX * 2) / Math.max(1e-6, maxIx - minIx)
+      const scaleY = (radarH - padTop - padBot) / Math.max(1e-6, maxIy - minIy)
+      // Pin highest projected point to the top of the canvas.
+      const ox = radarW * 0.5 - ((minIx + maxIx) * 0.5) * scaleX
+      const oy = padTop + maxIy * scaleY
+      const project = (x, y, z) => ({
+        sx: ox + mapX(x, y, z) * scaleX,
+        sy: oy - mapY(x, y, z) * scaleY,
+        depth: -z + y * 0.25
+      })
+      const line = (a, b, stroke, width = 1) => {
+        radarCtx.strokeStyle = stroke
+        radarCtx.lineWidth = width
+        radarCtx.beginPath()
+        radarCtx.moveTo(a.sx, a.sy)
+        radarCtx.lineTo(b.sx, b.sy)
+        radarCtx.stroke()
+      }
+
+      // Soft rectangular floor fill (y = 0).
+      {
+        const c0 = project(-U, 0, -U)
+        const c1 = project(U, 0, -U)
+        const c2 = project(U, 0, U)
+        const c3 = project(-U, 0, U)
+        radarCtx.beginPath()
+        radarCtx.moveTo(c0.sx, c0.sy)
+        radarCtx.lineTo(c1.sx, c1.sy)
+        radarCtx.lineTo(c2.sx, c2.sy)
+        radarCtx.lineTo(c3.sx, c3.sy)
+        radarCtx.closePath()
+        radarCtx.fillStyle = 'rgba(6,12,22,0.4)'
+        radarCtx.fill()
+        radarCtx.strokeStyle = ar(0.4)
+        radarCtx.lineWidth = 1.2
+        radarCtx.stroke()
+      }
+
+      // Floor grid lines (ship-local — whole plane turns with hull via contacts).
+      radarCtx.strokeStyle = ar(0.18)
       radarCtx.lineWidth = 1
-      for (const frac of [0.5, 0.95]) {
+      const divs = 4
+      for (let i = 0; i <= divs; i++) {
+        const t = -U + (2 * U * i) / divs
+        const a0 = project(-U, 0, t)
+        const a1 = project(U, 0, t)
+        const b0 = project(t, 0, -U)
+        const b1 = project(t, 0, U)
         radarCtx.beginPath()
-        radarCtx.arc(radarCenter, radarCenter, radarCenter * frac, 0, Math.PI * 2)
+        radarCtx.moveTo(a0.sx, a0.sy)
+        radarCtx.lineTo(a1.sx, a1.sy)
+        radarCtx.moveTo(b0.sx, b0.sy)
+        radarCtx.lineTo(b1.sx, b1.sy)
         radarCtx.stroke()
       }
+      // Stronger ship axes on the floor.
+      line(project(0, 0, -U), project(0, 0, U), ar(0.5), 1.3)
+      line(project(-U, 0, 0), project(U, 0, 0), ar(0.32), 1)
 
-      // Bearing tick marks around the rim, every 15deg (longer every 45) —
-      // reads as a proper sensor dial rather than a bare circle.
-      radarCtx.strokeStyle = ar(0.45)
-      for (let i = 0; i < 24; i++) {
-        const a = (i / 24) * Math.PI * 2
-        const len = i % 3 === 0 ? 6 : 3
+      // Sweep wedge on the floor plane.
+      {
+        const sweep = elapsed * 1.5
+        radarCtx.save()
+        radarCtx.globalAlpha = 0.3
         radarCtx.beginPath()
-        radarCtx.moveTo(radarCenter + Math.cos(a) * (radarCenter - 1), radarCenter + Math.sin(a) * (radarCenter - 1))
-        radarCtx.lineTo(radarCenter + Math.cos(a) * (radarCenter - 1 - len), radarCenter + Math.sin(a) * (radarCenter - 1 - len))
-        radarCtx.stroke()
+        const o = project(0, 0, 0)
+        radarCtx.moveTo(o.sx, o.sy)
+        const steps = 12
+        for (let i = 0; i <= steps; i++) {
+          const a = sweep - 0.55 + (0.55 * i) / steps
+          // Clamp ray to square edge.
+          const sx = Math.sin(a)
+          const cz = Math.cos(a)
+          const m = Math.max(Math.abs(sx), Math.abs(cz)) || 1
+          const p = project((sx / m) * U * 0.98, 0, (cz / m) * U * 0.98)
+          radarCtx.lineTo(p.sx, p.sy)
+        }
+        radarCtx.closePath()
+        radarCtx.fillStyle = ar(0.28)
+        radarCtx.fill()
+        radarCtx.restore()
       }
-      radarCtx.beginPath()
-      radarCtx.moveTo(radarCenter, 4)
-      radarCtx.lineTo(radarCenter, radarSize - 4)
-      radarCtx.moveTo(4, radarCenter)
-      radarCtx.lineTo(radarSize - 4, radarCenter)
-      radarCtx.stroke()
 
-      // Rotating sweep wedge — the classic radar "scan" cue.
-      const sweepAngle = elapsed * 1.6
-      const sweepGradient = radarCtx.createConicGradient?.(sweepAngle - Math.PI / 2, radarCenter, radarCenter)
-      radarCtx.save()
-      radarCtx.beginPath()
-      radarCtx.moveTo(radarCenter, radarCenter)
-      radarCtx.arc(radarCenter, radarCenter, radarCenter, sweepAngle - 0.6, sweepAngle)
-      radarCtx.closePath()
-      if (sweepGradient) {
-        sweepGradient.addColorStop(0, ar(0))
-        sweepGradient.addColorStop(1, ar(0.35))
-        radarCtx.fillStyle = sweepGradient
-      } else {
-        radarCtx.fillStyle = ar(0.2)
-      }
-      radarCtx.fill()
-      radarCtx.restore()
-
+      // Own ship — nose along +Z (forward).
+      const origin = project(0, 0, 0)
+      const nose = project(0, 0, 0.14)
+      const ndx = nose.sx - origin.sx
+      const ndy = nose.sy - origin.sy
+      const nlen = Math.hypot(ndx, ndy) || 1
+      const fx = ndx / nlen
+      const fy = ndy / nlen
+      const px = -fy
+      const py = fx
       const palette = getUiPalette()
       radarCtx.fillStyle = palette.bright
       radarCtx.shadowColor = accent
       radarCtx.shadowBlur = 6
       radarCtx.beginPath()
-      radarCtx.arc(radarCenter, radarCenter, 2.5, 0, Math.PI * 2)
+      radarCtx.moveTo(origin.sx + fx * 5, origin.sy + fy * 5)
+      radarCtx.lineTo(origin.sx - fx * 3 + px * 3.2, origin.sy - fy * 3 + py * 3.2)
+      radarCtx.lineTo(origin.sx - fx * 1.2, origin.sy - fy * 1.2)
+      radarCtx.lineTo(origin.sx - fx * 3 - px * 3.2, origin.sy - fy * 3 - py * 3.2)
+      radarCtx.closePath()
       radarCtx.fill()
+      radarCtx.shadowBlur = 0
 
-      const scale = (radarCenter - 8) / range
-      for (const contact of contacts) {
-        const px = radarCenter + contact.x * scale
-        const py = radarCenter - contact.z * scale
-        const color = contactColor(contact.kind)
-        const pulse = contact.kind === 'hostile' ? 1 + 0.35 * Math.sin(elapsed * 8) : 1
+      // Contacts (ship-local → grid rotates with ship); height stems off floor.
+      const plotted = []
+      for (const c of contacts) {
+        let x = Math.max(-1, Math.min(1, c.x * invRange))
+        const y = Math.max(-1, Math.min(1, (c.y ?? 0) * invRange))
+        let z = Math.max(-1, Math.min(1, c.z * invRange))
+        const foot = project(x * U, 0, z * U)
+        const blip = project(x * U, y * 0.9, z * U)
+        plotted.push({ blip, foot, kind: c.kind, y, depth: blip.depth, targeted: !!c.targeted })
+      }
+      plotted.sort((a, b) => b.depth - a.depth)
+
+      for (const c of plotted) {
+        const color = contactColor(c.kind)
+        radarCtx.strokeStyle = color
+        radarCtx.globalAlpha = 0.5
+        radarCtx.lineWidth = 1
+        radarCtx.beginPath()
+        radarCtx.moveTo(c.foot.sx, c.foot.sy)
+        radarCtx.lineTo(c.blip.sx, c.blip.sy)
+        radarCtx.stroke()
+        radarCtx.globalAlpha = 0.55
+        radarCtx.beginPath()
+        radarCtx.arc(c.foot.sx, c.foot.sy, 1.5, 0, Math.PI * 2)
+        radarCtx.stroke()
+        radarCtx.globalAlpha = 1
+        const pulse = c.kind === 'hostile' ? 1 + 0.35 * Math.sin(elapsed * 8) : 1
+        const r = (c.kind === 'hostile' ? 3.2 : 2.4) * pulse
         radarCtx.fillStyle = color
         radarCtx.shadowColor = color
-        radarCtx.shadowBlur = 8
+        radarCtx.shadowBlur = 7
         radarCtx.beginPath()
-        radarCtx.arc(px, py, (contact.kind === 'hostile' ? 3.5 : 2.5) * pulse, 0, Math.PI * 2)
+        radarCtx.arc(c.blip.sx, c.blip.sy, r, 0, Math.PI * 2)
         radarCtx.fill()
+        if (Math.abs(c.y) > 0.08) {
+          radarCtx.shadowBlur = 0
+          radarCtx.strokeStyle = color
+          radarCtx.lineWidth = 1.2
+          const dy = c.y > 0 ? -r - 2 : r + 2
+          radarCtx.beginPath()
+          radarCtx.moveTo(c.blip.sx - 2.2, c.blip.sy + dy + (c.y > 0 ? 2.5 : -2.5))
+          radarCtx.lineTo(c.blip.sx, c.blip.sy + dy)
+          radarCtx.lineTo(c.blip.sx + 2.2, c.blip.sy + dy + (c.y > 0 ? 2.5 : -2.5))
+          radarCtx.stroke()
+        }
+        // Tab-lock: pure red flashing square border on the radar blip.
+        if (c.targeted) {
+          const flash = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(elapsed * 12))
+          const br = r + 4
+          radarCtx.shadowBlur = 12 * flash
+          radarCtx.shadowColor = '#ff0000'
+          radarCtx.strokeStyle = `rgba(255, 0, 0, ${flash})`
+          radarCtx.lineWidth = 2.25
+          radarCtx.strokeRect(c.blip.sx - br, c.blip.sy - br, br * 2, br * 2)
+          radarCtx.shadowBlur = 0
+        }
       }
       radarCtx.shadowBlur = 0
+      radarCtx.globalAlpha = 1
     },
     /** Sparse chromatic glitch on all HUD chrome while supercruising. */
     setCruiseGlitch(active) {
       hud.classList.toggle('cruise-glitch', !!active)
     },
     /**
+     * System-name chip opens System Scan (replaces the old dedicated button).
      * @param {() => void} fn
      */
     onSystemScan(fn) {
-      systemScanBtn.onclick = () => fn?.()
+      const open = () => fn?.()
+      systemLabelEl.onclick = (e) => {
+        e.preventDefault()
+        if (hud.classList.contains('docked')) return
+        open()
+      }
+      systemLabelEl.onkeydown = (e) => {
+        if (hud.classList.contains('docked')) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          open()
+        }
+      }
     },
     /**
      * While docked: hide flight HUD (stats, velocity, radar, target).

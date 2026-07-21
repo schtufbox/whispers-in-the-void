@@ -1,6 +1,11 @@
 import * as THREE from 'three'
 import { mulberry32, range, intRange, pick } from '../procgen/prng.js'
-import { stationMaterialMaps, STATION_NORMAL_STRENGTH } from './textures.js'
+import {
+  stationMaterialMaps,
+  cloneStationMaps,
+  retileUVsTriplanar,
+  STATION_NORMAL_STRENGTH
+} from './textures.js'
 import {
   buildStationFromFreeModel,
   STATION_TYPE_COUNT,
@@ -13,70 +18,96 @@ function hashString(str) {
   return Math.abs(h)
 }
 
-// Smooth-shaded PBR — denser tile maps + stronger normals for plated detail.
-const stationMaps = (role, strength = STATION_NORMAL_STRENGTH) =>
-  stationMaterialMaps(role, strength)
+// Dense PBR plating — maps are cloned per material with UV offsets so
+// modules don't share an identical tile phase.
+const stationMaps = (role, strength = STATION_NORMAL_STRENGTH, rng = null) => {
+  const base = stationMaterialMaps(role, strength)
+  if (!rng || !base.map) return base
+  return cloneStationMaps(base, {
+    offsetU: rng(),
+    offsetV: rng(),
+    rot: (rng() - 0.5) * 0.15
+  })
+}
 
 function hullMaterials(rng, { settlement = false } = {}) {
-  // Industrial metal: desaturated greys with a cool or warm bias.
-  const warm = rng() < 0.45
-  const hue = warm ? range(rng, 25, 45) : range(rng, 200, 220)
-  const hullColor = new THREE.Color().setHSL(hue / 360, range(rng, 0.06, 0.18), range(rng, 0.42, 0.58))
-  const accentColor = new THREE.Color().setHSL(((hue + range(rng, 100, 180)) % 360) / 360, range(rng, 0.35, 0.55), range(rng, 0.45, 0.6))
-  const panelColor = hullColor.clone().offsetHSL(0, 0, -0.12)
-  // Settlements use denser armor/plate maps for a grittier surface read.
+  // Long-service exterior: warm oxidized greys (light enough to read in scene fill).
+  const warm = rng() < 0.7
+  const hue = warm ? range(rng, 18, 42) : range(rng, 195, 215)
+  const hullColor = new THREE.Color().setHSL(hue / 360, range(rng, 0.08, 0.2), range(rng, 0.48, 0.58))
+  const accentColor = new THREE.Color().setHSL(
+    ((hue + range(rng, 80, 140)) % 360) / 360,
+    range(rng, 0.25, 0.42),
+    range(rng, 0.48, 0.58)
+  )
+  const panelColor = hullColor.clone().offsetHSL(range(rng, -0.02, 0.04), 0.04, range(rng, -0.08, -0.02))
   const hullRole = settlement ? 'settlementHull' : 'hull'
   const panelRole = settlement ? 'settlementPanel' : 'panel'
-  const nStr = settlement ? STATION_NORMAL_STRENGTH * 1.08 : STATION_NORMAL_STRENGTH
+  const nStr = settlement ? STATION_NORMAL_STRENGTH * 1.0 : STATION_NORMAL_STRENGTH * 0.9
+  const worn = (maps) => {
+    if (maps.aoMap) maps.aoMapIntensity = 0.95
+    return maps
+  }
   return {
     hull: new THREE.MeshStandardMaterial({
       color: hullColor,
-      metalness: 0.9,
-      roughness: 0.52,
-      envMapIntensity: 1.05,
-      ...stationMaps(hullRole, nStr)
+      metalness: 0.3,
+      roughness: 0.74,
+      envMapIntensity: 0.9,
+      ...worn(stationMaps(hullRole, nStr, rng))
     }),
     accent: new THREE.MeshStandardMaterial({
       color: accentColor,
-      metalness: 0.82,
-      roughness: 0.48,
-      envMapIntensity: 1.1,
-      ...stationMaps('accent', nStr)
+      metalness: 0.28,
+      roughness: 0.7,
+      envMapIntensity: 0.95,
+      ...worn(stationMaps('accent', nStr * 1.05, rng))
     }),
     panel: new THREE.MeshStandardMaterial({
       color: panelColor,
-      metalness: 0.88,
-      roughness: 0.55,
-      envMapIntensity: 0.95,
-      ...stationMaps(panelRole, nStr)
+      metalness: 0.28,
+      roughness: 0.78,
+      envMapIntensity: 0.88,
+      ...worn(stationMaps(panelRole, nStr * 1.1, rng))
     }),
     window: new THREE.MeshStandardMaterial({
-      color: 0x1a3040,
-      emissive: accentColor.clone().multiplyScalar(0.55),
-      emissiveIntensity: 0.75,
-      metalness: 0.15,
-      roughness: 0.18,
+      color: 0x152838,
+      emissive: accentColor.clone().multiplyScalar(0.4),
+      emissiveIntensity: 0.55,
+      metalness: 0.2,
+      roughness: 0.28,
       transparent: true,
-      opacity: 0.92
+      opacity: 0.9
     }),
     solar: new THREE.MeshStandardMaterial({
-      color: 0xd0e0f5,
-      emissive: 0x061428,
-      emissiveIntensity: 0.18,
-      metalness: 0.95,
-      roughness: 0.42,
-      envMapIntensity: 1.0,
-      ...stationMaps('solar', nStr * 0.9)
+      color: 0x9aabbc,
+      emissive: 0x041018,
+      emissiveIntensity: 0.12,
+      metalness: 0.7,
+      roughness: 0.55,
+      envMapIntensity: 0.85,
+      ...worn(stationMaps('solar', nStr * 0.95, rng))
     }),
     radiator: new THREE.MeshStandardMaterial({
-      color: 0x6a5048,
-      metalness: 0.88,
-      roughness: 0.58,
-      emissive: 0x1a0a08,
-      emissiveIntensity: 0.12,
-      envMapIntensity: 0.9,
-      ...stationMaps('radiator', nStr)
+      color: 0x5a4038,
+      metalness: 0.55,
+      roughness: 0.7,
+      emissive: 0x120806,
+      emissiveIntensity: 0.1,
+      envMapIntensity: 0.7,
+      ...worn(stationMaps('radiator', nStr, rng))
     })
+  }
+}
+
+/** Dense worn plating UVs + uv2 for aoMap (procedural meshes are world-sized). */
+function ensureWornUVs(geometry) {
+  if (!geometry?.attributes?.position) return
+  if (!geometry.userData.stationRetiled) {
+    retileUVsTriplanar(geometry, 0.32)
+    geometry.userData.stationRetiled = true
+  } else if (geometry.attributes.uv && !geometry.attributes.uv2) {
+    geometry.setAttribute('uv2', geometry.attributes.uv)
   }
 }
 
@@ -228,28 +259,28 @@ function addTrussModule(group, mats, from, to) {
 // added below for in-game stations/settlements.
 export function buildStationMesh() {
   const group = new THREE.Group()
-  // Same shared maps as in-game variants; fixed palette so the menu flyby
-  // stays consistent (not seeded off a body id).
+  // Worn menu flyby palette (fixed, not seeded off a body id).
   const mats = {
     hull: new THREE.MeshStandardMaterial({
-      color: 0x7d8f9a, metalness: 0.92, roughness: 0.72, ...stationMaps('hull')
+      color: 0x6a6258, metalness: 0.48, roughness: 0.68, envMapIntensity: 0.75, ...stationMaps('hull')
     }),
     accent: new THREE.MeshStandardMaterial({
-      color: 0x4fc3d9, metalness: 0.78, roughness: 0.68, ...stationMaps('accent')
+      color: 0x3a7a88, metalness: 0.42, roughness: 0.62, envMapIntensity: 0.8, ...stationMaps('accent')
     }),
     panel: new THREE.MeshStandardMaterial({
-      color: 0x3a4550, metalness: 0.88, roughness: 0.7, ...stationMaps('panel')
+      color: 0x3a3530, metalness: 0.45, roughness: 0.72, envMapIntensity: 0.7, ...stationMaps('panel')
     }),
     solar: new THREE.MeshStandardMaterial({
-      color: 0xd0e0f5,
-      metalness: 0.95,
+      color: 0x9aabbc,
+      metalness: 0.7,
       roughness: 0.55,
       emissive: 0x061428,
-      emissiveIntensity: 0.14,
+      emissiveIntensity: 0.12,
+      envMapIntensity: 0.85,
       ...stationMaps('solar')
     }),
     radiator: new THREE.MeshStandardMaterial({
-      color: 0x6a5048, metalness: 0.9, roughness: 0.78, ...stationMaps('radiator')
+      color: 0x5a4038, metalness: 0.55, roughness: 0.7, envMapIntensity: 0.7, ...stationMaps('radiator')
     }),
     window: new THREE.MeshStandardMaterial({
       color: 0x1a3040,
@@ -984,6 +1015,12 @@ export function buildStationMeshForBody(body) {
     group.userData.stationType = typeIndex
     group.userData.spinSpeed = 0.006 + rng() * 0.01
   }
+  // Dense worn panel UVs (procedural) / free models already retiled in tint.
+  group.traverse((o) => {
+    if (o.isMesh && o.geometry && !o.geometry.userData.stationRetiled) {
+      ensureWornUVs(o.geometry)
+    }
+  })
   return group
 }
 

@@ -15,7 +15,11 @@ import {
   defaultAccessoriesFor,
   normalizeAccessories,
   accessorySlotCount,
-  effectiveMiningCapacity
+  effectiveMiningCapacity,
+  effectiveCargoCapacity,
+  effectiveHardpoints,
+  effectiveMaxShields,
+  effectiveMaxArmor
 } from '../data/accessories.js'
 import {
   repairDrones,
@@ -394,6 +398,57 @@ function returnAccessoriesToStorage(storage, accessoryIds) {
   }
 }
 
+function returnWeaponToStorage(storage, weaponId) {
+  if (!weaponId) return
+  try {
+    getWeapon(weaponId)
+  } catch {
+    return
+  }
+  storage.weapons[weaponId] = (storage.weapons[weaponId] ?? 0) + 1
+}
+
+/**
+ * Strip fitted weapons / accessories / drones from a stored hull into station
+ * storage (used when selling a ship). Hull list price only — upgrades are not sold.
+ */
+function stripShipUpgradesToStorage(storage, stored) {
+  if (!stored || !storage) return
+  const cls = getShipClass(stored.classId)
+  const baseIds = cls?.alien ? ALIEN_BASE_WEAPON_ID : BASE_WEAPON_ID
+  const baseSet = new Set(Object.values(baseIds ?? {}))
+
+  // Equipped hardpoint weapons (skip free starter mounts).
+  for (const [hpId, wid] of Object.entries(stored.equippedWeapons ?? {})) {
+    if (!wid || baseSet.has(wid)) continue
+    returnWeaponToStorage(storage, wid)
+  }
+  stored.equippedWeapons = {}
+
+  // Spares on that hull.
+  for (const [wid, qty] of Object.entries(stored.spareWeapons ?? {})) {
+    const n = Math.max(0, Math.floor(Number(qty) || 0))
+    if (n < 1 || !wid) continue
+    storage.weapons[wid] = (storage.weapons[wid] ?? 0) + n
+  }
+  stored.spareWeapons = {}
+
+  // Accessories.
+  for (const id of stored.equippedAccessories ?? []) {
+    if (id) storage.accessories[id] = (storage.accessories[id] ?? 0) + 1
+  }
+  stored.equippedAccessories = defaultAccessoriesFor(cls)
+
+  // Installed drones.
+  storage.drones ??= {}
+  for (const d of stored.drones ?? []) {
+    const tid = d?.typeId ?? d?.id
+    if (!tid) continue
+    storage.drones[tid] = (storage.drones[tid] ?? 0) + 1
+  }
+  stored.drones = []
+}
+
 function mergeInto(target, source) {
   for (const [id, qty] of Object.entries(source)) target[id] = (target[id] ?? 0) + qty
 }
@@ -535,6 +590,8 @@ export function sellStoredShip(gameState, bodyId, index) {
   const storage = storageFor(gameState, bodyId)
   const stored = storage.ships[index]
   if (!stored) throw new Error('No such stored ship')
+  // Keep fitted upgrades — park them in bay storage, then sell the bare hull.
+  stripShipUpgradesToStorage(storage, stored)
   storage.ships.splice(index, 1)
   gameState.player.credits += Math.round(getShipClass(stored.classId).price * STORED_SHIP_RESALE_FRACTION)
 }
@@ -553,7 +610,9 @@ export function retrieveCargo(gameState, bodyId) {
   const storage = storageFor(gameState, bodyId)
   const used = cargoLoad(gameState.player.ship.cargo)
   const incoming = cargoLoad(storage.cargo)
-  if (used + incoming > shipClass.stats.cargoCapacity) throw new Error('Not enough cargo space to retrieve everything')
+  if (used + incoming > effectiveCargoCapacity(gameState.player.ship, shipClass)) {
+    throw new Error('Not enough cargo space to retrieve everything')
+  }
   mergeInto(gameState.player.ship.cargo, storage.cargo)
   storage.cargo = {}
 }
@@ -631,7 +690,7 @@ export function transferStorageItem(gameState, bodyId, kind, itemId, quantity, d
     }
     const available = storage.cargo[itemId] ?? 0
     const used = cargoLoad(ship.cargo)
-    const free = Math.max(0, shipClass.stats.cargoCapacity - used)
+    const free = Math.max(0, effectiveCargoCapacity(ship, shipClass) - used)
     const moved = Math.min(qty, available, free)
     const capacityLimited = moved < Math.min(qty, available)
     if (moved > 0) {
@@ -738,7 +797,7 @@ export function sellStoredWeapon(gameState, bodyId, weaponId, quantity = 1) {
 export function equipWeapon(gameState, bodyId, hardpointId, weaponId) {
   const ship = gameState.player.ship
   const shipClass = getShipClass(ship.classId)
-  const hardpoint = shipClass.hardpoints.find((hp) => hp.id === hardpointId)
+  const hardpoint = effectiveHardpoints(ship, shipClass).find((hp) => hp.id === hardpointId)
   if (!hardpoint) throw new Error('No such hardpoint')
   const mountType = hardpoint.type === 'missile' ? 'missile' : 'laser'
   const weapon = getWeapon(weaponId)
@@ -852,6 +911,23 @@ export function equipAccessory(gameState, bodyId, slotIndex, accessoryId) {
     storage.accessories[previousId] = (storage.accessories[previousId] ?? 0) + 1
   }
   ship.equippedAccessories[idx] = wantId
+
+  // Clamp defensive pools if shield/armour upgrades were removed.
+  ship.shields = Math.min(ship.shields ?? 0, effectiveMaxShields(ship, shipClass))
+  ship.armor = Math.min(ship.armor ?? 0, effectiveMaxArmor(ship, shipClass))
+
+  // Accessory hardpoints add mounts (even types the hull never had). They do
+  // NOT come with a free weapon — fit one from storage. Removing the accessory
+  // drops the mount and returns any fitted weapon to station storage.
+  const liveHpIds = new Set(effectiveHardpoints(ship, shipClass).map((h) => h.id))
+  ship.equippedWeapons ??= {}
+  for (const hpId of Object.keys(ship.equippedWeapons)) {
+    if (liveHpIds.has(hpId)) continue
+    const wid = ship.equippedWeapons[hpId]
+    delete ship.equippedWeapons[hpId]
+    if (wid) returnWeaponToStorage(storage, wid)
+  }
+  ensureDrones(ship, shipClass)
 }
 
 // Combat drones: buy into station storage, equip into empty bays on the active

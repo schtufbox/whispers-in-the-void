@@ -24,8 +24,8 @@ function loadMap(url, { srgb = false, repeatU, repeatV } = {}) {
     if (srgb) tex.colorSpace = THREE.SRGBColorSpace
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping
     tex.repeat.set(repeatU, repeatV)
-    // Sharper plating at glancing angles (stations / settlements / ships).
-    tex.anisotropy = 8
+    // High anisotropy so dense station plating stays sharp at glancing angles.
+    tex.anisotropy = 16
     tex.minFilter = THREE.LinearMipmapLinearFilter
     tex.magFilter = THREE.LinearFilter
     tex.generateMipmaps = true
@@ -238,27 +238,25 @@ export function getSurfaceTextures(archetype) {
 
 // Station / settlement / bay-interior surface roles — ambientCG CC0, tiled
 // on Three.js primitives. Shared across every archetype; per-body color still
-// comes from hullMaterials. Higher tile density + stronger normals so orbital
-// stations and surface settlements read more plated detail at typical ranges.
+// comes from hullMaterials. High tile density so STATION_SCALE (~190×) still
+// reads as fine plating rather than one stretched plate per wall.
 //
-//   hull/accent → Metal032
-//   panel/wall  → MetalPlates006
-//   floor/beam  → Metal013 (dark industrial)
-//   solar       → SolarPanel001
-//   radiator    → Metal013
-//   settlement  → MetalPlates013 (armor) for grit vs polished stations
+//   hull        → armor (busy rivets/plates)
+//   panel/wall  → plates
+//   floor/beam  → darkmetal
+//   solar / radiator as named
 const STATION_ROLE = {
-  hull: { prefix: 'metal', repeatU: 3.2, repeatV: 3.2 },
-  accent: { prefix: 'metal', repeatU: 2.8, repeatV: 2.8 },
-  panel: { prefix: 'plates', repeatU: 2.6, repeatV: 2.6 },
-  wall: { prefix: 'plates', repeatU: 3.4, repeatV: 2.8 },
-  floor: { prefix: 'darkmetal', repeatU: 4.5, repeatV: 4.5 },
-  beam: { prefix: 'darkmetal', repeatU: 2.8, repeatV: 2.8 },
-  solar: { prefix: 'solar', repeatU: 2.8, repeatV: 1.8 },
-  radiator: { prefix: 'darkmetal', repeatU: 2.6, repeatV: 2.6 },
-  // Surface settlements — denser plate / armor read than free-flying hulls.
-  settlementHull: { prefix: 'armor', repeatU: 3.0, repeatV: 2.6 },
-  settlementPanel: { prefix: 'plates', repeatU: 3.2, repeatV: 3.0 },
+  // Dense plating — stations are huge in world space after scale-up.
+  hull: { prefix: 'armor', repeatU: 14, repeatV: 12 },
+  accent: { prefix: 'trim', repeatU: 11, repeatV: 10 },
+  panel: { prefix: 'plates', repeatU: 16, repeatV: 14 },
+  wall: { prefix: 'plates', repeatU: 15, repeatV: 12 },
+  floor: { prefix: 'darkmetal', repeatU: 12, repeatV: 12 },
+  beam: { prefix: 'darkmetal', repeatU: 10, repeatV: 8 },
+  solar: { prefix: 'solar', repeatU: 8, repeatV: 5 },
+  radiator: { prefix: 'darkmetal', repeatU: 12, repeatV: 10 },
+  settlementHull: { prefix: 'armor', repeatU: 12, repeatV: 10 },
+  settlementPanel: { prefix: 'plates', repeatU: 14, repeatV: 12 },
   // Ship-specific CC0 maps (ambientCG PaintedMetal001 / Metal021 / MetalPlates013 / Metal009).
   // Tint with MeshStandardMaterial.color — painted hull takes class color best.
   shipHull: { prefix: 'painted', repeatU: 2.4, repeatV: 1.6 },
@@ -271,7 +269,184 @@ const STATION_ROLE = {
 }
 
 /** Default normal intensity for exterior station / settlement materials. */
-export const STATION_NORMAL_STRENGTH = 0.82
+export const STATION_NORMAL_STRENGTH = 1.85
+
+/**
+ * High-contrast worn hull albedo: dense panel grid + rivets + soot streaks.
+ * Primary exterior map so stations never read as solid plastic.
+ */
+function makeStationWornAlbedo() {
+  const key = 'stationWornAlbedo|proc|v4'
+  if (cache[key]) return cache[key]
+  const hasDom = typeof document !== 'undefined' && typeof document.createElement === 'function'
+  const hasOffscreen = typeof OffscreenCanvas !== 'undefined'
+  if (!hasDom && !hasOffscreen) return undefined
+
+  const W = 1024
+  const H = 1024
+  const canvas =
+    hasDom ? document.createElement('canvas') : new OffscreenCanvas(W, H)
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return undefined
+
+  const n2 = (x, y, s = 1) => {
+    const v =
+      Math.sin(x * 1.9 * s + y * 2.4 * s) * 0.4 +
+      Math.sin(x * 4.7 * s - y * 3.1 * s + 1.3) * 0.28 +
+      Math.sin(x * 11 * s + y * 8.5 * s + 0.9) * 0.18 +
+      Math.sin(x * 29 * s - y * 23 * s + 2.1) * 0.14
+    return v * 0.5 + 0.5
+  }
+
+  const img = ctx.createImageData(W, H)
+  const d = img.data
+  const panelPx = 80 // plate size readable at station flyby range
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const u = x / W
+      const v = y / H
+      const broad = n2(u * 5, v * 5)
+      const mid = n2(u * 14 + 2, v * 11)
+      const fine = n2(u * 40, v * 38)
+      const streak = Math.pow(Math.abs(Math.sin(u * 18 + v * 2.5 + mid * 3)), 2.2)
+      // Secondary hatch seams (half-cell offset) for extra breakup
+      const hatch = Math.pow(Math.abs(Math.sin(u * 52 + mid) * Math.sin(v * 48)), 4)
+
+      const gx = x % panelPx
+      const gy = y % panelPx
+      // Panel seams (less crushing than v3 so overall albedo stays readable)
+      const seam =
+        gx < 3 || gy < 3 || gx > panelPx - 4 || gy > panelPx - 4 ? 0.55 : 1
+      const lip =
+        (gx === 5 || gy === 5 || gx === panelPx - 6 || gy === panelPx - 6) ? 0.88 : 1
+      const rx = Math.min(gx, panelPx - 1 - gx)
+      const ry = Math.min(gy, panelPx - 1 - gy)
+      const rivet = rx < 5 && ry < 5 && (rx + ry) > 2 && (rx + ry) < 8 ? 0.72 : 1
+      const bolt =
+        ((gx > 16 && gx < 22 && (gy < 4 || gy > panelPx - 5)) ||
+          (gy > 16 && gy < 22 && (gx < 4 || gx > panelPx - 5)))
+          ? 0.78
+          : 1
+
+      // Brighter dirty metal so map×color doesn't go pure black under fill light
+      let lum = 0.52 + broad * 0.28 + mid * 0.12 - streak * 0.22 - fine * 0.08 - hatch * 0.08
+      lum *= seam * lip * rivet * bolt
+      lum = Math.max(0.22, Math.min(0.92, lum))
+
+      const warm = 1.1 + mid * 0.1
+      const cool = 0.88 - streak * 0.12
+      const r = Math.floor(lum * 255 * warm)
+      const g = Math.floor(lum * 255 * (0.94 + fine * 0.05))
+      const b = Math.floor(lum * 255 * cool)
+      const i = (y * W + x) * 4
+      d[i] = Math.min(255, r)
+      d[i + 1] = Math.min(255, g)
+      d[i + 2] = Math.min(255, b)
+      d[i + 3] = 255
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+
+  // Roughness companion (seams / soot = rougher)
+  const rCanvas =
+    hasDom ? document.createElement('canvas') : new OffscreenCanvas(W, H)
+  rCanvas.width = W
+  rCanvas.height = H
+  const rctx = rCanvas.getContext('2d', { willReadFrequently: true })
+  const rimg = rctx.createImageData(W, H)
+  const rd = rimg.data
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const u = x / W
+      const v = y / H
+      const mid = n2(u * 14 + 2, v * 11)
+      const fine = n2(u * 40, v * 38)
+      const streak = Math.pow(Math.abs(Math.sin(u * 18 + v * 2.5 + mid * 3)), 2.2)
+      const gx = x % panelPx
+      const gy = y % panelPx
+      const seam = gx < 3 || gy < 3 || gx > panelPx - 4 || gy > panelPx - 4 ? 0.92 : 0.48
+      let rough = seam + streak * 0.3 + fine * 0.18
+      rough = Math.max(0.35, Math.min(0.99, rough))
+      const i = (y * W + x) * 4
+      const g = Math.floor(rough * 255)
+      rd[i] = g
+      rd[i + 1] = g
+      rd[i + 2] = g
+      rd[i + 3] = 255
+    }
+  }
+  rctx.putImageData(rimg, 0, 0)
+
+  // Normal bump from albedo luminance (stronger slopes for distant read)
+  const nCanvas =
+    hasDom ? document.createElement('canvas') : new OffscreenCanvas(W, H)
+  nCanvas.width = W
+  nCanvas.height = H
+  const nctx = nCanvas.getContext('2d', { willReadFrequently: true })
+  const nimg = nctx.createImageData(W, H)
+  const nd = nimg.data
+  const sampleL = (x, y) => {
+    const i = (((y + H) % H) * W + ((x + W) % W)) * 4
+    return d[i] / 255
+  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const dx = sampleL(x + 1, y) - sampleL(x - 1, y)
+      const dy = sampleL(x, y + 1) - sampleL(x, y - 1)
+      let nx = -dx * 7
+      let ny = -dy * 7
+      let nz = 1
+      const len = Math.hypot(nx, ny, nz) || 1
+      nx /= len
+      ny /= len
+      nz /= len
+      const i = (y * W + x) * 4
+      nd[i] = Math.floor((nx * 0.5 + 0.5) * 255)
+      nd[i + 1] = Math.floor((ny * 0.5 + 0.5) * 255)
+      nd[i + 2] = Math.floor((nz * 0.5 + 0.5) * 255)
+      nd[i + 3] = 255
+    }
+  }
+  nctx.putImageData(nimg, 0, 0)
+
+  const wrap = (canvasEl, srgb = false) => {
+    const tex = new THREE.CanvasTexture(canvasEl)
+    if (srgb) tex.colorSpace = THREE.SRGBColorSpace
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+    // Dense tiling in local mesh units after triplanar re-UV
+    tex.repeat.set(1, 1)
+    tex.anisotropy = 16
+    tex.minFilter = THREE.LinearMipmapLinearFilter
+    tex.magFilter = THREE.LinearFilter
+    tex.generateMipmaps = true
+    tex.needsUpdate = true
+    return tex
+  }
+
+  const set = {
+    map: wrap(canvas, true),
+    roughnessMap: wrap(rCanvas),
+    normalMap: wrap(nCanvas),
+    aoMap: wrap(canvas) // luminance mottle doubles as AO
+  }
+  cache[key] = set
+  return set
+}
+
+/**
+ * Free procedural space-weathering maps (AO mottle + blotchy roughness).
+ * Multiplies with plate albedos via aoMap; darkens grime, dulls specular patches.
+ */
+function makeStationWearTextures() {
+  // Worn albedo set is the primary exterior look now.
+  return makeStationWornAlbedo()
+}
+
+export function getStationWearTextures() {
+  return makeStationWearTextures()
+}
 
 export function getStationTextures(role) {
   const cfg = STATION_ROLE[role]
@@ -283,15 +458,94 @@ export function getStationTextures(role) {
   })
 }
 
-/** Map fields for MeshStandardMaterial, shared texture objects. */
+/**
+ * Clone station maps so each mesh can have its own offset/rotation without
+ * fighting the shared GPU image. Image data stays shared.
+ */
+export function cloneStationMaps(maps, { offsetU = 0, offsetV = 0, rot = 0 } = {}) {
+  if (!maps?.map && !maps?.aoMap) return maps ?? {}
+  const cloneOne = (tex) => {
+    if (!tex) return tex
+    const c = tex.clone()
+    c.wrapS = tex.wrapS
+    c.wrapT = tex.wrapT
+    if (tex.repeat) c.repeat.copy(tex.repeat)
+    c.offset.set(offsetU, offsetV)
+    if (rot) c.rotation = rot
+    c.center.set(0.5, 0.5)
+    c.anisotropy = Math.max(tex.anisotropy || 1, 16)
+    c.needsUpdate = true
+    return c
+  }
+  return {
+    map: cloneOne(maps.map),
+    normalMap: cloneOne(maps.normalMap),
+    roughnessMap: cloneOne(maps.roughnessMap),
+    metalnessMap: cloneOne(maps.metalnessMap),
+    aoMap: cloneOne(maps.aoMap),
+    aoMapIntensity: maps.aoMapIntensity,
+    normalScale: maps.normalScale
+      ? maps.normalScale.clone()
+      : new THREE.Vector2(STATION_NORMAL_STRENGTH, STATION_NORMAL_STRENGTH)
+  }
+}
+
+/**
+ * Exterior station maps: high-contrast worn panel albedo (primary) so surfaces
+ * never read as featureless solid color even with poor source UVs.
+ * Plate/armor photos still feed metalness when available.
+ */
 export function stationMaterialMaps(role, normalStrength = STATION_NORMAL_STRENGTH) {
   const t = getStationTextures(role)
-  if (!t) return {}
+  const wear = getStationWearTextures()
+  if (!wear?.map && !t) return {}
   return {
-    map: t.map,
-    normalMap: t.normalMap,
-    roughnessMap: t.roughnessMap,
-    metalnessMap: t.metalnessMap,
-    normalScale: new THREE.Vector2(normalStrength, normalStrength)
+    map: wear?.map ?? t?.map,
+    normalMap: wear?.normalMap ?? t?.normalMap,
+    roughnessMap: wear?.roughnessMap ?? t?.roughnessMap,
+    metalnessMap: t?.metalnessMap,
+    aoMap: wear?.aoMap,
+    aoMapIntensity: wear?.aoMap ? 0.9 : undefined,
+    normalScale: new THREE.Vector2(normalStrength * 0.85, normalStrength * 0.85)
   }
+}
+
+/**
+ * Rewrite mesh UVs with triplanar projection in local space so tiled station
+ * maps always cover surfaces densely (Kenney atlas UVs do not tile).
+ * @param {THREE.BufferGeometry} geometry
+ * @param {number} tilesPerUnit denser = more panels per metre of mesh
+ */
+export function retileUVsTriplanar(geometry, tilesPerUnit = 1.25) {
+  if (!geometry?.attributes?.position) return
+  if (!geometry.attributes.normal) geometry.computeVertexNormals()
+  const pos = geometry.attributes.position
+  const nor = geometry.attributes.normal
+  const n = pos.count
+  const uvs = new Float32Array(n * 2)
+  const dens = Math.max(0.05, tilesPerUnit)
+  for (let i = 0; i < n; i++) {
+    const x = pos.getX(i)
+    const y = pos.getY(i)
+    const z = pos.getZ(i)
+    const ax = Math.abs(nor.getX(i))
+    const ay = Math.abs(nor.getY(i))
+    const az = Math.abs(nor.getZ(i))
+    let u
+    let v
+    if (ax >= ay && ax >= az) {
+      u = z * dens
+      v = y * dens
+    } else if (ay >= ax && ay >= az) {
+      u = x * dens
+      v = z * dens
+    } else {
+      u = x * dens
+      v = y * dens
+    }
+    uvs[i * 2] = u
+    uvs[i * 2 + 1] = v
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geometry.setAttribute('uv2', geometry.attributes.uv)
 }

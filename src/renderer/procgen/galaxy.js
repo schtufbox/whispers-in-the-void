@@ -554,8 +554,9 @@ function makeStation(rng, idCounter, system) {
     placement = { position: [0, 0, r], parentId: undefined, orbitsStar: false }
   }
 
+  const stationId = `body-${idCounter}`
   return {
-    id: `body-${idCounter}`,
+    id: stationId,
     name: generateBodyName(rng, 'station', system._usedNames),
     kind: 'station',
     parentId: placement.parentId,
@@ -566,8 +567,21 @@ function makeStation(rng, idCounter, system) {
     hasMissions: true,
     // Every station stocks a full shipyard (buy/sell ships + armoury).
     hasShipyard: true,
-    hasShipParts: rng() < 0.06
+    hasShipParts: rng() < 0.06,
+    // ~30% of stations — FNV-ish hash of body id (stable with galaxy seed ids).
+    hasCloneBay: stationCloneBayFromId(stationId)
   }
+}
+
+/** Keep in sync with game/clones.js stationHasCloneBay (no import cycle). */
+function stationCloneBayFromId(stationId) {
+  let h = 2166136261
+  const s = `clonebay:${stationId}`
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0) % 100 < 30
 }
 
 function makeSettlement(rng, idCounter, system, { force = false } = {}) {
@@ -1281,8 +1295,82 @@ function placeWhispersSystem(systems, bodyIdCounter, usedNames = null) {
   station.name = WHISPERS_STATION_NAME
   station.hasMissions = true
   station.hasShipyard = true
+  // Keep whatever clone-bay roll makeStation already made (stable with seed).
+  if (typeof station.hasCloneBay !== 'boolean') station.hasCloneBay = false
+  // Always park on a fixed star orbit outside the trinary companions + planets
+  // (bodies don't animate around the sun — "stationary" = orbitsStar, not planet-bound).
+  placeWhispersPalaceOnStarOrbit(station, rim)
 
   return bodyIdCounter
+}
+
+/**
+ * Worst-case clear of the outer trinary companion:
+ *   max mainSequence core = 130 × STAR_SIZE_SCALE 225 = 29250
+ *   outer sep ≈ 417500 (halo-stacked), + companion halo 3.5× + station shell.
+ * Station sits outside this so secondary/tertiary never sweep through it.
+ */
+const WHISPERS_TRINARY_OUTER_CLEAR = 560000
+
+function placeWhispersPalaceOnStarOrbit(station, system) {
+  station.parentId = undefined
+  station.orbitsStar = true
+
+  const scale = system.sizeScale ?? 1
+  let r = WHISPERS_TRINARY_OUTER_CLEAR * scale
+  for (const b of system.bodies) {
+    if (b.id === station.id) continue
+    if (b.kind === 'planet' || b.kind === 'moon') {
+      r = Math.max(
+        r,
+        xzOrbitRadius(b.position) + (b.radius ?? 0) + STATION_CLEARANCE_RADIUS + STATION_PLANET_ORBIT_GAP
+      )
+    } else if (b.kind === 'station' && b.orbitsStar) {
+      r = Math.max(
+        r,
+        xzOrbitRadius(b.position) + STATION_CLEARANCE_RADIUS * 2 + MOON_ORBIT_CLEARANCE_MARGIN
+      )
+    } else if (b.kind === 'asteroidField') {
+      r = Math.max(
+        r,
+        xzOrbitRadius(b.position) + (b.radius ?? 0) + STATION_CLEARANCE_RADIUS + MOON_ORBIT_CLEARANCE_MARGIN
+      )
+    }
+  }
+
+  // Deterministic angle from system+station id (stable across regenerations).
+  const angSeed = hashStringStable(`${system.id}:${station.id}:palace-orbit`)
+  let theta = ((angSeed % 3600) / 3600) * Math.PI * 2
+  const y = ((angSeed % 17) - 8) * 0.004 * r
+
+  for (let attempt = 0; attempt < 96; attempt++) {
+    const pos = [Math.cos(theta) * r, y, Math.sin(theta) * r]
+    if (!positionOverlapsBodiesExcept(pos, STATION_CLEARANCE_RADIUS, system, station.id)) {
+      station.position = pos
+      return
+    }
+    theta += 0.41
+    if (attempt > 0 && attempt % 16 === 0) r += STATION_CLEARANCE_RADIUS
+  }
+  station.position = [r, y, 0]
+}
+
+function positionOverlapsBodiesExcept(position, ownShell, system, excludeId) {
+  for (const b of system.bodies) {
+    if (b.id === excludeId) continue
+    if (
+      b.kind !== 'planet' &&
+      b.kind !== 'moon' &&
+      b.kind !== 'station' &&
+      b.kind !== 'settlement' &&
+      b.kind !== 'asteroidField'
+    ) {
+      continue
+    }
+    const need = ownShell + bodyShellRadius(b) + clearanceMarginFor(b.kind)
+    if (dist3(position, b.position) < need) return true
+  }
+  return false
 }
 
 function hashStringStable(str) {

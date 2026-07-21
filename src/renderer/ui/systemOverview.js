@@ -7,10 +7,10 @@ import { escapeHtml } from './escapeHtml.js'
 export const SYSTEM_STAR_WAYPOINT_ID = 'system-star'
 
 const STYLE = `
-/* Right column: radar (top:16 h:176) → System Scan (top:198) → overview.
-   Button ends ~230px; 6px gap → top 236. */
+/* Top right — target panel sits to the left when locked. */
 #system-overview {
-  position: fixed; top: 236px; right: 16px; width: 176px; max-height: calc(100vh - 252px);
+  position: fixed; top: 16px; right: 16px; bottom: auto; width: 240px;
+  max-height: min(55vh, calc(100vh - 32px));
   z-index: 8; font-family: monospace; color: var(--ui-text); pointer-events: none;
   display: none;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));

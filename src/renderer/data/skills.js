@@ -66,6 +66,13 @@ export const SKILLS = [
     name: 'Drones',
     bookName: 'Skillbook: Drones',
     description: 'Each level: +1% drone damage and +1% drone speed (player only).'
+  },
+  {
+    id: 'cloning',
+    name: 'Cloning',
+    bookName: 'Skillbook: Cloning',
+    description:
+      'Base capacity is 1 clone. Each level adds one clone slot. Level 1+ unlocks clone jumps between bodies (Clone Bay).'
   }
 ]
 

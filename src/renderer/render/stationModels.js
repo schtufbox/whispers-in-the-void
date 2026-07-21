@@ -1,6 +1,13 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
-import { stationMaterialMaps } from './textures.js'
+import {
+  stationMaterialMaps,
+  cloneStationMaps,
+  retileUVsTriplanar,
+  STATION_NORMAL_STRENGTH
+} from './textures.js'
+
+const _worldScale = new THREE.Vector3()
 
 // Three orbital station archetypes from Kenney Space Kit modules (CC0 —
 // public/models/stations/LICENSE.txt). Each type is one solid primary
@@ -75,6 +82,7 @@ function cloneModule(modName) {
 /**
  * Add a module with its *bottom* sitting on y=0 (Kenney ground convention)
  * after we centered it — so we lift by half-height.
+ * Returns measured scaled size + placement for snug attachment of neighbors.
  */
 function addModule(group, modName, x, z, rotY = 0, uniformScale = 1) {
   const cloned = cloneModule(modName)
@@ -82,11 +90,13 @@ function addModule(group, modName, x, z, rotY = 0, uniformScale = 1) {
   const { obj, size } = cloned
   obj.scale.setScalar(uniformScale)
   obj.rotation.y = rotY
+  const sx = size.x * uniformScale
+  const sy = size.y * uniformScale
+  const sz = size.z * uniformScale
   // Centered model: bottom was at -size.y/2; lift so it sits on y=0.
-  const halfH = (size.y * uniformScale) / 2
-  obj.position.set(x, halfH, z)
+  obj.position.set(x, sy / 2, z)
   group.add(obj)
-  return { size: size.multiplyScalar(uniformScale), x, z, rotY }
+  return { size: new THREE.Vector3(sx, sy, sz), x, z, rotY, obj }
 }
 
 /** Stack module on top of another (same x/z), sitting on `baseTopY`. */
@@ -100,6 +110,17 @@ function stackModule(group, modName, x, z, baseTopY, rotY = 0, uniformScale = 1)
   obj.position.set(x, baseTopY + h / 2, z)
   group.add(obj)
   return baseTopY + h
+}
+
+/** Horizontal gap between two modules after rotation about Y (AABB on XZ). */
+function moduleHalfXZ(size, rotY = 0) {
+  const c = Math.abs(Math.cos(rotY))
+  const s = Math.abs(Math.sin(rotY))
+  // Rotated AABB extents.
+  return {
+    hx: (size.x * c + size.z * s) * 0.5,
+    hz: (size.x * s + size.z * c) * 0.5
+  }
 }
 
 /**
@@ -136,55 +157,86 @@ function normalizeGroup(group, targetSize = 26) {
 // --- Type 0: Large hangar station (one solid hangar + dish + small wing) --
 function buildHangarStation() {
   const g = new THREE.Group()
-  // Main body — already a complete building.
-  addModule(g, 'hangar_largeA', 0, 0, 0, 1)
-  // Small side hangar snug against the long side (hangar is ~2 wide × 3 deep).
-  addModule(g, 'hangar_smallA', 0, 2.05, Math.PI, 0.85)
-  // Dish on the roof (hangar height ~1).
+  const main = addModule(g, 'hangar_largeA', 0, 0, 0, 1)
+  if (!main) return normalizeGroup(g, 28)
+  const mainXZ = moduleHalfXZ(main.size, 0)
+  // Side hangar snug on +Z face (overlap slightly so no gap after normalize).
+  const sideScale = 0.85
+  const side = addModule(g, 'hangar_smallA', 0, 0, Math.PI, sideScale)
+  if (side) {
+    const sideXZ = moduleHalfXZ(side.size, Math.PI)
+    side.obj.position.z = mainXZ.hz + sideXZ.hz * 0.92
+  }
+  // Dish on the roof.
   const dish = cloneModule('satelliteDish')
   if (dish) {
-    dish.obj.scale.setScalar(0.9)
-    dish.obj.position.set(0, 1 + dish.size.y * 0.45, -0.3)
+    const ds = 0.9
+    dish.obj.scale.setScalar(ds)
+    dish.obj.position.set(0, main.size.y + (dish.size.y * ds) * 0.35, 0)
     g.add(dish.obj)
   }
-  // Short corridor docking collar on the front.
-  addModule(g, 'corridor', 0, -2.0, 0, 0.9)
+  // Corridor docking collar on the front (−Z).
+  const cor = addModule(g, 'corridor', 0, 0, 0, 0.9)
+  if (cor) {
+    const corXZ = moduleHalfXZ(cor.size, 0)
+    cor.obj.position.z = -(mainXZ.hz + corXZ.hz * 0.92)
+  }
   return normalizeGroup(g, 28)
 }
 
 // --- Type 1: Round habitat dome + pad ------------------------------------
 function buildDomeStation() {
   const g = new THREE.Group()
-  addModule(g, 'platform_large', 0, 0, 0, 1.6)
-  addModule(g, 'hangar_roundGlass', 0, 0, 0, 1)
-  // Side machine block tight to the dome (~1.6 radius).
-  addModule(g, 'machine_generator', 2.0, 0.4, -0.3, 1.4)
-  addModule(g, 'hangar_smallA', -2.2, 0, Math.PI / 2, 0.7)
+  const pad = addModule(g, 'platform_large', 0, 0, 0, 1.6)
+  const dome = addModule(g, 'hangar_roundGlass', 0, 0, 0, 1)
+  const domeXZ = dome ? moduleHalfXZ(dome.size, 0) : { hx: 1, hz: 1 }
+  // Machine flush to +X of dome.
+  const mach = addModule(g, 'machine_generator', 0, 0, -0.3, 1.2)
+  if (mach) {
+    const mXZ = moduleHalfXZ(mach.size, -0.3)
+    mach.obj.position.x = domeXZ.hx + mXZ.hx * 0.9
+    mach.obj.position.z = 0.15
+  }
+  // Small hangar on −X.
+  const small = addModule(g, 'hangar_smallA', 0, 0, Math.PI / 2, 0.7)
+  if (small) {
+    const sXZ = moduleHalfXZ(small.size, Math.PI / 2)
+    small.obj.position.x = -(domeXZ.hx + sXZ.hx * 0.9)
+  }
   const dish = cloneModule('satelliteDish')
-  if (dish) {
-    dish.obj.scale.setScalar(1.1)
-    dish.obj.position.set(0.6, 1.55, 0.4)
+  if (dish && dome) {
+    const ds = 1.0
+    dish.obj.scale.setScalar(ds)
+    dish.obj.position.set(0.2, dome.size.y + dish.size.y * ds * 0.3, 0.2)
     g.add(dish.obj)
   }
+  // Keep pad under everything (y already 0-based).
+  if (pad) pad.obj.position.y = pad.size.y * 0.5
   return normalizeGroup(g, 26)
 }
 
 // --- Type 2: Gate tower with rocket stack --------------------------------
 function buildGateStation() {
   const g = new THREE.Group()
-  // Platform base
-  addModule(g, 'platform_large', 0, 0, 0, 1.8)
-  // Gate is small (~1×1×0.5) — scale up so it reads as the main structure.
-  addModule(g, 'gate_complex', 0, 0, 0, 2.4)
-  // Rocket stack beside the gate, sitting on the pad.
+  const pad = addModule(g, 'platform_large', 0, 0, 0, 1.8)
+  // Gate scaled up as the main structure.
+  const gate = addModule(g, 'gate_complex', 0, 0, 0, 2.4)
+  const padXZ = pad ? moduleHalfXZ(pad.size, 0) : { hx: 2, hz: 2 }
+  // Rocket stack on the pad, just inside the edge.
+  const rx = padXZ.hx * 0.55
+  const rz = padXZ.hz * 0.15
   let top = 0
-  top = stackModule(g, 'rocket_baseA', 1.9, 0.3, top, 0, 0.75)
-  top = stackModule(g, 'rocket_fuelA', 1.9, 0.3, top, 0, 0.75)
-  stackModule(g, 'rocket_finsA', 1.9, 0.3, top, 0, 0.75)
-  // Chimney opposite side
-  addModule(g, 'chimney_detailed', -1.7, 0.2, 0, 1.1)
-  // Second hangar module as cargo bay
-  addModule(g, 'hangar_roundA', 0, -2.0, 0, 0.65)
+  top = stackModule(g, 'rocket_baseA', rx, rz, top, 0, 0.75)
+  top = stackModule(g, 'rocket_fuelA', rx, rz, top, 0, 0.75)
+  stackModule(g, 'rocket_finsA', rx, rz, top, 0, 0.75)
+  // Chimney opposite side, still on the pad.
+  addModule(g, 'chimney_detailed', -rx * 0.9, rz, 0, 1.0)
+  // Cargo bay on −Z face of pad, snug.
+  const bay = addModule(g, 'hangar_roundA', 0, 0, 0, 0.65)
+  if (bay) {
+    const bXZ = moduleHalfXZ(bay.size, 0)
+    bay.obj.position.z = -(padXZ.hz + bXZ.hz * 0.85)
+  }
   return normalizeGroup(g, 30)
 }
 
@@ -243,41 +295,72 @@ export function preloadStationModels() {
 }
 
 function tintMaterials(root, hullColor, accentColor, panelColor) {
-  // Match exterior station detail density (stronger normals + denser tiles).
-  const mapsHull = stationMaterialMaps('hull')
-  const mapsAccent = stationMaterialMaps('accent')
-  const mapsPanel = stationMaterialMaps('panel')
+  // Worn panel maps need denser UVs than Kenney atlas packing. Geometry is
+  // small in local space; scale lives on parents — bake world scale into dens.
+  const mapsHull = stationMaterialMaps('hull', STATION_NORMAL_STRENGTH)
+  const mapsAccent = stationMaterialMaps('accent', STATION_NORMAL_STRENGTH * 1.05)
+  const mapsPanel = stationMaterialMaps('panel', STATION_NORMAL_STRENGTH * 1.1)
+  root.updateMatrixWorld(true)
   let i = 0
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return
     // Keep nav beacons (MeshBasicMaterial) alone.
     if (o.material.isMeshBasicMaterial) return
+    if (o.geometry) {
+      // Only re-UV once per shared BufferGeometry (clones share geo).
+      if (!o.geometry.userData.stationRetiled) {
+        o.getWorldScale(_worldScale)
+        const sc = Math.max(_worldScale.x, _worldScale.y, _worldScale.z, 0.01)
+        // World dens ~0.28 × 12.8 plates/UV ≈ plate every ~0.3 world units
+        retileUVsTriplanar(o.geometry, 0.28 * sc)
+        o.geometry.userData.stationRetiled = true
+      } else if (o.geometry.attributes.uv && !o.geometry.attributes.uv2) {
+        o.geometry.setAttribute('uv2', o.geometry.attributes.uv)
+      }
+    }
     const mats = Array.isArray(o.material) ? o.material : [o.material]
-    const replaced = mats.map((orig) => {
+    const replaced = mats.map(() => {
       const pick = i++ % 5
       // Mostly hull, occasional accent/panel — avoids rainbow noise.
       const role = pick === 0 ? 'accent' : pick === 1 ? 'panel' : 'hull'
       const color =
         role === 'accent' ? accentColor : role === 'panel' ? panelColor : hullColor
-      const maps = role === 'accent' ? mapsAccent : role === 'panel' ? mapsPanel : mapsHull
-      // Brighten slightly so metal maps don't crush Kenney silhouettes to black.
-      const c = color.clone().offsetHSL(0, 0, 0.08)
+      const baseMaps = role === 'accent' ? mapsAccent : role === 'panel' ? mapsPanel : mapsHull
+      const maps = cloneStationMaps(baseMaps, {
+        offsetU: (i * 0.17) % 1,
+        offsetV: (i * 0.31) % 1,
+        rot: (i % 4) * 0.05
+      })
+      // Per-panel wear variance (mottled age, not factory-fresh).
+      const c = color.clone().offsetHSL(
+        ((i * 17) % 7) * 0.004 - 0.012,
+        0.04,
+        ((i * 13) % 5) * 0.018 - 0.06
+      )
+      // Brighter base so map×color still reads under sparse scene lights
+      // (dark worn albedo × mid greys was pure black silhouettes).
       return new THREE.MeshStandardMaterial({
         color: c,
-        metalness: 0.82,
-        roughness: 0.42,
-        envMapIntensity: 1.05,
+        metalness: 0.28 + (i % 3) * 0.04,
+        roughness: 0.72 + (i % 4) * 0.04,
+        envMapIntensity: 0.95,
         map: maps.map,
         normalMap: maps.normalMap,
         roughnessMap: maps.roughnessMap,
         metalnessMap: maps.metalnessMap,
-        normalScale: maps.normalScale,
-        side: THREE.DoubleSide
+        aoMap: maps.aoMap,
+        aoMapIntensity: maps.aoMap ? 0.95 : 1,
+        normalScale: maps.normalScale
+          ? maps.normalScale.clone().multiplyScalar(0.75)
+          : undefined,
+        side: THREE.FrontSide
       })
     })
     o.material = replaced.length === 1 ? replaced[0] : replaced
   })
 }
+
+// ponytail: AABB greebles floated off the hull ("bits not attached") — skip them.
 
 function addNavBeacons(group, phaseBase = 0) {
   const mk = (pos, color, phase, r = 0.35) => {
@@ -317,12 +400,12 @@ export function buildStationFromFreeModel(typeIndex, colorRng) {
   const group = template.clone(true)
   group.name = `station-${STATION_TYPE_NAMES[idx]}`
 
-  const warm = colorRng() < 0.45
-  const hue = warm ? 25 + colorRng() * 20 : 200 + colorRng() * 20
-  // Brighter base so stations read against space, not as black lumps.
-  const hullColor = new THREE.Color().setHSL(hue / 360, 0.1 + colorRng() * 0.12, 0.52 + colorRng() * 0.12)
-  const accentColor = new THREE.Color().setHSL(((hue + 100 + colorRng() * 80) % 360) / 360, 0.45, 0.55)
-  const panelColor = hullColor.clone().offsetHSL(0, 0, -0.1)
+  // Space-worn exterior: warmer oxidized greys (light enough to catch fill light).
+  const warm = colorRng() < 0.72
+  const hue = warm ? 18 + colorRng() * 28 : 195 + colorRng() * 25
+  const hullColor = new THREE.Color().setHSL(hue / 360, 0.1 + colorRng() * 0.12, 0.48 + colorRng() * 0.12)
+  const accentColor = new THREE.Color().setHSL(((hue + 90 + colorRng() * 70) % 360) / 360, 0.28 + colorRng() * 0.2, 0.5 + colorRng() * 0.1)
+  const panelColor = hullColor.clone().offsetHSL((colorRng() - 0.5) * 0.05, 0.05, -0.06 - colorRng() * 0.05)
   tintMaterials(group, hullColor, accentColor, panelColor)
   addNavBeacons(group, colorRng() * Math.PI * 2)
 

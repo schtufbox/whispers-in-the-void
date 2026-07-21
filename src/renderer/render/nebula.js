@@ -30,14 +30,12 @@ export function createNebula(clusterCount = 9, puffsPerCluster = 20) {
 
   for (let c = 0; c < clusterCount; c++) {
     const hue = NEBULA_HUES[c % NEBULA_HUES.length]
-    // Every system shares the same (0,0,0) local origin (see galaxy.js), so a
-    // cluster placed too close to it would loom over every system's view.
-    // Keeping centers well outside the largest local play volume (bodies up
-    // to ~1600 out, giant-star coronas up to ~380) guarantees it always
-    // reads as distant backdrop instead of an occasional close-up wash-out.
+    // Nebula is re-centered on the camera each frame (main.js) like the starfield.
+    // Sit far past system play volume (~100k–600k) so depthTest keeps it behind
+    // suns/planets, but inside the far plane (2e6).
     const angle = Math.random() * Math.PI * 2
-    const centerDist = 2800 + Math.random() * 2000
-    const center = new THREE.Vector3(Math.cos(angle) * centerDist, (Math.random() - 0.5) * 800, Math.sin(angle) * centerDist)
+    const centerDist = 900_000 + Math.random() * 500_000
+    const center = new THREE.Vector3(Math.cos(angle) * centerDist, (Math.random() - 0.5) * 200_000, Math.sin(angle) * centerDist)
 
     for (let i = 0; i < puffsPerCluster; i++) {
       // Hue drifts slightly per puff (real emission nebulae aren't one flat
@@ -52,16 +50,19 @@ export function createNebula(clusterCount = 9, puffsPerCluster = 20) {
         opacity: 0.04 + Math.random() * 0.07,
         rotation: Math.random() * Math.PI * 2,
         depthWrite: false,
+        depthTest: true,
         blending: THREE.AdditiveBlending
       })
       const sprite = new THREE.Sprite(material)
       sprite.position.set(
-        center.x + (Math.random() - 0.5) * 1400,
-        center.y + (Math.random() - 0.5) * 500,
-        center.z + (Math.random() - 0.5) * 1400
+        center.x + (Math.random() - 0.5) * 180_000,
+        center.y + (Math.random() - 0.5) * 80_000,
+        center.z + (Math.random() - 0.5) * 180_000
       )
-      const scale = 800 + Math.random() * 1400
+      // Scale with distance so angular size stays similar to the old close nebula.
+      const scale = 90_000 + Math.random() * 140_000
       sprite.scale.set(scale * (1.4 + Math.random() * 1.2), scale * (0.4 + Math.random() * 0.5), 1)
+      sprite.renderOrder = -90
       group.add(sprite)
     }
   }
@@ -77,17 +78,20 @@ export function createNebula(clusterCount = 9, puffsPerCluster = 20) {
       opacity: 0.02 + Math.random() * 0.02,
       rotation: Math.random() * Math.PI * 2,
       depthWrite: false,
+      depthTest: true,
       blending: THREE.AdditiveBlending
     })
     const sprite = new THREE.Sprite(material)
     const angle = Math.random() * Math.PI * 2
-    const dist = 3000 + Math.random() * 2500
-    sprite.position.set(Math.cos(angle) * dist, (Math.random() - 0.5) * 1500, Math.sin(angle) * dist)
-    sprite.scale.set(3500 + Math.random() * 2000, 1200 + Math.random() * 900, 1)
+    const dist = 1_000_000 + Math.random() * 400_000
+    sprite.position.set(Math.cos(angle) * dist, (Math.random() - 0.5) * 250_000, Math.sin(angle) * dist)
+    sprite.scale.set(350_000 + Math.random() * 200_000, 120_000 + Math.random() * 90_000, 1)
+    sprite.renderOrder = -90
     group.add(sprite)
   }
 
   group.userData.spinSpeed = 0.006
+  group.renderOrder = -90
   return group
 }
 

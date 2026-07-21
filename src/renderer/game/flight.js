@@ -42,7 +42,9 @@ export function createMouseAimState() {
 export function updateFlight(shipState, shipClass, keys, mouseAim, dt, skillOpts = null) {
   const speedMult = skillOpts?.speedMult ?? 1
   const turnMult = skillOpts?.turnMult ?? 1
-  const speed = shipClass.stats.speed * speedMult
+  // skillOpts.maxSpeed overrides base hull speed (e.g. Speed Upgrade accessory).
+  const baseSpeed = skillOpts?.maxSpeed ?? shipClass.stats.speed
+  const speed = baseSpeed * speedMult
   const turnRate = shipClass.stats.turnRate * turnMult
   const { accel } = shipClass.stats
   const quat = new THREE.Quaternion().fromArray(shipState.quaternion)

@@ -10,6 +10,7 @@ import { ensureLawStanding } from './security.js'
 import { ensureSystemSecurity, ensureWarpGates, getSystem } from '../procgen/galaxy.js'
 import { tickGalaxyAnomalies } from './systemScan.js'
 import { ensureSkills } from './skills.js'
+import { ensureClones, ensureGalaxyCloneBays } from './clones.js'
 
 /** Remap qty map keys through a resolver, merging collisions. */
 function remapCountMap(map, resolveKey) {
@@ -177,6 +178,7 @@ export function deserializeGameState(data) {
   gameState.player.ship.drones ??= []
   // Skills (0–20) + skillbooks on ship; normalize missing keys from older saves.
   ensureSkills(gameState)
+  ensureClones(gameState)
   // Ensure bay-compatible drone slots after load (class may have gained bays).
   try {
     ensureDrones(gameState.player.ship)
@@ -209,6 +211,8 @@ export function deserializeGameState(data) {
       if (body.kind === 'station') body.hasShipyard = true
     }
   }
+  // Clone bays: deterministic ~30% of stations (stable body-id hash for old saves).
+  ensureGalaxyCloneBays(gameState.galaxy)
   // startingSystemId/startingSystemPeaceBroken fall back for saves written
   // before the starting-system peace existed — null just means that save
   // never gets the "no hostiles at home" protection, which is harmless.

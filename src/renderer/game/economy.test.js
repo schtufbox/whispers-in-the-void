@@ -170,6 +170,49 @@ test('activateStoredShip swaps the active ship with one in storage, and sellStor
   assert.ok(gameState.player.credits > creditsBeforeSale, 'selling a stored ship should pay out credits')
 })
 
+test('unequipping Extra Launcher returns fitted missile weapon to station storage', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 200000
+  // Laser-only starter + launcher accessory → can fit a missile.
+  const ship = gameState.player.ship
+  ship.equippedAccessories = [null]
+  // Pad slots if needed.
+  const slots = ship.equippedAccessories.length || 1
+  ship.equippedAccessories = Array(slots).fill(null)
+  gameState.stationStorage['agri-world'] ??= {
+    cargo: {}, miningHold: {}, shipParts: 0, ships: [], weapons: {}, accessories: {}, blueprints: {}, drones: {}
+  }
+  const st = gameState.stationStorage['agri-world']
+  st.accessories.extra_launcher_hardpoint = 1
+  st.weapons.rocket_pod = 0
+  equipAccessory(gameState, 'agri-world', 0, 'extra_launcher_hardpoint')
+  assert.equal(ship.equippedWeapons.acc_launcher, undefined, 'accessory mount has no free weapon')
+  // Fit a missile, then remove accessory — weapon returns to storage.
+  ship.equippedWeapons.acc_launcher = 'torpedo'
+  equipAccessory(gameState, 'agri-world', 0, null)
+  assert.equal(ship.equippedWeapons.acc_launcher, undefined, 'hardpoint removed with accessory')
+  assert.ok((st.weapons.torpedo ?? 0) >= 1, 'weapon returned to station storage')
+  assert.ok((st.accessories.extra_launcher_hardpoint ?? 0) >= 1, 'accessory back in storage')
+})
+
+test('sellStoredShip moves fitted upgrades into station storage', () => {
+  const gameState = makeGameState()
+  gameState.player.credits = 200000
+  purchaseShip(gameState, 'agri-world', 'light_runner', 'Fitted')
+  const stored = gameState.stationStorage['agri-world'].ships[0]
+  stored.equippedWeapons = { fwd1: 'beam_laser' }
+  stored.equippedAccessories = ['autopilot']
+  stored.drones = [{ typeId: 'stinger_light', bayIndex: 0 }]
+  stored.spareWeapons = { rapid_laser: 1 }
+  sellStoredShip(gameState, 'agri-world', 0)
+  const st = gameState.stationStorage['agri-world']
+  assert.equal(st.ships.length, 0)
+  assert.ok((st.weapons.beam_laser ?? 0) >= 1, 'equipped weapon returned to storage')
+  assert.ok((st.weapons.rapid_laser ?? 0) >= 1, 'spare weapon returned to storage')
+  assert.ok((st.accessories.autopilot ?? 0) >= 1, 'accessory returned to storage')
+  assert.ok((st.drones.stinger_light ?? 0) >= 1, 'drone returned to storage')
+})
+
 test('storeCargo/retrieveCargo round-trip cargo through per-station storage', () => {
   const gameState = makeGameState()
   gameState.player.ship.cargo = { grain: 5 }

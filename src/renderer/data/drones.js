@@ -46,7 +46,7 @@ export function getDrone(id = DEFAULT_DRONE_ID) {
   return d
 }
 
-/** How many drone bays this hull has (0–2). */
+/** How many drone bays this hull has (0–2). Use effectiveDroneBayCount for accessories. */
 export function droneBayCount(shipClass) {
   const n = Math.floor(Number(shipClass?.droneBays) || 0)
   return Math.max(0, Math.min(2, n))
