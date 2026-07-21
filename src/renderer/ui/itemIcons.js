@@ -199,7 +199,7 @@ export const ITEM_ICON_CSS = `
 }
 .item-name .item-icon {
   flex-shrink: 0; display: block;
-  filter: drop-shadow(0 0 3px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35));
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.85));
 }
 .item-name .item-label {
   min-width: 0; overflow: hidden; text-overflow: ellipsis;

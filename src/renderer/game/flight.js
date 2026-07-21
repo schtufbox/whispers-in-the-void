@@ -23,9 +23,8 @@ export function createInputState() {
   return keys
 }
 
-// Mouse deltas accumulate here only while the pointer is locked (see
-// main.js's flight-mode toggle) and are consumed — reset to 0 — once
-// applied each frame in updateFlight.
+// Mouse deltas accumulate only while the pointer is locked (cursor confined).
+// Consumed — reset to 0 — once applied each frame in updateFlight.
 export function createMouseAimState() {
   const state = { dx: 0, dy: 0 }
   document.addEventListener('mousemove', (e) => {

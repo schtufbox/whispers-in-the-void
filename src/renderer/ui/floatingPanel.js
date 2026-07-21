@@ -33,8 +33,8 @@ export function floatingPanelElevationCss(selector) {
   return `
 ${selector} {
   filter:
-    drop-shadow(0 10px 22px rgba(0, 0, 0, 0.48))
-    drop-shadow(0 3px 8px rgba(0, 0, 0, 0.32));
+    drop-shadow(0 3px 6px rgba(0,0,0,0.85))
+    drop-shadow(0 10px 22px rgba(0,0,0,0.55));
 }
 `
 }

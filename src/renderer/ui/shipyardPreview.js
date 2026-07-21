@@ -18,7 +18,7 @@ const STYLE = `
   background: linear-gradient(160deg, rgba(10,16,28,0.94), rgba(6,10,18,0.92));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 18px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.18), inset 0 0 16px rgba(0,0,0,0.4);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55), inset 0 0 16px rgba(0,0,0,0.4);
   overflow: hidden;
   user-select: none;
   touch-action: none;
@@ -32,7 +32,7 @@ const STYLE = `
   letter-spacing: 1.5px;
   text-transform: uppercase;
   color: var(--ui-accent);
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
   border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
   white-space: nowrap;
   overflow: hidden;

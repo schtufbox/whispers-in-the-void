@@ -27,7 +27,7 @@ export const CONTROLS = [
   ['I', 'Inventory'],
   ['J', 'Missions'],
   ['F1', 'Character sheet'],
-  ['Esc', 'Pause / resume'],
+  ['Esc', 'Pause (Resume button to continue)'],
   ['F5', 'Quick save'],
   ['Free mouse', 'Click system overview (right) to set waypoints']
 ]

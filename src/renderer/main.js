@@ -9,7 +9,7 @@ import {
   orientWarpGateTowardOrigin
 } from './render/warpGateMesh.js'
 import { createNebula, updateNebula } from './render/nebula.js'
-import { buildShipMesh, updatePoliceLights } from './render/shipMesh.js'
+import { buildShipMesh, updatePoliceLights, getEngineNozzleLocals } from './render/shipMesh.js'
 import { buildStationMeshForBody, updateStationMesh } from './render/stationMesh.js'
 import { preloadStationModels, stationModelsReady } from './render/stationModels.js'
 import { buildPlanetMesh, updatePlanetAtmosphere } from './render/planetMesh.js'
@@ -37,7 +37,7 @@ import {
   addChaseFreeLookDelta,
   isChaseFreeLook
 } from './render/sceneSync.js'
-import { createThrusterEffects } from './render/thrusterParticles.js'
+import { createThrusterEffects, createLiteThrusterEffects } from './render/thrusterParticles.js'
 import { createDamageEffects } from './render/damageEffects.js'
 import { createOreScoopEffects } from './render/oreScoopParticles.js'
 import {
@@ -78,7 +78,8 @@ import {
   getShipCollisionRadius,
   truceActive,
   pruneCombatEngagement,
-  playerFightingPirates
+  playerFightingPirates,
+  flushPendingLawPenalties
 } from './game/combat.js'
 import {
   ensureLawStanding,
@@ -188,7 +189,7 @@ import {
 import { gameConfirm, gameNotice } from './ui/gameDialog.js'
 import { getShipClass, STARTER_SHIP_CLASS_ID } from './data/shipClasses.js'
 import { getGood } from './data/goods.js'
-import { getWeapon } from './data/weapons.js'
+import { getWeapon, WEAPONS } from './data/weapons.js'
 import { shipHasAutopilot } from './data/accessories.js'
 import {
   ensureDrones,
@@ -334,13 +335,16 @@ function showHudGlitch(el) {
   ensureHudGlitchStyle()
   clearTimeout(hudGlitchHideTimers.get(el))
   el.style.display = 'block'
-  el.style.opacity = '1'
+  // Keep probe-info opacity from .float-info-text (don't force full opacity).
+  el.style.removeProperty('opacity')
   const span = ensureHudGlitchSpan(el)
   if (!span) return
   span.classList.remove('hud-glitch-exit', 'hud-glitch-enter')
-  // Restart enter animation.
-  void span.offsetWidth
-  span.classList.add('hud-glitch-enter')
+  // Restart enter animation next frame — never force layout (offsetWidth) mid-combat.
+  requestAnimationFrame(() => {
+    if (!span.isConnected || el.style.display === 'none') return
+    span.classList.add('hud-glitch-enter')
+  })
 }
 
 function hideHudGlitch(el) {
@@ -351,8 +355,10 @@ function hideHudGlitch(el) {
     return
   }
   span.classList.remove('hud-glitch-enter', 'hud-glitch-exit')
-  void span.offsetWidth
-  span.classList.add('hud-glitch-exit')
+  requestAnimationFrame(() => {
+    if (!span.isConnected) return
+    span.classList.add('hud-glitch-exit')
+  })
   clearTimeout(hudGlitchHideTimers.get(el))
   const t = setTimeout(() => {
     el.style.display = 'none'
@@ -366,8 +372,20 @@ const AMBIENT_NPC_CAP = 3
 // Ship/wreck/rock radar contacts (planets/waypoint may still paint farther).
 // 10 km (1 unit = 1 m).
 const RADAR_RANGE = 10000
-// Floating prompts sit just under the bare radar canvas (top 0, h 160, w 420).
-const BELOW_RADAR_TOP_PX = 168
+// Floating prompts sit just under the top-center ship status panel.
+// Fallback when the panel is hidden (docked) or not measured yet.
+const FLOAT_HUD_BAND_FALLBACK_TOP_PX = 110
+function getFloatHudBandTopPx() {
+  const panel = document.querySelector('#hud .status-panel')
+  if (panel) {
+    const cs = getComputedStyle(panel)
+    if (cs.display !== 'none' && cs.visibility !== 'hidden') {
+      const bottom = panel.getBoundingClientRect().bottom
+      if (Number.isFinite(bottom) && bottom > 0) return Math.round(bottom + 8)
+    }
+  }
+  return FLOAT_HUD_BAND_FALLBACK_TOP_PX
+}
 const IMPACT_FLASH_TTL = 0.25
 // Warp-gate jump: fly into origin aperture → spool/tunnel → emerge from dest aperture.
 const JUMP_ENTER_GATE_S = 1.55
@@ -438,7 +456,7 @@ const _hudReticleMat = new THREE.MeshBasicMaterial({
   depthWrite: false,
   side: THREE.DoubleSide
 })
-// Unit ring; updateCrosshair sets scale for a round ~16px reticle.
+// Unit ring; updateCrosshair sets scale for a round ~16px reticle (no drop-shadow).
 const hudReticleRing = new THREE.Mesh(new THREE.RingGeometry(0.72, 1, 48), _hudReticleMat)
 const hudReticleDot = new THREE.Mesh(new THREE.CircleGeometry(0.22, 16), _hudReticleMat.clone())
 hudReticleRing.position.z = -1
@@ -465,6 +483,11 @@ function suppressUnlockPauseForFrames(frames = 3) {
 }
 // Same Esc can unlock then deliver keydown — ignore the keydown unpause.
 let pauseOpenedAtMs = 0
+// After unpause: block auto-pause + never clear flightMode from unlock races.
+let resumeFlightGraceUntilMs = 0
+// Full-screen capture layer until Chromium grants pointer lock (cursor confined).
+let pointerLockBridgeEl = null
+let pointerLockRetryTimer = null
 
 const keys = createInputState()
 const mouseAim = createMouseAimState()
@@ -601,6 +624,8 @@ function exitFlightMode() {
   missileFireHeld = false
   altHeldForFreeLook = false
   setChaseFreeLook(false)
+  hidePointerLockBridge()
+  stopPointerLockRetries()
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
   if (targetDirEl) targetDirEl.style.display = 'none'
@@ -611,16 +636,232 @@ function exitFlightMode() {
   if (document.pointerLockElement === renderer.domElement) {
     suppressPointerUnlockPause = true
     document.exitPointerLock()
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       suppressPointerUnlockPause = false
-    })
+    }, 400)
+  }
+}
+
+function inResumeFlightGrace() {
+  return performance.now() < resumeFlightGraceUntilMs
+}
+
+function isFlightPointerLocked() {
+  return document.pointerLockElement === renderer.domElement
+}
+
+function stopPointerLockRetries() {
+  if (pointerLockRetryTimer != null) {
+    clearInterval(pointerLockRetryTimer)
+    pointerLockRetryTimer = null
+  }
+}
+
+/**
+ * Full-screen layer: hides OS cursor and captures the next user gesture so we
+ * can re-request pointer lock after Esc (Chromium blocks lock until a gesture).
+ * Keyboard flight works while the bridge is up; mouse look needs the lock.
+ */
+function showPointerLockBridge() {
+  if (isFlightPointerLocked() || paused || docked || !flightModeWanted) {
+    hidePointerLockBridge()
+    return
+  }
+  if (pointerLockBridgeEl) return
+  const el = document.createElement('div')
+  el.id = 'pointer-lock-bridge'
+  el.setAttribute('aria-hidden', 'true')
+  el.style.cssText = [
+    'position:fixed',
+    'inset:0',
+    'z-index:250000',
+    'cursor:none',
+    'background:transparent',
+    'touch-action:none'
+  ].join(';')
+  const onGesture = (e) => {
+    if (e.type === 'keydown' && e.code === 'Escape') return
+    // Keep this synchronous with the user gesture for Chromium.
+    requestFlightPointerLock()
+  }
+  el.addEventListener('pointerdown', onGesture, true)
+  window.addEventListener('keydown', onGesture, true)
+  el._onGesture = onGesture
+  document.body.appendChild(el)
+  document.body.style.cursor = 'none'
+  pointerLockBridgeEl = el
+}
+
+function hidePointerLockBridge() {
+  if (!pointerLockBridgeEl) {
+    if (document.body.style.cursor === 'none' && !isFlightPointerLocked()) {
+      document.body.style.cursor = ''
+    }
+    return
+  }
+  const el = pointerLockBridgeEl
+  if (el._onGesture) {
+    el.removeEventListener('pointerdown', el._onGesture, true)
+    window.removeEventListener('keydown', el._onGesture, true)
+  }
+  el.remove()
+  pointerLockBridgeEl = null
+  if (!isFlightPointerLocked()) document.body.style.cursor = ''
+}
+
+/** Force flight flags on (keyboard). Pointer lock is required for confined mouse. */
+function forceFlightControlsOn() {
+  flightModeWanted = true
+  flightMode = true
+  laserFireHeld = false
+  missileFireHeld = false
+  setChaseFreeLook(false)
+  systemOverview?.setInteractive(false)
+  if (!isFlightPointerLocked()) showPointerLockBridge()
+  else hidePointerLockBridge()
+}
+
+/** @returns {Promise<boolean>} whether lock is held after the attempt */
+function requestFlightPointerLock() {
+  if (isFlightPointerLocked()) {
+    forceFlightControlsOn()
+    hidePointerLockBridge()
+    stopPointerLockRetries()
+    return Promise.resolve(true)
+  }
+  try {
+    renderer.domElement.focus?.({ preventScroll: true })
+  } catch {
+    /* */
+  }
+  let req
+  try {
+    // Prefer unadjusted movement when available (raw mouse, less OS accel).
+    req = renderer.domElement.requestPointerLock?.({ unadjustedMovement: true })
+    if (req === undefined) {
+      req = renderer.domElement.requestPointerLock?.()
+    }
+  } catch {
+    try {
+      req = renderer.domElement.requestPointerLock?.()
+    } catch (err) {
+      console.error('Pointer lock request threw:', err)
+      if (flightModeWanted && !paused && !docked) {
+        forceFlightControlsOn()
+        showPointerLockBridge()
+      }
+      return Promise.resolve(false)
+    }
+  }
+  if (req && typeof req.then === 'function') {
+    return req
+      .then(() => {
+        forceFlightControlsOn()
+        hidePointerLockBridge()
+        stopPointerLockRetries()
+        return true
+      })
+      .catch(() => {
+        if (flightModeWanted && !paused && !docked) {
+          forceFlightControlsOn()
+          showPointerLockBridge()
+        }
+        return false
+      })
+  }
+  requestAnimationFrame(() => {
+    if (isFlightPointerLocked()) {
+      forceFlightControlsOn()
+      hidePointerLockBridge()
+      stopPointerLockRetries()
+    } else if (flightModeWanted && !paused && !docked) {
+      forceFlightControlsOn()
+      showPointerLockBridge()
+    }
+  })
+  return Promise.resolve(false)
+}
+
+/**
+ * Unpause / post-modal path into flight controls.
+ * Enables keyboard immediately and keeps a full-screen bridge until pointer
+ * lock confines the cursor (required after Esc unlock).
+ */
+function resumeFlightAfterPause() {
+  resumeFlightGraceUntilMs = performance.now() + 3000
+  suppressPointerUnlockPause = true
+  setTimeout(() => {
+    suppressPointerUnlockPause = false
+  }, 600)
+
+  mouseAim.dx = 0
+  mouseAim.dy = 0
+  forceFlightControlsOn()
+  showPointerLockBridge()
+  requestFlightPointerLock()
+
+  stopPointerLockRetries()
+  let ticks = 0
+  pointerLockRetryTimer = setInterval(() => {
+    ticks += 1
+    if (!flightModeWanted || paused || docked || ticks > 40) {
+      stopPointerLockRetries()
+      return
+    }
+    forceFlightControlsOn()
+    if (isFlightPointerLocked()) {
+      hidePointerLockBridge()
+      stopPointerLockRetries()
+      return
+    }
+    // Retries only succeed when a user gesture recently activated the page
+    // (Resume click / key / bridge pointerdown). Still useful right after click.
+    requestFlightPointerLock()
+  }, 80)
+}
+
+/** Shut every gameplay overlay so pause is the only UI on top. */
+function dismissOpenPanelsForPause() {
+  // Galaxy map
+  if (navMapOpen) {
+    navMapOpen = false
+    navMap?.hide()
+  }
+  // Inventory
+  if (inventoryOpen) {
+    inventoryOpen = false
+    inventoryUI?.hide()
+  }
+  // Missions tracker
+  if (missionsOpen) {
+    missionsOpen = false
+    missionsUI?.hide()
+  }
+  // Character sheet
+  if (characterOpen || characterUI?.isOpen?.()) {
+    characterOpen = false
+    characterFlightRestoreToken += 1
+    characterUI?.hide?.({ silent: true })
+  }
+  // System scan (B) — hide() may call onClose → reenterFlightMode; paused is already true so it no-ops.
+  if (systemScanMap?.isOpen?.()) {
+    systemScanMap.hide()
+  }
+  // Datacore nodule minigame
+  if (datacoreMinigame?.isOpen?.()) {
+    datacoreMinigame.hide()
+  }
+  // Station Services (docked) — keep docked chrome, just close the services panel
+  if (dockingUI?.isServicesOpen?.()) {
+    dockingUI.toggleServices()
   }
 }
 
 /** Pause / unpause. Keeps flight intent so Resume re-locks the pointer. */
 function setGamePaused(next) {
   if (!gameState || !!next === paused) return
-  if (dockEffect || navMapOpen || inventoryOpen || missionsOpen || characterOpen) return
+  // Mid dock/undock animation: don't open pause over the cutscene.
+  if (next && dockEffect) return
   paused = !!next
   audio.setThrustState(null)
   if (paused) {
@@ -628,20 +869,26 @@ function setGamePaused(next) {
     if (gameState.simClockOriginMs != null) {
       gameState.simTime = Math.max(0, (Date.now() - gameState.simClockOriginMs) / 1000)
     }
+    // Drop any open panels under the pause menu.
+    dismissOpenPanelsForPause()
     // Don't clear flightModeWanted — Resume should return to mouse-aim.
     flightMode = false
     laserFireHeld = false
     missileFireHeld = false
     setChaseFreeLook(false)
+    hidePointerLockBridge()
+    stopPointerLockRetries()
+    mouseAim.dx = 0
+    mouseAim.dy = 0
     if (crosshairEl) crosshairEl.style.display = 'none'
     if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
     if (targetDirEl) targetDirEl.style.display = 'none'
-    if (document.pointerLockElement === renderer.domElement) {
+    if (isFlightPointerLocked()) {
       suppressPointerUnlockPause = true
       document.exitPointerLock()
-      requestAnimationFrame(() => {
+      setTimeout(() => {
         suppressPointerUnlockPause = false
-      })
+      }, 400)
     }
     pauseOpenedAtMs = performance.now()
     pauseMenu?.show()
@@ -649,80 +896,85 @@ function setGamePaused(next) {
     // Resume: continue clock from frozen simTime (no offline jump for pause duration).
     reanchorGameClock(gameState)
     pauseMenu?.hide()
-    if (!docked) reenterFlightMode()
+    // Free-flight: restore flight + confine pointer (bridge until lock sticks).
+    if (!docked) resumeFlightAfterPause()
+    else {
+      flightMode = false
+      hidePointerLockBridge()
+    }
   }
 }
 
-// The mirror of exitFlightMode — called whenever a menu/popup that forced
-// the mouse free (pause, nav map, docking, a probe result alert) closes
-// again, so the player lands back in flight controls without having to
-// press Space themselves. Same fire-and-forget pointer-lock request/catch
-// pattern as the Space keydown handler below; if the browser refuses it
-// (e.g. too long after the last user gesture), flightMode drops but
-// flightModeWanted stays so a later focus/click can re-acquire.
 function reenterFlightMode() {
   flightModeWanted = true
   if (!canUseFlightMode()) {
+    if (inResumeFlightGrace() && !paused && !docked) {
+      forceFlightControlsOn()
+      showPointerLockBridge()
+      requestFlightPointerLock()
+      return
+    }
     flightMode = false
+    hidePointerLockBridge()
     return
   }
-  flightMode = true
-  systemOverview?.setInteractive(false)
-  if (document.pointerLockElement === renderer.domElement) return
-  renderer.domElement.requestPointerLock().catch((err) => {
-    console.error('Pointer lock request failed:', err)
-    flightMode = false
-    systemOverview?.setInteractive(true)
-  })
+  forceFlightControlsOn()
+  if (isFlightPointerLocked()) {
+    hidePointerLockBridge()
+    return
+  }
+  showPointerLockBridge()
+  requestFlightPointerLock()
 }
 
 // After alt-tab / OS focus steal, Chromium drops pointer lock. Keep the
-// player's intent (flightModeWanted) and re-request on focus or any click
-// on the canvas — focus alone is often rejected as a non-gesture.
+// player's intent (flightModeWanted) and re-request on focus or any click.
 function tryRestoreFlightMode() {
-  if (!flightModeWanted || !canUseFlightMode()) return
-  if (document.pointerLockElement === renderer.domElement) {
-    flightMode = true
+  if (!flightModeWanted || paused || docked) return
+  if (!canUseFlightMode() && !inResumeFlightGrace()) return
+  forceFlightControlsOn()
+  if (isFlightPointerLocked()) {
+    hidePointerLockBridge()
     return
   }
-  flightMode = true
-  renderer.domElement.requestPointerLock().catch(() => {
-    flightMode = false
-  })
+  showPointerLockBridge()
+  requestFlightPointerLock()
 }
 
 document.addEventListener('pointerlockchange', () => {
-  if (document.pointerLockElement === renderer.domElement) {
+  if (isFlightPointerLocked()) {
     if (flightModeWanted && !paused && !characterOpen) {
-      flightMode = true
-      systemOverview?.setInteractive(false)
+      forceFlightControlsOn()
+      hidePointerLockBridge()
+      stopPointerLockRetries()
     }
     return
   }
-  flightMode = false
   laserFireHeld = false
   missileFireHeld = false
-  // Overview stays visible while undocked; only clickability follows free mouse.
-  // Do not open pause when we intentionally unlocked (menus / Character F1).
-  if (
-    !docked &&
-    !navMapOpen &&
-    !inventoryOpen &&
-    !missionsOpen &&
-    !characterOpen &&
-    !paused &&
-    !suppressPointerUnlockPause
-  ) {
-    systemOverview?.setInteractive(true)
-  } else if (!docked) {
-    systemOverview?.setInteractive(false)
-  }
+  mouseAim.dx = 0
+  mouseAim.dy = 0
+
   if (crosshairEl) crosshairEl.style.display = 'none'
   if (targetIndicatorEl) targetIndicatorEl.style.display = 'none'
   if (targetDirEl) targetDirEl.style.display = 'none'
-  // Escape while locked often only releases the cursor (no keydown). Open pause
-  // so one Esc is enough. Do NOT pause on alt-tab / focus loss — OS focus steal
-  // also unlocks the pointer, and pausing there is annoying.
+
+  // During post-unpause grace: never clear flightMode and never auto-pause.
+  if (inResumeFlightGrace() && flightModeWanted && !paused && !docked) {
+    forceFlightControlsOn()
+    showPointerLockBridge()
+    return
+  }
+
+  // Lost lock while still wanting flight.
+  if (paused || characterOpen || navMapOpen || inventoryOpen || missionsOpen || docked) {
+    flightMode = false
+    hidePointerLockBridge()
+    return
+  }
+
+  // Esc while locked often only unlocks (no keydown). Open pause so one Esc works.
+  // Do NOT pause on alt-tab / focus loss — suppress + visibility handle that.
   const appStillFocused =
     document.visibilityState === 'visible' &&
     (typeof document.hasFocus !== 'function' || document.hasFocus())
@@ -740,6 +992,30 @@ document.addEventListener('pointerlockchange', () => {
     !characterOpen
   ) {
     setGamePaused(true)
+    return
+  }
+
+  // Tab-out / other unlock without pausing: keep flight intent, capture until re-lock.
+  if (flightModeWanted) {
+    forceFlightControlsOn()
+    showPointerLockBridge()
+  } else {
+    flightMode = false
+    hidePointerLockBridge()
+  }
+  if (
+    !docked &&
+    !navMapOpen &&
+    !inventoryOpen &&
+    !missionsOpen &&
+    !characterOpen &&
+    !paused &&
+    !suppressPointerUnlockPause &&
+    !flightModeWanted
+  ) {
+    systemOverview?.setInteractive(true)
+  } else if (!docked) {
+    systemOverview?.setInteractive(false)
   }
 })
 
@@ -877,6 +1153,8 @@ let gameState = null
 let playerShipClass = null
 let playerMesh = null
 let thrusterEffects = null
+/** Ship-local engine nozzle points for multi-thruster exhaust (from hull layout). */
+let playerEngineNozzles = null
 let damageEffects = null
 let oreScoopEffects = null
 let missileTrail = null
@@ -947,6 +1225,87 @@ let interiorMesh = null
 const npcMeshes = new Map()
 const bodyMeshes = new Map()
 const wreckMeshes = new Map()
+// Scratch for NPC thruster world pose (reused each frame).
+const _npcThrustPos = new THREE.Vector3()
+const _npcThrustQuat = new THREE.Quaternion()
+const _npcThrustFwd = new THREE.Vector3()
+const _npcThrustVel = new THREE.Vector3()
+
+/** Build NPC hull + lite thruster FX (world-space exhaust, multi-nozzle). */
+function addNpcMesh(npc) {
+  if (!npc || npc.destroyed) return null
+  let mesh = npcMeshes.get(npc.id)
+  if (mesh) return mesh
+  let shipClass
+  try {
+    shipClass = getShipClass(npc.shipClassId)
+  } catch {
+    return null
+  }
+  // Cache hit radius so first combat frame doesn't pay getShipClass for every bolt.
+  if (npc._hitRadius == null) {
+    try {
+      npc._hitRadius = 1.5 + getShipCollisionRadius(shipClass)
+    } catch {
+      npc._hitRadius = 1.5 + 8
+    }
+  }
+  mesh = buildShipMesh(shipClass, { lite: true })
+  try {
+    const thrusters = createLiteThrusterEffects()
+    mesh.userData.thrusters = thrusters
+    mesh.userData.engineNozzles = getEngineNozzleLocals(shipClass.hull)
+    mesh.userData.hullLength = shipClass.hull?.length ?? 20
+    scene.add(thrusters.group)
+  } catch {
+    /* thrusters optional */
+  }
+  npcMeshes.set(npc.id, mesh)
+  scene.add(mesh)
+  return mesh
+}
+
+function removeNpcMesh(npcId) {
+  const mesh = npcMeshes.get(npcId)
+  if (!mesh) return
+  scene.remove(mesh)
+  const thr = mesh.userData?.thrusters
+  if (thr) {
+    scene.remove(thr.group)
+    try {
+      thr.dispose?.()
+    } catch {
+      /* */
+    }
+    mesh.userData.thrusters = null
+  }
+  npcMeshes.delete(npcId)
+}
+
+function clearNpcMeshes() {
+  for (const id of [...npcMeshes.keys()]) removeNpcMesh(id)
+}
+
+/** Update lite thruster trail for an on-screen NPC (forward thrust only). */
+function updateNpcThrusters(mesh, npc, dt) {
+  const thr = mesh?.userData?.thrusters
+  if (!thr) return
+  _npcThrustPos.fromArray(npc.position)
+  _npcThrustQuat.fromArray(npc.quaternion).normalize()
+  _npcThrustVel.fromArray(npc.velocity ?? [0, 0, 0])
+  _npcThrustFwd.set(0, 0, 1).applyQuaternion(_npcThrustQuat)
+  // Trail when nose-aligned motion is meaningful (patrol / attack / flee).
+  const forwardSpeed = _npcThrustVel.dot(_npcThrustFwd)
+  const speed = _npcThrustVel.length()
+  const accelActive = forwardSpeed > 6 || (speed > 12 && forwardSpeed > 2)
+  thr.update(dt, {
+    accelActive,
+    shipPos: _npcThrustPos,
+    shipQuat: _npcThrustQuat,
+    hullLength: mesh.userData.hullLength ?? 20,
+    nozzles: mesh.userData.engineNozzles
+  })
+}
 // Surface settlements ride a fixed offset on their parent (parents themselves
 // are static — no orbital motion for planets/moons/fields/stations).
 const surfaceSettlements = new Map()
@@ -1086,22 +1445,30 @@ function ensureInteriorMesh(theme = 'mid') {
 // Docking swaps the whole exterior scene out for the bay interior (and back).
 function swapToInterior(body) {
   for (const mesh of bodyMeshes.values()) scene.remove(mesh)
-  for (const mesh of npcMeshes.values()) scene.remove(mesh)
+  for (const mesh of npcMeshes.values()) {
+    scene.remove(mesh)
+    if (mesh.userData?.thrusters?.group) scene.remove(mesh.userData.thrusters.group)
+  }
   for (const mesh of projectileMeshes.values()) scene.remove(mesh)
   for (const mesh of wreckMeshes.values()) scene.remove(mesh)
   for (const flash of impactFlashes) scene.remove(flash.mesh)
   if (starMesh) scene.remove(starMesh)
+  if (thrusterEffects?.group) scene.remove(thrusterEffects.group)
   scene.add(ensureInteriorMesh(resolveInteriorTheme(body)))
 }
 
 function swapToExterior() {
   if (interiorMesh) scene.remove(interiorMesh)
   for (const mesh of bodyMeshes.values()) scene.add(mesh)
-  for (const mesh of npcMeshes.values()) scene.add(mesh)
+  for (const mesh of npcMeshes.values()) {
+    scene.add(mesh)
+    if (mesh.userData?.thrusters?.group) scene.add(mesh.userData.thrusters.group)
+  }
   for (const mesh of projectileMeshes.values()) scene.add(mesh)
   for (const mesh of wreckMeshes.values()) scene.add(mesh)
   for (const flash of impactFlashes) scene.add(flash.mesh)
   if (starMesh) scene.add(starMesh)
+  if (thrusterEffects?.group) scene.add(thrusterEffects.group)
 }
 
 function quatFacing(fromPos, towardPos) {
@@ -1423,12 +1790,20 @@ function notePlayerDamagedBy(ownerId, { ram = false } = {}) {
   }
 }
 
+// Multi-laser volleys used to spawn N impact FX + N hit SFX on the same frame
+// (first engagement hitch). Coalesce light ship chips to one FX/SFX per frame.
+let _shipChipFxQueued = false
+let _shipChipFxPos = null
+let _shipChipFxMissile = false
+let _shipChipFxTint = null
+
 function onProjectileHit({
   position,
   rockPosition,
   destroyed,
   mined,
   hitPlayer,
+  hitWreck,
   inboundDir,
   fieldId,
   rockIndex,
@@ -1438,25 +1813,79 @@ function onProjectileHit({
   ownerId
 }) {
   if (hitPlayer && ownerId) notePlayerDamagedBy(ownerId, { ram: false })
-  const flash = buildImpactFlash(mined ? 0xc2a35c : destroyed ? 0xff8a3d : 0xffcc66)
-  flash.position.fromArray(position)
-  if (mined?.destroyed) flash.scale.setScalar(2.2)
-  scene.add(flash)
-  impactFlashes.push({ mesh: flash, ttl: IMPACT_FLASH_TTL })
 
-  // Sparks + laser smoke puff / missile micro-blast (skip full rock/ship death
-  // frames — those already have their own big FX).
+  // Defer non-critical hit FX one frame so first-engagement (law + AI flip)
+  // never pays geometry/material cost on the same frame as damage.
   const isMissile = weaponType === 'missile'
-  const skipLightHitFx = !!(mined?.destroyed || (destroyed && !hitPlayer))
-  if (!skipLightHitFx) {
-    let tint = null
+  const skipLightHitFx = !!(mined?.destroyed || (destroyed && !hitPlayer && !hitWreck))
+  const flashColor = mined ? 0xc2a35c : hitWreck ? 0x8a7a60 : destroyed ? 0xff8a3d : 0xffcc66
+  const bigFlash = !!(mined?.destroyed || (hitWreck && destroyed))
+  const hitPos = rockPosition ?? position
+  let tint = null
+  try {
+    if (weaponId && !skipLightHitFx) tint = getWeapon(weaponId).color
+  } catch { /* */ }
+
+  // Light chip on a ship (not mine/kill/wreck): coalesce multi-turret hits.
+  const isShipChip =
+    !mined && !hitWreck && !destroyed && !hitPlayer && Array.isArray(position)
+  if (isShipChip) {
+    if (!_shipChipFxQueued) {
+      _shipChipFxQueued = true
+      _shipChipFxPos = position.slice()
+      _shipChipFxMissile = isMissile
+      _shipChipFxTint = tint
+      requestAnimationFrame(() => {
+        _shipChipFxQueued = false
+        if (!gameState || !_shipChipFxPos) return
+        const flash = buildImpactFlash(0xffcc66)
+        flash.position.fromArray(_shipChipFxPos)
+        scene.add(flash)
+        impactFlashes.push({ mesh: flash, ttl: IMPACT_FLASH_TTL })
+        const hitFx = spawnHitImpact(
+          _shipChipFxPos,
+          _shipChipFxMissile ? 'missile' : 'laser',
+          _shipChipFxTint
+        )
+        scene.add(hitFx.group)
+        hitImpacts.push(hitFx)
+        try {
+          audio.playHit()
+        } catch {
+          /* */
+        }
+        _shipChipFxPos = null
+      })
+    }
+    // Vignette only for player damage (below). Chip SFX handled in rAF above.
+    if (hitPlayer) pulseDamageVignette(position, inboundDir)
+    return
+  }
+
+  const spawnFx = () => {
+    if (!gameState) return
+    const flash = buildImpactFlash(flashColor)
+    flash.position.fromArray(position)
+    if (bigFlash) flash.scale.setScalar(2.2)
+    scene.add(flash)
+    impactFlashes.push({ mesh: flash, ttl: IMPACT_FLASH_TTL })
+    if (!skipLightHitFx) {
+      const hitFx = spawnHitImpact(hitPos, isMissile ? 'missile' : 'laser', tint)
+      scene.add(hitFx.group)
+      hitImpacts.push(hitFx)
+    }
+  }
+  // Rock mine / death bursts stay immediate for feedback; other hits defer.
+  if (mined || (destroyed && !hitPlayer) || hitWreck) spawnFx()
+  else requestAnimationFrame(spawnFx)
+
+  if (hitWreck && destroyed) {
     try {
-      if (weaponId) tint = getWeapon(weaponId).color
-    } catch { /* */ }
-    const hitPos = rockPosition ?? position
-    const hitFx = spawnHitImpact(hitPos, isMissile ? 'missile' : 'laser', tint)
-    scene.add(hitFx.group)
-    hitImpacts.push(hitFx)
+      audio.playRockExplosion()
+    } catch {
+      audio.playClick()
+    }
+    flashToast('Wreck destroyed', 1.6)
   }
 
   // Alien incursion base (after waves) — any hit near base applies damage.
@@ -1519,8 +1948,15 @@ function onProjectileHit({
       playShipDeathFx(position, 14)
     }
   } else if (!destroyed) {
-    // Shield/armor/hull hit (player or NPC still alive).
-    audio.playHit()
+    // Chip hit SFX — defer so WebAudio node/buffer work is not on the hit frame.
+    // (Ship chips already play via coalesced path above.)
+    requestAnimationFrame(() => {
+      try {
+        audio.playHit()
+      } catch {
+        /* */
+      }
+    })
   }
   // Player ship destroyed: handlePlayerDeath() plays combat boom + FX.
 
@@ -1698,9 +2134,7 @@ function updateAnomalySites(dt) {
           const wave = spawnAlienIncursionWave(Math.random, a, 0, system.bodies, core)
           for (const n of wave) {
             gameState.npcs.push(n)
-            const mesh = buildShipMesh(getShipClass(n.shipClassId), { lite: true })
-            npcMeshes.set(n.id, mesh)
-            scene.add(mesh)
+            addNpcMesh(n)
           }
           flashToast(`Alien Incursion — wave 1/${a.wavesTotal}`, 3.2)
         }
@@ -1717,9 +2151,7 @@ function updateAnomalySites(dt) {
           const wave = spawnAlienIncursionWave(Math.random, a, next, system.bodies, core)
           for (const n of wave) {
             gameState.npcs.push(n)
-            const mesh = buildShipMesh(getShipClass(n.shipClassId), { lite: true })
-            npcMeshes.set(n.id, mesh)
-            scene.add(mesh)
+            addNpcMesh(n)
           }
           flashToast(`Alien Incursion — wave ${next + 1}/${a.wavesTotal}`, 3.2)
         } else if (!a.baseDestroyed && !alienSiteRuntime) {
@@ -1844,7 +2276,6 @@ function maybeSpawnMiningPirateAmbush() {
   )
   gameState.npcs.push(npc)
   if (factionToastEl) {
-    factionToastEl.style.color = '#e05a5a'
     setHudGlitchText(factionToastEl, 'Pirates attracted by your mining!')
     showHudGlitch(factionToastEl)
     factionToastUntil = gameState.simTime + FACTION_TOAST_DURATION_S
@@ -1885,6 +2316,7 @@ function clearSession() {
   probeScanActiveBodyId = null
   if (thrusterEffects) scene.remove(thrusterEffects.group)
   thrusterEffects = null
+  playerEngineNozzles = null
   if (damageEffects) scene.remove(damageEffects.group)
   damageEffects = null
   if (oreScoopEffects) scene.remove(oreScoopEffects.group)
@@ -1894,8 +2326,7 @@ function clearSession() {
     scene.remove(missileTrail.group)
     missileTrail = null
   }
-  for (const mesh of npcMeshes.values()) scene.remove(mesh)
-  npcMeshes.clear()
+  clearNpcMeshes()
   for (const mesh of bodyMeshes.values()) scene.remove(mesh)
   bodyMeshes.clear()
   surfaceSettlements.clear()
@@ -2047,10 +2478,11 @@ function updatePlayerDrones(dt) {
   ensureDrones(gameState.player.ship)
   // Drones only engage after shots exchanged (not Tab-lock alone).
   pruneCombatEngagement(gameState)
+  const hostility = buildHostilityContext()
   const targetNpcId =
     currentTarget?.kind === 'npc' ? currentTarget.id : null
   updateDrones(gameState, dt, {
-    isHostileNpc: isHostileToPlayer,
+    isHostileNpc: (npc) => isHostileToPlayer(npc, hostility),
     engagedNpcIds: gameState.player.combatEngagedNpcIds ?? {},
     playerTargetNpcId: targetNpcId,
     fireLaser: (drone, targetPos, weapon) => {
@@ -2124,6 +2556,12 @@ function rebuildPlayerShipMesh() {
   playerMesh = buildShipMesh(playerShipClass)
   scene.add(playerMesh)
   syncMeshToEntity(playerMesh, gameState.player.ship)
+  // Match thruster FX to this hull's engine nacelles (single/twin/triple/quad).
+  try {
+    playerEngineNozzles = getEngineNozzleLocals(playerShipClass.hull)
+  } catch {
+    playerEngineNozzles = null
+  }
 }
 
 /** Open/toggle System Scan (HUD button + B). */
@@ -2176,8 +2614,11 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   scene.add(missileTrail.group)
 
   // Warm projectile + hit FX so first combat shot/hit is not a hitch.
+  // Full catalog so NPC return fire doesn't compile templates mid-fight.
   try {
-    preloadProjectileMeshes(Object.values(gameState.player.ship.equippedWeapons ?? {}))
+    const equipped = Object.values(gameState.player.ship.equippedWeapons ?? {})
+    const allIds = [...new Set([...equipped, ...WEAPONS.map((w) => w.id)])]
+    preloadProjectileMeshes(allIds)
   } catch {
     preloadProjectileMeshes()
   }
@@ -2186,10 +2627,19 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   } catch {
     /* non-fatal */
   }
+  // Warm impact flash material templates (shader compile) without playing SFX.
+  try {
+    const w1 = buildImpactFlash(0xffcc66)
+    const w2 = buildImpactFlash(0xff8a3d)
+    const w3 = buildImpactFlash(0xc2a35c)
+    scene.add(w1, w2, w3)
+    renderer.compile?.(scene, camera)
+    scene.remove(w1, w2, w3)
+  } catch {
+    /* non-fatal */
+  }
   for (const npc of gameState.npcs) {
-    const mesh = buildShipMesh(getShipClass(npc.shipClassId), { lite: true })
-    npcMeshes.set(npc.id, mesh)
-    scene.add(mesh)
+    addNpcMesh(npc)
   }
   // Kenney free-model stations (3 types). Preload GLBs; rebuild bodies when
   // ready so free models replace any procedural fallbacks from first paint.
@@ -2243,6 +2693,8 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   })
   pauseMenu = createPauseMenu(appEl, {
     onResume: () => {
+      // Called from Resume pointerdown — still in a user-activation gesture.
+      // Unpause + lock request must stay synchronous with that gesture.
       setGamePaused(false)
     },
     onSave: () => doSave(),
@@ -2312,44 +2764,88 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   const startSys = getSystem(gameState.galaxy, gameState.player.currentSystemId)
   if (startSys) ensureSystemSecurity(startSys)
 
-  // Floating HUD copy: readable drop-shadow text, no dark pill/box behind it.
-  const FLOAT_TEXT_SHADOW =
-    '0 0 4px rgba(0,0,0,0.95),0 1px 3px rgba(0,0,0,0.95),0 0 14px rgba(0,0,0,0.75),0 0 8px rgba(0,0,0,0.6)'
-  const floatText = (extra = '') =>
-    `font-family:monospace;background:transparent;border:none;box-shadow:none;padding:0;text-shadow:${FLOAT_TEXT_SHADOW};filter:drop-shadow(0 2px 3px rgba(0,0,0,0.85));${extra}`
+  // Shared look for probe classification + all floating HUD copy (prompts, toasts, labels).
+  if (!document.getElementById('float-info-text-style')) {
+    const floatInfoStyle = document.createElement('style')
+    floatInfoStyle.id = 'float-info-text-style'
+    floatInfoStyle.textContent = `
+.float-info-text {
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 0.4px;
+  color: rgba(255,255,255,0.94);
+  opacity: 0.96;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  text-shadow: 0 1px 4px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,1), 0 0 16px rgba(0,0,0,0.95), 0 3px 14px rgba(0,0,0,0.85);
+}
+/* Waypoint / target-dir arrows + Tab-lock reticle box */
+.hud-dir-shadow {
+  filter:
+    drop-shadow(0 1px 2px rgba(0,0,0,1))
+    drop-shadow(0 2px 5px rgba(0,0,0,0.95))
+    drop-shadow(0 0 8px rgba(0,0,0,0.75));
+}
+.float-info-text .hud-glitch-text {
+  color: inherit;
+  text-shadow: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+}
+#probe-scan-panel {
+  position: fixed; left: 56px; top: 50%; transform: translateY(-50%);
+  width: min(300px, 30vw); max-height: min(55vh, 420px);
+  display: none; flex-direction: column;
+  z-index: 12; pointer-events: none;
+  text-align: left;
+  opacity: 1; /* lines carry the fade */
+}
+#probe-scan-panel .psp-body {
+  padding: 0; overflow-y: auto;
+  scrollbar-width: none;
+}
+#probe-scan-panel .psp-body .psp-line { margin: 0 0 5px; opacity: 0.94; }
+#probe-scan-panel .psp-body .psp-line.kicker {
+  color: rgba(255,255,255,0.98); letter-spacing: 0.5px; margin-bottom: 8px;
+  font-size: 12px; opacity: 0.98;
+}
+`
+    document.head.appendChild(floatInfoStyle)
+  }
+  const floatBandTop = getFloatHudBandTopPx()
+  const belowStatusCss = `position:fixed;left:50%;top:${floatBandTop}px;transform:translateX(-50%);display:none;white-space:nowrap;z-index:20;text-align:center;`
 
-  // Interaction prompts — stacked just below the top-center radar (see updateBelowRadarPrompts).
-  const belowRadarCss = `position:fixed;left:50%;top:${BELOW_RADAR_TOP_PX}px;transform:translateX(-50%);display:none;white-space:nowrap;z-index:20;text-align:center;`
+  // Interaction prompts — stacked just below the top-center ship status panel.
   dockPromptEl = document.createElement('div')
   dockPromptEl.id = 'dock-prompt'
-  dockPromptEl.style.cssText =
-    `${belowRadarCss}color:var(--ui-text);${floatText('font-size:13px;letter-spacing:0.5px;')}`
+  dockPromptEl.className = 'float-info-text'
+  dockPromptEl.style.cssText = belowStatusCss
   appEl.appendChild(dockPromptEl)
 
   probePromptEl = document.createElement('div')
   probePromptEl.id = 'probe-prompt'
-  probePromptEl.style.cssText =
-    `${belowRadarCss}color:var(--ui-text);${floatText('font-size:13px;letter-spacing:0.5px;')}`
+  probePromptEl.className = 'float-info-text'
+  probePromptEl.style.cssText = belowStatusCss
   appEl.appendChild(probePromptEl)
 
   // Floating multi-line probe return readout (not a blocking alert dialog).
   probeResultsEl = document.createElement('div')
   probeResultsEl.id = 'probe-results'
+  probeResultsEl.className = 'float-info-text'
   probeResultsEl.style.cssText = [
     'position:fixed',
-    `top:${BELOW_RADAR_TOP_PX}px`,
+    `top:${floatBandTop}px`,
     'left:50%',
     'transform:translateX(-50%)',
     'max-width:min(520px,90vw)',
     'text-align:center',
-    'font-size:13px',
-    'line-height:1.5',
-    'letter-spacing:0.4px',
-    'color:var(--ui-text)',
     'display:none',
     'pointer-events:none',
     'z-index:40',
-    floatText()
+    'white-space:pre-line'
   ].join(';')
   appEl.appendChild(probeResultsEl)
 
@@ -2357,30 +2853,8 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   // (inset from the border). Visible only in probe range of a scanned body.
   probeScanPanelEl = document.createElement('div')
   probeScanPanelEl.id = 'probe-scan-panel'
+  probeScanPanelEl.className = 'float-info-text'
   probeScanPanelEl.innerHTML = `<div class="psp-body"></div>`
-  const pspStyle = document.createElement('style')
-  pspStyle.textContent = `
-#probe-scan-panel {
-  position: fixed; left: 56px; top: 50%; transform: translateY(-50%);
-  width: min(300px, 30vw); max-height: min(55vh, 420px);
-  display: none; flex-direction: column;
-  z-index: 12; pointer-events: none;
-  font-family: monospace; color: rgba(255,255,255,0.78);
-  background: transparent; border: none; box-shadow: none;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.45);
-  text-align: left;
-}
-#probe-scan-panel .psp-body {
-  padding: 0; overflow-y: auto; font-size: 12px; line-height: 1.45;
-  scrollbar-width: none;
-}
-#probe-scan-panel .psp-body .psp-line { margin: 0 0 5px; opacity: 0.82; }
-#probe-scan-panel .psp-body .psp-line.kicker {
-  color: rgba(255,255,255,0.95); letter-spacing: 0.5px; margin-bottom: 8px;
-  font-size: 12px; opacity: 0.92;
-}
-`
-  document.head.appendChild(pspStyle)
   appEl.appendChild(probeScanPanelEl)
   // bodyId → classification lines (cached after first successful probe)
   probeScanCache = new Map()
@@ -2388,31 +2862,34 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
 
   wreckPromptEl = document.createElement('div')
   wreckPromptEl.id = 'wreck-prompt'
-  wreckPromptEl.style.cssText =
-    `${belowRadarCss}color:#ff8a3d;${floatText('font-size:13px;letter-spacing:0.5px;')}`
+  wreckPromptEl.className = 'float-info-text'
+  wreckPromptEl.style.cssText = belowStatusCss
   wreckPromptEl.textContent = 'Press F to salvage wreck'
   appEl.appendChild(wreckPromptEl)
 
-  // Just above screen-center crosshair / boresight reticle.
+  // Mining / salvage toasts — same under-status-panel band / probe-info look.
   miningToastEl = document.createElement('div')
   miningToastEl.id = 'mining-toast'
+  miningToastEl.className = 'float-info-text'
   miningToastEl.style.cssText =
-    `position:fixed;top:calc(50% - 52px);left:50%;transform:translateX(-50%);z-index:15;pointer-events:none;color:#e0c878;display:none;${floatText('font-size:13px;letter-spacing:0.4px;text-align:center;max-width:min(640px,92vw);')}`
+    `${belowStatusCss}max-width:min(640px,92vw);white-space:normal;z-index:15;pointer-events:none;`
   appEl.appendChild(miningToastEl)
 
-  // Craft start/complete floating text — just below radar.
+  // Craft start/complete floating text — just below ship status.
   // Wall-clock hide so it works while docked (simTime freezes in the bay).
   craftToastEl = document.createElement('div')
   craftToastEl.id = 'craft-toast'
+  craftToastEl.className = 'float-info-text'
   craftToastEl.style.cssText =
-    `position:fixed;top:${BELOW_RADAR_TOP_PX}px;left:50%;transform:translateX(-50%);z-index:60;pointer-events:none;display:none;max-width:min(720px,90vw);text-align:center;color:#a8f0c8;${floatText('font-size:13px;letter-spacing:0.4px;')}`
+    `${belowStatusCss}max-width:min(720px,90vw);white-space:normal;z-index:60;pointer-events:none;`
   appEl.appendChild(craftToastEl)
 
-  // Above pause menu (z 60) — yellow glitch "GAME SAVED" confirmation.
+  // "GAME SAVED" — under status panel (probe-info style).
   saveToastEl = document.createElement('div')
   saveToastEl.id = 'save-toast'
+  saveToastEl.className = 'float-info-text'
   saveToastEl.style.cssText =
-    `position:fixed;top:18%;left:50%;transform:translateX(-50%);z-index:70;pointer-events:none;display:none;text-align:center;color:#ffd246;${floatText('font-size:16px;letter-spacing:3px;font-weight:600;')}`
+    `${belowStatusCss}z-index:70;pointer-events:none;`
   appEl.appendChild(saveToastEl)
 
   // Combat: red edge vignettes for incoming fire direction (screen-relative).
@@ -2467,16 +2944,19 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
 
   factionToastEl = document.createElement('div')
   factionToastEl.id = 'faction-toast'
+  factionToastEl.className = 'float-info-text'
   factionToastEl.style.cssText =
-    `${belowRadarCss}color:#7fe0a0;max-width:min(640px,92vw);white-space:normal;${floatText('font-size:13px;letter-spacing:0.4px;')}`
+    `${belowStatusCss}max-width:min(640px,92vw);white-space:normal;`
   appEl.appendChild(factionToastEl)
 
+  // Reticles keep coloured geometry; labels match probe-info floating text.
+  // Direction arrows + target box share .hud-dir-shadow for a hard black drop shadow.
   waypointEl = document.createElement('div')
   waypointEl.id = 'waypoint-indicator'
   waypointEl.style.cssText = 'position:fixed;pointer-events:none;display:none;'
   waypointEl.innerHTML = `
-    <div class="wp-arrow" style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:16px solid #7fe0a0;margin:0 auto;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.9));"></div>
-    <div class="wp-label" style="margin-top:4px;color:#7fe0a0;font-size:11px;white-space:nowrap;text-align:center;${floatText()}"></div>
+    <div class="wp-arrow hud-dir-shadow" style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:16px solid #7fe0a0;margin:0 auto;"></div>
+    <div class="wp-label float-info-text" style="margin-top:4px;white-space:nowrap;text-align:center;"></div>
   `
   appEl.appendChild(waypointEl)
 
@@ -2495,28 +2975,28 @@ function startSession(newGameState, { enterFlightMode = false } = {}) {
   targetIndicatorEl.style.cssText =
     'position:fixed;pointer-events:none;display:none;transform:translate(-50%,-50%);width:56px;height:56px;'
   targetIndicatorEl.innerHTML = `
-    <div class="target-box" style="position:absolute;inset:0;border:2px solid var(--ui-text);filter:drop-shadow(0 0 3px rgba(0,0,0,0.85));"></div>
-    <div class="target-label" style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;color:var(--ui-text);font-size:11px;white-space:nowrap;text-align:center;${floatText()}"></div>
+    <div class="target-box hud-dir-shadow" style="position:absolute;inset:0;border:2px solid var(--ui-text);"></div>
+    <div class="target-label float-info-text" style="position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;white-space:nowrap;text-align:center;"></div>
   `
   appEl.appendChild(targetIndicatorEl)
 
   // Direction cue anchored near the projected ship (not on the target itself).
-  // Hidden when nothing is Tab-targeted.
+  // Hidden when nothing is Tab-targeted. Arrow keeps reticle colour.
   targetDirEl = document.createElement('div')
   targetDirEl.id = 'target-dir-indicator'
   targetDirEl.style.cssText =
     'position:fixed;pointer-events:none;display:none;transform:translate(-50%,-50%);z-index:6;'
   targetDirEl.innerHTML = `
-    <div class="tdir-arrow" style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:14px solid var(--ui-text);filter:drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 6px rgba(127,224,255,0.45));"></div>
+    <div class="tdir-arrow hud-dir-shadow" style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:14px solid var(--ui-text);"></div>
   `
   appEl.appendChild(targetDirEl)
 
-  // Drive status (supercruise / hyperdrive) — just below radar.
+  // Drive status (supercruise / hyperdrive) — under ship status panel.
   // Glitch enter/exit + chromatic slices.
   cruiseIndicatorEl = document.createElement('div')
   cruiseIndicatorEl.id = 'cruise-indicator'
-  cruiseIndicatorEl.style.cssText =
-    `position:fixed;top:${BELOW_RADAR_TOP_PX}px;left:50%;transform:translateX(-50%);color:#ffd246;display:none;z-index:20;${floatText('font-size:13px;letter-spacing:2.5px;font-weight:600;')}`
+  cruiseIndicatorEl.className = 'float-info-text'
+  cruiseIndicatorEl.style.cssText = belowStatusCss
   setHudGlitchText(cruiseIndicatorEl, 'SUPERCRUISE ENGAGED')
   appEl.appendChild(cruiseIndicatorEl)
 
@@ -2674,7 +3154,8 @@ function findNearestHudBody() {
   return nearest
 }
 
-const LOOT_RANGE = 50
+// Salvage (F) range from wreck origin (1 km).
+const LOOT_RANGE = 1000
 
 function findNearbyWreck() {
   const playerPos = new THREE.Vector3().fromArray(gameState.player.ship.position)
@@ -2736,11 +3217,15 @@ function formatLootSummary(loot) {
 }
 
 function lootNearbyWreck(wreck) {
-  const loot = lootWreck(gameState, playerShipClass, wreck.id)
-  audio.playClick()
-  setHudGlitchText(miningToastEl, `Salvaged ${formatLootSummary(loot)} from the wreck`)
-  showHudGlitch(miningToastEl)
-  miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
+  try {
+    const loot = lootWreck(gameState, playerShipClass, wreck.id)
+    audio.playClick()
+    setHudGlitchText(miningToastEl, `Salvaged ${formatLootSummary(loot)} from the wreck`)
+    showHudGlitch(miningToastEl)
+    miningToastUntil = gameState.simTime + MINING_TOAST_DURATION_S
+  } catch {
+    flashToast('Wreck no longer there', 1.4)
+  }
 }
 
 
@@ -3313,14 +3798,15 @@ function computeRadarContacts() {
   const contacts = []
   const t = currentTarget
 
-  // Ships / NPCs (yellow on radar)
+  // Ships / NPCs (neutral yellow, hostile red) — one hostility context for all.
+  const hostility = buildHostilityContext()
   for (const npc of gameState.npcs) {
     if (npc.destroyed) continue
     const targeted = t?.kind === 'npc' && t.id === npc.id
     pushRadarContact(
       contacts,
       npc.position,
-      isHostileToPlayer(npc) ? 'hostile' : 'neutral',
+      isHostileToPlayer(npc, hostility) ? 'hostile' : 'neutral',
       RADAR_RANGE,
       targeted
     )
@@ -3347,9 +3833,40 @@ function computeRadarContacts() {
   const missionBodies = missionMarkedBodyIds(gameState, currentSystem.id)
   const waypointBodyId = gameState.player.waypointBodyId
 
-  // Planets, moons, stations, belts, gates — not surface settlements (host only).
+  // Planets, moons, stations, gates — not surface settlements (host only).
+  // Asteroid fields: never show the field centroid; only individual rocks (brown).
   for (const body of currentSystem.bodies) {
     if (isPlanetSurfaceSettlement(body)) continue
+
+    if (body.kind === 'asteroidField') {
+      const rocks = getAsteroidRocks(body)
+      if (!rocks?.length) continue
+      const near = []
+      for (let i = 0; i < rocks.length; i++) {
+        if (!isRockAlive(gameState, body.id, i)) continue
+        const wp = asteroidWorldPosition(body, rocks[i])
+        const d = Math.hypot(
+          wp[0] - _radarShipPos.x,
+          wp[1] - _radarShipPos.y,
+          wp[2] - _radarShipPos.z
+        )
+        const rockTargeted = t?.kind === 'asteroid' && t.fieldId === body.id && t.index === i
+        if (d > RADAR_RANGE && !rockTargeted) continue
+        near.push({ wp, d, i, rockTargeted })
+      }
+      near.sort((a, b) => a.d - b.d)
+      // Always include locked rock even if beyond the nearest-N cap.
+      const picked = near.slice(0, RADAR_MAX_ASTEROID_ROCKS)
+      if (t?.kind === 'asteroid' && t.fieldId === body.id) {
+        const locked = near.find((n) => n.i === t.index)
+        if (locked && !picked.some((n) => n.i === locked.i)) picked.push(locked)
+      }
+      for (const n of picked) {
+        pushRadarContact(contacts, n.wp, 'asteroid', Infinity, n.rockTargeted)
+      }
+      continue
+    }
+
     const isWaypoint = body.id === waypointBodyId
     const targeted = t?.kind === 'body' && t.id === body.id
     pushRadarContact(
@@ -3359,36 +3876,6 @@ function computeRadarContacts() {
       isWaypoint || targeted ? Infinity : RADAR_RANGE,
       targeted
     )
-
-    // Nearby belt rocks so asteroids read as a field, not a single pin.
-    if (body.kind === 'asteroidField') {
-      const rocks = getAsteroidRocks(body)
-      if (rocks?.length) {
-        const near = []
-        for (let i = 0; i < rocks.length; i++) {
-          if (!isRockAlive(gameState, body.id, i)) continue
-          const wp = asteroidWorldPosition(body, rocks[i])
-          const d = Math.hypot(
-            wp[0] - _radarShipPos.x,
-            wp[1] - _radarShipPos.y,
-            wp[2] - _radarShipPos.z
-          )
-          const rockTargeted = t?.kind === 'asteroid' && t.fieldId === body.id && t.index === i
-          if (d > RADAR_RANGE && !rockTargeted) continue
-          near.push({ wp, d, i, rockTargeted })
-        }
-        near.sort((a, b) => a.d - b.d)
-        // Always include locked rock even if beyond the nearest-N cap.
-        const picked = near.slice(0, RADAR_MAX_ASTEROID_ROCKS)
-        if (t?.kind === 'asteroid' && t.fieldId === body.id) {
-          const locked = near.find((n) => n.i === t.index)
-          if (locked && !picked.some((n) => n.i === locked.i)) picked.push(locked)
-        }
-        for (const n of picked) {
-          pushRadarContact(contacts, n.wp, 'asteroid', Infinity, n.rockTargeted)
-        }
-      }
-    }
   }
 
   // Free-space mission waypoint (bounty hunt marker) when no body is set.
@@ -3578,7 +4065,13 @@ function beginWarpJump(targetSystemId, opts = {}) {
   // Probe can't follow a warp jump — abort mid-survey cleanly.
   clearProbeEffect()
   clearTargetLock()
+  // Jump sequence owns input until arrival flash ends (resumeFlightAfterPause).
   flightModeWanted = true
+  flightMode = false
+  laserFireHeld = false
+  missileFireHeld = false
+  setChaseFreeLook(false)
+  // Keep pointer lock through the cutscene when possible so post-jump re-lock is easier.
   if (document.pointerLockElement !== renderer.domElement) {
     renderer.domElement.requestPointerLock().catch(() => {})
   }
@@ -3846,8 +4339,7 @@ function slerpShipQuat(fromArr, toArr, t, outShip) {
 function performWarpSystemSwap() {
   hyperspaceJump(gameState, jumpEffect.targetSystemId, Math.random)
   policeResponse = null
-  for (const mesh of npcMeshes.values()) scene.remove(mesh)
-  npcMeshes.clear()
+  clearNpcMeshes()
   for (const mesh of bodyMeshes.values()) scene.remove(mesh)
   bodyMeshes.clear()
   if (starMesh) scene.remove(starMesh)
@@ -3870,9 +4362,7 @@ function performWarpSystemSwap() {
   }
   hitImpacts.length = 0
   for (const npc of gameState.npcs) {
-    const mesh = buildShipMesh(getShipClass(npc.shipClassId), { lite: true })
-    npcMeshes.set(npc.id, mesh)
-    scene.add(mesh)
+    addNpcMesh(npc)
   }
   loadBodiesForCurrentSystem()
   if (playerMesh) {
@@ -3942,7 +4432,11 @@ function finishJumpSequence() {
   setHudGlitchText(cruiseIndicatorEl, 'WARP TUNNEL EXIT')
   showHudGlitch(cruiseIndicatorEl)
   hideHudGlitch(cruiseIndicatorEl)
-  reenterFlightMode()
+  // Keep flight intent during the arrival flash. Do NOT call reenterFlightMode
+  // yet — canUseFlightMode() is false while jumpEffect is set, which would clear
+  // flightMode. Real re-entry happens when arrivalFlash ends (updateJumpEffect).
+  flightModeWanted = true
+  flightMode = false
   // Next leg: supercruise to the following warp gate (or finish).
   if (routeAutopilot) {
     const rem = gameState.player.plottedRoute
@@ -3971,6 +4465,8 @@ function updateJumpEffect(dt) {
     if (t >= 1) {
       jumpEffect = null
       clearJumpVisuals()
+      // Jump fully done — restore mouse-aim flight (same path as unpause).
+      if (!docked && !paused) resumeFlightAfterPause()
     }
     return
   }
@@ -4118,7 +4614,7 @@ function updateJumpEffect(dt) {
         clearJumpVisuals()
         camera.fov = BASE_FOV
         camera.updateProjectionMatrix()
-        reenterFlightMode()
+        if (!docked && !paused) resumeFlightAfterPause()
         return
       }
     }
@@ -4594,12 +5090,16 @@ function handlePlayerDeath() {
 
 window.addEventListener('keydown', (e) => {
   if (!gameState) return
-  if (e.code === 'KeyF' && !docked && !dockEffect && !cruising && !jumpEffect && !navMapOpen && !paused && !inventoryOpen && !missionsOpen && !characterOpen) {
-    // Priority: wreck salvage → warp gate jump (within 2 km) → dock.
-    const wreck = findNearbyWreck()
-    if (wreck) {
-      lootNearbyWreck(wreck)
-    } else {
+  if (e.code === 'KeyF' && !docked && !dockEffect && !cruising && !jumpEffect && !paused) {
+    // Wreck salvage always wins while a wreck is in range (1 km) — overrides
+    // gate / dock F binds so salvage is never blocked by a nearby station.
+    // (Menus still block F via inventory/missions/character/nav checks below.)
+    if (!navMapOpen && !inventoryOpen && !missionsOpen && !characterOpen) {
+      const wreck = findNearbyWreck()
+      if (wreck) {
+        lootNearbyWreck(wreck)
+        return
+      }
       ensureWarpGates(gameState.galaxy)
       const currentSystem = getSystem(gameState.galaxy, gameState.player.currentSystemId)
       const gate = findNearbyWarpGate(currentSystem, gameState.player.ship.position)
@@ -4646,15 +5146,15 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'F5') {
     e.preventDefault()
     doSave()
-  } else if (e.code === 'Escape' && characterOpen) {
+  } else if (e.code === 'Escape') {
+    // Esc only *opens* pause (Resume button to continue). Open panels are closed
+    // inside setGamePaused → dismissOpenPanelsForPause.
     e.preventDefault()
-    closeCharacterScreen()
-  } else if (e.code === 'Escape' && !dockEffect && !navMapOpen && !inventoryOpen && !missionsOpen && !characterOpen) {
-    // One Esc: pause. Pointer-lock may unlock first (pointerlockchange opens
-    // pause); ignore a same-tick keydown so we don't immediately unpause.
-    e.preventDefault()
-    if (paused && performance.now() - pauseOpenedAtMs < 200) return
-    setGamePaused(!paused)
+    if (paused || dockEffect) return
+    // Pointer-lock may unlock first (pointerlockchange opens pause); ignore
+    // a same-tick keydown bounce after auto-pause from unlock.
+    if (performance.now() - pauseOpenedAtMs < 280) return
+    setGamePaused(true)
   } else if (
     e.code === 'KeyS' &&
     docked &&
@@ -4933,27 +5433,41 @@ function asteroidWorldPosition(field, rock) {
   return [field.position[0] + rock.position[0], field.position[1] + rock.position[1], field.position[2] + rock.position[2]]
 }
 
+/**
+ * Per-frame hostility context — avoid getSystem/truce/security work per NPC
+ * (radar + drones used to re-run those for every contact; first engage felt hitchy).
+ */
+function buildHostilityContext() {
+  const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+  if (system) ensureSystemSecurity(system)
+  return {
+    system,
+    truce: truceActive(gameState),
+    engagedMap: gameState.player.combatEngagedNpcIds ?? {},
+    policeSos: policeHostileToPlayer(gameState, system),
+    civSos: civiliansHostileToPlayer(gameState, system)
+  }
+}
+
 // Aliens are always hostile to the player; pirates are too, except while
 // truced against a shared alien threat (see combat.js's truceActive) — used
 // for both the radar dot color and the target-indicator reticle tint.
 // Police SOS at law ≤2 (sec 1–6); civilians SOS at law ≤0 in sec 3–6.
 // Anyone you've exchanged fire with also counts as hostile.
-function isHostileToPlayer(npc) {
+function isHostileToPlayer(npc, ctx = null) {
   if (!npc || npc.destroyed) return false
+  // Sticky flag set on first exchange of fire — O(1) radar/drone path.
+  if (npc.hostileToPlayer) return true
   if (npc.faction === 'alien') return true
-  if (npc.faction === 'pirate' && !truceActive(gameState)) return true
-  const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
-  if (system) ensureSystemSecurity(system)
+  const c = ctx ?? buildHostilityContext()
+  if (npc.faction === 'pirate' && !c.truce) return true
   if (npc.faction === 'police') {
-    return policeHostileToPlayer(gameState, system) || !!gameState.player.combatEngagedNpcIds?.[npc.id]
+    return c.policeSos || !!c.engagedMap[npc.id]
   }
   if (npc.faction === 'trader' || !npc.faction) {
-    return (
-      civiliansHostileToPlayer(gameState, system) ||
-      !!gameState.player.combatEngagedNpcIds?.[npc.id]
-    )
+    return c.civSos || !!c.engagedMap[npc.id]
   }
-  return !!gameState.player.combatEngagedNpcIds?.[npc.id]
+  return !!c.engagedMap[npc.id]
 }
 
 function bodyKindLabel(kind) {
@@ -5425,6 +5939,8 @@ function resolveTarget() {
   if (currentTarget.kind !== 'body') return null
   const body = currentSystem.bodies.find((b) => b.id === currentTarget.id)
   if (!body) return null
+  // Whole belts are waypoint-only — Tab-lock individual rocks instead.
+  if (body.kind === 'asteroidField') return null
   return {
     position: body.position,
     name: body.name,
@@ -5470,7 +5986,7 @@ function updateTargetIndicator() {
   const color = targetReticleColor(target)
   targetIndicatorEl.querySelector('.target-box').style.borderColor = color
   const label = targetIndicatorEl.querySelector('.target-label')
-  label.style.color = color
+  // Reticle keeps faction/type colour; label uses probe-info look via class.
   const dist = new THREE.Vector3().fromArray(gameState.player.ship.position).distanceTo(new THREE.Vector3(...target.position))
   const kindBit = target.kindLabel ? ` · ${target.kindLabel}` : ''
   if (target.hullPct !== null) {
@@ -5633,6 +6149,13 @@ function setTargetFromSupercruiseArrival(wp) {
     return
   }
   if (wp.bodyId) {
+    const system = getSystem(gameState.galaxy, gameState.player.currentSystemId)
+    const body = system?.bodies?.find((b) => b.id === wp.bodyId)
+    // Belts stay waypointable for SC, but are not Tab-lock targets as a whole.
+    if (body?.kind === 'asteroidField') {
+      currentTarget = null
+      return
+    }
     currentTarget = { kind: 'body', id: wp.bodyId }
     return
   }
@@ -5701,14 +6224,16 @@ const _wpShip = new THREE.Vector3()
 const _wpCamLocal = new THREE.Vector3()
 const _wpProj = new THREE.Vector3()
 /**
- * Stack dock / probe / wreck / faction / cruise / craft floating lines just
- * below the top-center radar (fixed HUD band, not world-anchored).
+ * Stack floating messages just below the top-center ship status panel (white text).
+ * Probe classification panel stays left-side — not included here.
  */
 function updateBelowRadarPrompts() {
   const visible = [
     cruiseIndicatorEl,
     craftToastEl,
+    saveToastEl,
     factionToastEl,
+    miningToastEl,
     dockPromptEl,
     probePromptEl,
     wreckPromptEl,
@@ -5716,8 +6241,12 @@ function updateBelowRadarPrompts() {
   ].filter((el) => el && el.style.display === 'block')
   if (!visible.length) return
 
-  let y = BELOW_RADAR_TOP_PX
+  let y = getFloatHudBandTopPx()
   for (const el of visible) {
+    // Match probe-info soft white (class + clear any temporary tint).
+    el.classList.add('float-info-text')
+    el.style.color = 'rgba(255,255,255,0.94)'
+    el.style.removeProperty('opacity')
     el.style.left = '50%'
     el.style.top = `${y}px`
     el.style.bottom = 'auto'
@@ -5813,7 +6342,7 @@ function updateWaypointIndicator() {
   arrow.style.transform = `rotate(${angle}rad)`
   arrow.style.borderBottomColor = color
   const label = waypointEl.querySelector('.wp-label')
-  label.style.color = color
+  // Arrow keeps mission/nav colour; name text uses probe-info look via class.
   const distLabel = distance >= 10000 ? `${(distance / 1000).toFixed(1)}km` : `${Math.round(distance)}m`
   label.textContent = `${wp.name} · ${distLabel}`
 }
@@ -6132,7 +6661,8 @@ function animate() {
     strafeY,
     shipPos: new THREE.Vector3().fromArray(gameState.player.ship.position),
     shipQuat: new THREE.Quaternion().fromArray(gameState.player.ship.quaternion),
-    hullLength: playerShipClass.hull.length
+    hullLength: playerShipClass.hull.length,
+    nozzles: playerEngineNozzles
   })
   damageEffects.update(dt, {
     armorFraction: gameState.player.ship.armor / Math.max(1, effectiveMaxArmor(gameState.player.ship, playerShipClass)),
@@ -6164,7 +6694,6 @@ function animate() {
     // flag just guards against re-showing it every subsequent frame.
     if (npc.aiState === 'ram' && !npc.ramAnnounced) {
       npc.ramAnnounced = true
-      factionToastEl.style.color = '#e05a5a'
       setHudGlitchText(factionToastEl, npc.ramQuote)
       showHudGlitch(factionToastEl)
       factionToastUntil = gameState.simTime + FACTION_TOAST_DURATION_S
@@ -6190,14 +6719,9 @@ function animate() {
     const departingIds = gameState.npcs.filter((n) => n.faction === 'pirate' && !n.destroyed).map((n) => n.id)
     if (departingIds.length) {
       for (const id of departingIds) {
-        const mesh = npcMeshes.get(id)
-        if (mesh) {
-          scene.remove(mesh)
-          npcMeshes.delete(id)
-        }
+        removeNpcMesh(id)
       }
       gameState.npcs = gameState.npcs.filter((n) => !departingIds.includes(n.id))
-      factionToastEl.style.color = '#7fe0a0'
       setHudGlitchText(factionToastEl, 'The pirates thank you for the assist, and hyperspace away.')
       showHudGlitch(factionToastEl)
       factionToastUntil = gameState.simTime + FACTION_TOAST_DURATION_S
@@ -6239,10 +6763,8 @@ function animate() {
   for (const npc of gameState.npcs) {
     let mesh = npcMeshes.get(npc.id)
     if (!mesh && !npc.destroyed) {
-      // lite: skip EdgesGeometry overlays (main hitch when contacts mesh mid-fight)
-      mesh = buildShipMesh(getShipClass(npc.shipClassId), { lite: true })
-      npcMeshes.set(npc.id, mesh)
-      scene.add(mesh)
+      // lite hull + thrusters (EdgesGeometry skipped — hitch when meshing mid-fight)
+      mesh = addNpcMesh(npc)
     }
     if (!mesh) continue
     if (npc.destroyed) {
@@ -6253,11 +6775,11 @@ function animate() {
         const r = getShipCollisionRadius(getShipClass(npc.shipClassId))
         playShipDeathFx(npc.position, r)
       }
-      scene.remove(mesh)
-      npcMeshes.delete(npc.id)
+      removeNpcMesh(npc.id)
       continue
     }
     syncMeshToEntity(mesh, npc)
+    updateNpcThrusters(mesh, npc, dt)
     // Animate emergency lights on any mesh that has police livery (faction or flag).
     if (npc.faction === 'police' || mesh.userData?.policeLights) {
       updatePoliceLights(mesh, gameState.simTime)
@@ -6306,9 +6828,24 @@ function animate() {
     }
   }
 
-  // Law standing change toasts (innocent attacks / pirate kills).
-  for (const msg of flushPendingToasts(gameState)) {
-    flashToast(msg, 3.2)
+  // Law penalties + standing toasts — deferred so the hit frame stays smooth.
+  // (flushPendingLawPenalties queues toast strings; flushPendingToasts shows them.)
+  if (
+    (gameState._pendingLawPenalties | 0) > 0 ||
+    gameState._pendingToasts?.length
+  ) {
+    if (!gameState._toastFlushScheduled) {
+      gameState._toastFlushScheduled = true
+      const gs = gameState
+      requestAnimationFrame(() => {
+        gs._toastFlushScheduled = false
+        if (gs !== gameState) return
+        flushPendingLawPenalties(gs)
+        for (const msg of flushPendingToasts(gs)) {
+          flashToast(msg, 3.2)
+        }
+      })
+    }
   }
 
   const liveProjectileIds = new Set()
@@ -6508,7 +7045,7 @@ function animate() {
       hud.updatePlottedRoute(null)
     }
   }
-  // Tab-target detail panel between system name and radar.
+  // Tab-target detail panel (top right, left of system overview).
   {
     const t = resolveTarget()
     if (!t) {
@@ -6552,7 +7089,7 @@ function animate() {
     !cruising && !nearbyWreck && !nearbyGate ? findNearbyDockableBody() : null
   wreckPromptEl.style.display = nearbyWreck ? 'block' : 'none'
   if (nearbyWreck) {
-    wreckPromptEl.textContent = 'Press F to salvage wreck'
+    wreckPromptEl.textContent = 'Press F to salvage wreck (or destroy with weapons)'
   }
 
   dockPromptEl.style.display = nearbyGate || nearbyBody ? 'block' : 'none'
@@ -6618,7 +7155,7 @@ function animate() {
     hideHudGlitch(probeResultsEl)
   }
 
-  // Dock / probe / wreck / faction / cruise / craft lines sit under the radar.
+  // Dock / probe / wreck / faction / cruise / craft lines sit under ship status.
   updateBelowRadarPrompts()
 
   updateWaypointIndicator()

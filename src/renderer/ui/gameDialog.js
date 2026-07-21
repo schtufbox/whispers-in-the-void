@@ -18,11 +18,11 @@ const STYLE = `
   width: min(420px, 92vw); padding: 18px 20px;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.98), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.95));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 28px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 20px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
 .${OVERLAY_CLASS} .game-dialog .prompt-title {
   font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: var(--ui-accent); margin-bottom: 12px; text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
+  color: var(--ui-accent); margin-bottom: 12px; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 .${OVERLAY_CLASS} .game-dialog .prompt-body {
   font-size: 13px; line-height: 1.45; color: var(--ui-text); opacity: 0.92;
@@ -34,7 +34,7 @@ const STYLE = `
   color: var(--ui-text); padding: 8px 10px; font-family: monospace; font-size: 13px;
 }
 .${OVERLAY_CLASS} .game-dialog input:focus {
-  outline: none; border-color: var(--ui-accent); box-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  outline: none; border-color: var(--ui-accent); box-shadow: 0 1px 3px rgba(0,0,0,0.7);
 }
 .${OVERLAY_CLASS} .game-dialog .prompt-actions {
   display: flex; justify-content: flex-end; gap: 8px;
@@ -50,7 +50,7 @@ const STYLE = `
 .${OVERLAY_CLASS} .game-dialog button.prompt-ok:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28); }
 .${OVERLAY_CLASS} .game-dialog button.prompt-cancel:hover { background: rgba(224,90,90,0.22); }
 .${OVERLAY_CLASS} .game-dialog.danger { border-left-color: #e05a5a; }
-.${OVERLAY_CLASS} .game-dialog.danger .prompt-title { color: #ffb3b3; text-shadow: 0 0 8px rgba(224,90,90,0.4); }
+.${OVERLAY_CLASS} .game-dialog.danger .prompt-title { color: #ffb3b3; text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
 .${OVERLAY_CLASS} .game-dialog.danger button.prompt-ok {
   background: rgba(224,90,90,0.15); border-color: rgba(224,90,90,0.55); color: #ffb3b3;
 }
@@ -136,7 +136,8 @@ export function openGameDialog({
       if (e.target === overlay) cancel()
     })
 
-    // Capture so Escape isn't eaten by pause/flight handlers while modal is open.
+    // Capture so Enter isn't eaten by flight handlers. Esc does not dismiss —
+    // use OK / Cancel buttons (same rule as other game windows).
     function onKeyCapture(e) {
       if (!overlay.isConnected) return
       if (e.key === 'Enter') {
@@ -146,7 +147,6 @@ export function openGameDialog({
       } else if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        cancel()
       }
     }
     document.addEventListener('keydown', onKeyCapture, true)

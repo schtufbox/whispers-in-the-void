@@ -10,10 +10,10 @@ const STYLE = `
   width: 700px; max-height: 80vh; overflow-y: auto; padding: 18px 22px;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.95), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.9));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 3px solid #ff8a3d;
-  box-shadow: 0 0 26px rgba(255,138,61,0.18), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
-#missions-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(255,138,61,0.45); }
-#missions-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #ffb07a; text-shadow: 0 0 6px rgba(255,138,61,0.5); margin: 4px 0 12px; }
+#missions-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); }
+#missions-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #ffb07a; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); margin: 4px 0 12px; }
 #missions-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 #missions-ui .empty { opacity: 0.5; font-size: 13px; line-height: 1.5; }
 #missions-ui .mission {
@@ -26,7 +26,7 @@ const STYLE = `
 #missions-ui .mission .meta { font-size: 12px; opacity: 0.85; margin-bottom: 4px; }
 #missions-ui .mission .status { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin: 8px 0; }
 #missions-ui .mission .status.progress { color: #ffb07a; }
-#missions-ui .mission .status.ready { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
+#missions-ui .mission .status.ready { color: #7fe0a0; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); }
 #missions-ui .log {
   margin: 10px 0 6px; padding: 8px 0 8px 12px;
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25);
@@ -43,11 +43,11 @@ const STYLE = `
 #missions-ui .log-entry::before {
   content: ''; position: absolute; left: -13px; top: 5px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--ui-glow); box-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7);
+  background: var(--ui-glow); box-shadow: 0 1px 2px rgba(0,0,0,0.85);
 }
-#missions-ui .log-entry.lead::before { background: #ffb07a; box-shadow: 0 0 6px rgba(255,176,122,0.7); }
-#missions-ui .log-entry.hostile::before { background: #e05a5a; box-shadow: 0 0 6px rgba(224,90,90,0.7); }
-#missions-ui .log-entry.intel::before { background: #7fe0a0; box-shadow: 0 0 6px rgba(127,224,160,0.7); }
+#missions-ui .log-entry.lead::before { background: #ffb07a; box-shadow: 0 1px 2px rgba(0,0,0,0.85); }
+#missions-ui .log-entry.hostile::before { background: #e05a5a; box-shadow: 0 1px 2px rgba(0,0,0,0.85); }
+#missions-ui .log-entry.intel::before { background: #7fe0a0; box-shadow: 0 1px 2px rgba(0,0,0,0.85); }
 #missions-ui .log-entry .tag {
   display: inline-block; font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
   margin-right: 6px; opacity: 0.7;
@@ -63,19 +63,19 @@ const STYLE = `
   padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#missions-ui button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
+#missions-ui button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65); }
 #missions-ui button.track {
   background: rgba(255,138,61,0.12); border: 1px solid rgba(255,138,61,0.5); color: #ffd0a8;
   padding: 5px 12px; cursor: pointer; font-family: monospace; margin-top: 4px;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#missions-ui button.track:hover { background: rgba(255,138,61,0.22); box-shadow: 0 0 12px rgba(255,138,61,0.35); }
+#missions-ui button.track:hover { background: rgba(255,138,61,0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65); }
 #missions-ui button.drop {
   background: rgba(224,90,90,0.1); border: 1px solid rgba(224,90,90,0.45); color: #ffb3b3;
   padding: 5px 12px; cursor: pointer; font-family: monospace; margin-top: 4px; margin-left: 8px;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#missions-ui button.drop:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
+#missions-ui button.drop:hover { background: rgba(224,90,90,0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65); }
 #missions-ui .mission-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
 #missions-ui .footer-note { margin-top: 14px; font-size: 11px; opacity: 0.55; line-height: 1.4; }
 `

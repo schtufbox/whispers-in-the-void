@@ -14,30 +14,30 @@ const STYLE = `
   display: flex; flex-direction: column; gap: 10px; width: 300px; padding: 26px 28px;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.95), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.9));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 30px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
 #pause-menu .panel.controls-view { width: min(460px, 92vw); max-height: min(80vh, 640px); }
 #pause-menu .panel.settings-view,
 #pause-menu .panel.ui-colour-view { width: min(360px, 92vw); }
-#pause-menu h2 { margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7); }
+#pause-menu h2 { margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); }
 #pause-menu button {
   background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.1); border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); color: var(--ui-text);
   padding: 11px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-#pause-menu button:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 14px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35); }
+#pause-menu button:hover { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65); }
 #pause-menu button.quit-title {
   background: rgba(255,180,60,0.12);
   border-color: rgba(255,190,70,0.55);
   color: #ffe08a;
-  text-shadow: 0 0 8px rgba(255,180,60,0.35);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
 }
 #pause-menu button.quit-title:hover {
   background: rgba(255,190,70,0.22);
-  box-shadow: 0 0 14px rgba(255,180,60,0.4);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #pause-menu button.quit { background: rgba(224,90,90,0.12); border-color: rgba(224,90,90,0.5); color: #ffb3b3; }
-#pause-menu button.quit:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 14px rgba(224,90,90,0.35); }
+#pause-menu button.quit:hover { background: rgba(224,90,90,0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65); }
 ${SETTINGS_VIEW_CSS}
 #pause-menu .controls-list {
   display: flex; flex-direction: column; gap: 6px;
@@ -140,9 +140,29 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
     onBack: showSettings
   })
 
-  root.querySelector('.resume').addEventListener('click', () => {
-    hide()
+  // pointerdown keeps the user-activation gesture for pointer lock (click can
+  // be too late after hide/focus churn in Chromium/Electron).
+  const resumeBtn = root.querySelector('.resume')
+  let resumeArmed = false
+  const doResume = () => {
+    if (root.style.display === 'none') return
+    if (resumeArmed) return
+    resumeArmed = true
     onResume()
+    // Allow a later open → Resume again.
+    setTimeout(() => {
+      resumeArmed = false
+    }, 400)
+  }
+  resumeBtn.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    doResume()
+  })
+  // Keyboard / accessibility (Enter on focused button)
+  resumeBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    doResume()
   })
   root.querySelector('.save').addEventListener('click', () => onSave())
   root.querySelector('.controls').addEventListener('click', () => showControls())
@@ -155,6 +175,14 @@ export function createPauseMenu(container, { onResume, onSave, onRestart, onQuit
     show() {
       showMain()
       root.style.display = 'flex'
+      // Focus Resume so Enter unpauses with a keyboard user-activation gesture.
+      requestAnimationFrame(() => {
+        try {
+          resumeBtn.focus({ preventScroll: true })
+        } catch {
+          resumeBtn.focus?.()
+        }
+      })
     },
     hide,
     element: root

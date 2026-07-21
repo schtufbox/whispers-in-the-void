@@ -44,17 +44,17 @@ button.ui-btn-gold {
   background: linear-gradient(180deg, rgba(255,210,70,0.42), rgba(180,120,20,0.55)) !important;
   border: 2px solid #ffe08a !important;
   color: #fff6c8 !important;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 10px rgba(255,210,70,0.55);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.75);
   box-shadow:
-    0 0 20px rgba(255,210,70,0.45),
-    0 3px 10px rgba(0,0,0,0.55),
+    0 3px 8px rgba(0,0,0,0.85),
+    0 8px 18px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.25) !important;
 }
 button.ui-btn-gold:hover:not(:disabled) {
   background: linear-gradient(180deg, rgba(255,220,90,0.58), rgba(210,150,30,0.65)) !important;
   box-shadow:
-    0 0 28px rgba(255,210,70,0.65),
-    0 4px 12px rgba(0,0,0,0.6),
+    0 4px 10px rgba(0,0,0,0.85),
+    0 10px 20px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.35) !important;
   transform: translateY(-1px) !important;
   filter: brightness(1.06);
@@ -63,17 +63,17 @@ button.ui-btn-danger {
   background: linear-gradient(180deg, rgba(224,90,90,0.45), rgba(140,30,30,0.62)) !important;
   border: 2px solid #ff9a9a !important;
   color: #ffe0e0 !important;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 10px rgba(255,100,100,0.45);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.75);
   box-shadow:
-    0 0 20px rgba(224,90,90,0.45),
-    0 3px 10px rgba(0,0,0,0.55),
+    0 3px 8px rgba(0,0,0,0.85),
+    0 8px 18px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.2) !important;
 }
 button.ui-btn-danger:hover:not(:disabled) {
   background: linear-gradient(180deg, rgba(240,110,110,0.58), rgba(170,40,40,0.7)) !important;
   box-shadow:
-    0 0 28px rgba(224,90,90,0.65),
-    0 4px 12px rgba(0,0,0,0.6),
+    0 4px 10px rgba(0,0,0,0.85),
+    0 10px 20px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.28) !important;
   transform: translateY(-1px) !important;
   filter: brightness(1.06);
@@ -83,9 +83,9 @@ button.ui-btn-danger.active {
   border-color: #ff9a9a !important;
   color: #ffe0e0 !important;
   box-shadow:
-    0 0 24px rgba(224,90,90,0.55),
-    0 2px 8px rgba(0,0,0,0.5),
-    inset 0 0 12px rgba(224,90,90,0.22) !important;
+    0 2px 8px rgba(0,0,0,0.85),
+    0 6px 16px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.15) !important;
 }
 /* Settings layout: full-width Back; Off shares the row 50/50. */
 .settings-view button.settings-back.ui-btn-gold,
@@ -120,7 +120,7 @@ ${UI_ACTION_BTN_CSS}
 }
 .settings-view .settings-btns button.active:not(.ui-btn-danger) {
   background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28); border-color: var(--ui-accent-mid);
-  box-shadow: 0 0 12px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35); color: var(--ui-bright);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.65); color: var(--ui-bright);
 }
 .settings-view .settings-note {
   font-size: 10px; opacity: 0.55; text-align: center; line-height: 1.35; margin: 0;
@@ -131,7 +131,7 @@ ${UI_ACTION_BTN_CSS}
   padding: 12px;
   background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.08);
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.35);
-  box-shadow: 0 0 16px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.2);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.55);
 }
 .ui-colour-view .ui-colour-swatch-row {
   display: flex; gap: 8px; align-items: center; justify-content: center;
@@ -139,11 +139,11 @@ ${UI_ACTION_BTN_CSS}
 .ui-colour-view .ui-colour-swatch {
   width: 36px; height: 36px; border-radius: 6px;
   border: 1px solid rgba(255,255,255,0.35);
-  box-shadow: 0 0 12px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 .ui-colour-view .ui-colour-hex {
   font-size: 12px; letter-spacing: 1px; color: var(--ui-accent);
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
   text-align: center;
 }
 .ui-colour-view .ui-colour-field {
@@ -170,7 +170,7 @@ ${UI_ACTION_BTN_CSS}
 .ui-colour-view .ui-colour-presets button:hover,
 .ui-colour-view .ui-bg-presets button:hover {
   transform: scale(1.08);
-  box-shadow: 0 0 12px rgba(255,255,255,0.35);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 .ui-colour-view .ui-colour-reset,
 .ui-colour-view .ui-bg-reset {

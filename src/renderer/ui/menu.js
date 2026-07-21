@@ -78,7 +78,7 @@ const STYLE = `
   background: radial-gradient(ellipse at center, transparent 40%, rgba(2,4,8,0.75) 100%);
 }
 #main-menu .frame { position: absolute; inset: 14px; pointer-events: none; z-index: 2; }
-#main-menu .frame .corner { position: absolute; width: 44px; height: 44px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45); filter: drop-shadow(0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5)); }
+#main-menu .frame .corner { position: absolute; width: 44px; height: 44px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45); filter: drop-shadow(0 2px 4px rgba(0,0,0,0.9)) drop-shadow(0 6px 12px rgba(0,0,0,0.55)); }
 #main-menu .frame .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
 #main-menu .frame .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
 #main-menu .frame .corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; }
@@ -192,12 +192,12 @@ const STYLE = `
   display: flex; align-items: center; justify-content: center; gap: 14px;
   animation: flicker 5s ease-in-out infinite;
   text-shadow: 0 1px 2px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.5),
-    0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+    0 2px 4px rgba(0,0,0,0.75);
 }
 #main-menu .subtitle::before, #main-menu .subtitle::after {
   content: ''; height: 1px; width: 70px;
   background: linear-gradient(90deg, transparent, rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.6));
-  box-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.7);
 }
 #main-menu .subtitle::after { background: linear-gradient(90deg, rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.6), transparent); }
 @keyframes flicker {
@@ -219,7 +219,7 @@ const STYLE = `
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 #main-menu input[type="text"]:focus,
-#main-menu input:not([type]):focus { outline: none; border-color: var(--ui-glow); box-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.4); }
+#main-menu input:not([type]):focus { outline: none; border-color: var(--ui-glow); box-shadow: 0 1px 3px rgba(0,0,0,0.7); }
 
 /* Create Pilot — portrait upload (matches Character sheet). */
 #main-menu .new-game-view {
@@ -227,11 +227,11 @@ const STYLE = `
   padding: 28px 32px;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.88));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 30px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
 #main-menu .new-game-view h2 {
   margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px;
-  text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7);
+  text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #main-menu .new-game-layout {
   display: grid;
@@ -250,7 +250,7 @@ const STYLE = `
 #main-menu .new-game-portrait {
   width: 120px; height: 120px;
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5);
-  box-shadow: 0 0 16px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 14px rgba(0,0,0,0.4);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.85), 0 6px 14px rgba(0,0,0,0.5), inset 0 0 14px rgba(0,0,0,0.4);
   background: rgba(8,12,22,0.9);
   overflow: hidden; position: relative;
 }
@@ -273,14 +273,14 @@ const STYLE = `
 }
 #main-menu .new-game-view button.upload-btn:hover,
 #main-menu .new-game-view button.clear-portrait:hover {
-  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.2); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3);
+  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.2); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
   transform: none !important;
 }
 #main-menu .new-game-view button.clear-portrait {
   border-color: rgba(224,90,90,0.45); color: #ffb3b3; background: rgba(224,90,90,0.08);
 }
 #main-menu .new-game-view button.clear-portrait:hover {
-  background: rgba(224,90,90,0.18); box-shadow: 0 0 10px rgba(224,90,90,0.3);
+  background: rgba(224,90,90,0.18); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #main-menu .new-game-view input[type=file] { display: none; }
 #main-menu .new-game-fields {
@@ -309,7 +309,7 @@ const STYLE = `
 }
 #main-menu .new-game-view button.confirm-new-game:hover,
 #main-menu .new-game-view button.back:hover {
-  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 14px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
   transform: none !important;
 }
 
@@ -322,11 +322,11 @@ const STYLE = `
 #main-menu button.quit { border-color: #a13a3a; }
 /* Boxed hover only for form buttons — not .menu-link (see overrides below). */
 #main-menu button:not(.menu-link):hover:not(:disabled) {
-  background: #223252; border-color: var(--ui-key); box-shadow: 0 0 14px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  background: #223252; border-color: var(--ui-key); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
   transform: translateY(8px) scale(1.02);
 }
 #main-menu button:not(.menu-link).quit:hover:not(:disabled) {
-  border-color: #d94f4f; box-shadow: 0 0 14px rgba(217,79,79,0.4);
+  border-color: #d94f4f; box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #main-menu button:not(.menu-link):active:not(:disabled) { transform: translateY(9px) scale(0.99); }
 
@@ -366,15 +366,15 @@ const STYLE = `
 #main-menu button.menu-link:focus-visible:not(:disabled) .glitch-text {
   filter:
     drop-shadow(0 1px 2px rgba(0,0,0,0.7))
-    drop-shadow(0 0 8px rgba(143,179,255,0.85))
-    drop-shadow(0 0 18px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
+    drop-shadow(0 2px 4px rgba(0,0,0,0.9))
+    drop-shadow(0 6px 12px rgba(0,0,0,0.55));
 }
 #main-menu button.menu-link.quit:hover:not(:disabled) .glitch-text,
 #main-menu button.menu-link.quit:focus-visible:not(:disabled) .glitch-text {
   filter:
     drop-shadow(0 1px 2px rgba(0,0,0,0.7))
-    drop-shadow(0 0 8px rgba(217,79,79,0.9))
-    drop-shadow(0 0 18px rgba(217,79,79,0.5));
+    drop-shadow(0 2px 4px rgba(0,0,0,0.9))
+    drop-shadow(0 6px 12px rgba(0,0,0,0.55));
 }
 #main-menu button.menu-link .glitch-text::before, #main-menu button.menu-link .glitch-text::after {
   content: attr(data-text); position: absolute; inset: 0; color: inherit;
@@ -427,14 +427,14 @@ const STYLE = `
   padding: 28px 32px;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.88));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 30px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
 #main-menu .controls-view { width: min(460px, 92vw); max-height: min(80vh, 640px); overflow: hidden; }
 #main-menu .settings-view h2,
 #main-menu .controls-view h2,
 #main-menu .ui-colour-view h2 {
   margin: 0 0 14px 0; text-align: center; font-weight: normal; letter-spacing: 4px;
-  text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7);
+  text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #main-menu .settings-view button,
 #main-menu .controls-view button,
@@ -447,7 +447,7 @@ const STYLE = `
 #main-menu .settings-view button:hover:not(:disabled),
 #main-menu .controls-view button:hover:not(:disabled),
 #main-menu .ui-colour-view button:hover:not(:disabled) {
-  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 14px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
   transform: none;
 }
 #main-menu .ui-colour-view .ui-colour-presets button:hover {

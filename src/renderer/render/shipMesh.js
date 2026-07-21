@@ -245,6 +245,26 @@ function engineOffsets(layout, peakWidth) {
   }
 }
 
+/**
+ * Local-space nozzle points matching addHullDetails engine glow positions.
+ * Used by thruster FX so multi-engine hulls get one plume per nacelle.
+ * @returns {{ x: number, y: number, z: number }[]}
+ */
+export function getEngineNozzleLocals(hull) {
+  if (!hull) return [{ x: 0, y: 0, z: -10 }]
+  const length = Number(hull.length) || 20
+  const widths = hull.stationWidths?.length ? hull.stationWidths : [1.5]
+  const heights = hull.stationHeights?.length ? hull.stationHeights : [1.2]
+  const peakWidth = Math.max(...widths)
+  const peakHeight = Math.max(...heights)
+  const style = hull.style ?? defaultStyle(hull, () => 0.5)
+  const layout = style.engineLayout ?? (peakWidth > length * 0.08 ? 'twin' : 'single')
+  const offsets = engineOffsets(layout, peakWidth)
+  // Match mesh glow disc: slightly aft of stern so exhaust sits in the bell.
+  const z = -length / 2 - peakHeight * 0.22
+  return offsets.map(([x, y]) => ({ x, y, z }))
+}
+
 /** Forward-pointing aerial at the tip of a ventral (underside) wing. */
 function addVentralWingAerials(group, hull, mats) {
   const { length, stationWidths, stationHeights, wings = [], stationOffsetsX, stationOffsetsY } = hull

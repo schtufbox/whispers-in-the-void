@@ -48,7 +48,8 @@ function hashString(str) {
 function systemRng(systemId, epoch = 0) {
   // Epoch is the reshuffle window — each window re-rolls presence, type, and
   // count independently (not a like-for-like replace of the previous sites).
-  return mulberry32(hashString(`anomaly-v2:${systemId}:e${epoch}`))
+  // v3: open-space placement (clear of planets / moons / stations / star).
+  return mulberry32(hashString(`anomaly-v3:${systemId}:e${epoch}`))
 }
 
 /** Integer anomaly generation from campaign simTime. */
@@ -110,13 +111,153 @@ export function tickGalaxyAnomalies(galaxy, simTime) {
   return { refreshed: true, epoch }
 }
 
-/** Local position far from origin, clear of typical body shell. */
-function randomAnomalyPosition(rng) {
-  // Prefer mid-system belt / outer local space (not inside sun).
-  const r = range(rng, 40000, 180000)
+// Keep sites in open volume — not hugging the star or a planet/moon/station.
+// (System orbits typically sit ~100k–340k from the primary.)
+const ANOMALY_MIN_STAR_DIST = 75000
+const ANOMALY_MIN_BODY_PAD = 22000
+const ANOMALY_MIN_SITE_SEP = 18000
+const ANOMALY_PLACE_ATTEMPTS = 56
+
+function bodyClearanceRadius(body) {
+  if (!body) return 0
+  // Prefer explicit radius; stations/settlements may be small on body.radius.
+  const r = Number(body.radius)
+  if (Number.isFinite(r) && r > 0) return r
+  if (body.kind === 'station') return 3400
+  if (body.kind === 'settlement') return 200
+  if (body.kind === 'warpGate') return 140
+  return 500
+}
+
+/**
+ * True when `pos` sits in open system space: well clear of the star and every
+ * planet / moon / station / belt / gate shell.
+ */
+export function isAnomalyOpenSpace(pos, system, { extraPositions = [], minBodyPad = ANOMALY_MIN_BODY_PAD } = {}) {
+  if (!pos || pos.length < 3) return false
+  const starDist = Math.hypot(pos[0], pos[1], pos[2])
+  if (starDist < ANOMALY_MIN_STAR_DIST) return false
+  for (const body of system?.bodies ?? []) {
+    if (!body?.position) continue
+    const need = bodyClearanceRadius(body) + minBodyPad
+    const d = Math.hypot(
+      pos[0] - body.position[0],
+      pos[1] - body.position[1],
+      pos[2] - body.position[2]
+    )
+    if (d < need) return false
+  }
+  for (const other of extraPositions) {
+    if (!other || other === pos) continue
+    const d = Math.hypot(pos[0] - other[0], pos[1] - other[1], pos[2] - other[2])
+    if (d < ANOMALY_MIN_SITE_SEP) return false
+  }
+  return true
+}
+
+/**
+ * Local position in open system volume — not near planets/moons/stations/sun.
+ * Uses body layout when available so sites can sit between orbits or beyond
+ * the outer system, not only on the planetary ring.
+ */
+function randomAnomalyPosition(rng, system = null, occupied = []) {
+  const bodies = system?.bodies ?? []
+  let maxBodyR = 140000
+  for (const b of bodies) {
+    if (!b?.position) continue
+    const r = Math.hypot(b.position[0], b.position[1], b.position[2])
+    if (r > maxBodyR) maxBodyR = r
+  }
+  // Open volume from outside the star exclusion out past the outermost body.
+  const rMin = ANOMALY_MIN_STAR_DIST + 15000
+  const rMax = Math.max(rMin + 80000, maxBodyR * 1.45)
+
+  for (let attempt = 0; attempt < ANOMALY_PLACE_ATTEMPTS; attempt++) {
+    // Mix mid-system (gaps between orbits) and deep outer volume.
+    const outerBias = attempt > ANOMALY_PLACE_ATTEMPTS * 0.45
+    const r = outerBias
+      ? range(rng, Math.max(rMin, maxBodyR * 0.85), rMax)
+      : range(rng, rMin, rMax)
+    const theta = rng() * Math.PI * 2
+    // Mostly ecliptic, with occasional high-latitude outliers (deep space).
+    const ySpan = outerBias ? maxBodyR * 0.12 : maxBodyR * 0.06
+    const y = range(rng, -ySpan, ySpan)
+    const pos = [r * Math.cos(theta), y, r * Math.sin(theta)]
+    if (isAnomalyOpenSpace(pos, system, { extraPositions: occupied })) return pos
+  }
+
+  // Fallback: far beyond outermost body on a random bearing (always open).
+  const r = maxBodyR * 1.5 + range(rng, 30000, 90000)
   const theta = rng() * Math.PI * 2
-  const y = range(rng, -8000, 8000)
+  const y = range(rng, -maxBodyR * 0.1, maxBodyR * 0.1)
   return [r * Math.cos(theta), y, r * Math.sin(theta)]
+}
+
+/** Re-place nodule offsets when a datacore site moves. */
+function reanchorNodules(anomaly, newPos, rng) {
+  if (!anomaly?.nodules?.length) return
+  for (let n = 0; n < anomaly.nodules.length; n++) {
+    const nodule = anomaly.nodules[n]
+    const ang = (n / anomaly.nodules.length) * Math.PI * 2 + rng() * 0.4
+    const d = 280 + rng() * 420
+    nodule.position = [
+      newPos[0] + Math.cos(ang) * d,
+      newPos[1] + (rng() - 0.5) * 80,
+      newPos[2] + Math.sin(ang) * d
+    ]
+  }
+}
+
+/** True only when sitting inside a planet/moon/station/belt/gate shell + pad. */
+function isTooCloseToABody(pos, system, minBodyPad = ANOMALY_MIN_BODY_PAD) {
+  for (const body of system?.bodies ?? []) {
+    if (!body?.position) continue
+    const need = bodyClearanceRadius(body) + minBodyPad
+    const d = Math.hypot(
+      pos[0] - body.position[0],
+      pos[1] - body.position[1],
+      pos[2] - body.position[2]
+    )
+    if (d < need) return true
+  }
+  return false
+}
+
+/**
+ * One-time migration: move still-hidden sites that were rolled next to bodies
+ * under the old placer into open space (preserves scanned/active progress).
+ * Only runs when the system has bodies — pure test fixtures are left alone.
+ */
+function migrateCrowdedHiddenAnomalies(system, epoch) {
+  if (!system?.spatialAnomalies?.length) return
+  if (system.anomalyOpenSpaceMigrated === epoch) return
+  if (!system.bodies?.length) {
+    system.anomalyOpenSpaceMigrated = epoch
+    return
+  }
+  const rng = systemRng(system.id, epoch)
+  const occupied = []
+  for (const a of system.spatialAnomalies) {
+    if (!a?.position) continue
+    if (a.fullyScanned || a.status === 'active' || a.status === 'scanned' || a.status === 'completed' || a.status === 'despawning') {
+      occupied.push(a.position)
+      continue
+    }
+    // Don't force-move for star-only distance; only sites hugging a real body.
+    if (!isTooCloseToABody(a.position, system) && isAnomalyOpenSpace(a.position, system, { extraPositions: occupied })) {
+      occupied.push(a.position)
+      continue
+    }
+    if (!isTooCloseToABody(a.position, system)) {
+      occupied.push(a.position)
+      continue
+    }
+    const next = randomAnomalyPosition(rng, system, occupied)
+    a.position = next
+    reanchorNodules(a, next, rng)
+    occupied.push(next)
+  }
+  system.anomalyOpenSpaceMigrated = epoch
 }
 
 /**
@@ -135,6 +276,8 @@ export function ensureSystemAnomalies(system, epochOrGalaxy = 0) {
     (system.anomalyEpoch ?? epoch) === epoch
   ) {
     system.anomalyEpoch = epoch
+    // Old saves: nudge still-hidden sites off planets/stations into open space.
+    migrateCrowdedHiddenAnomalies(system, epoch)
     return system.spatialAnomalies
   }
 
@@ -144,6 +287,7 @@ export function ensureSystemAnomalies(system, epochOrGalaxy = 0) {
   if (rng() >= 0.2) {
     system.spatialAnomalies = []
     system.anomalyEpoch = epoch
+    system.anomalyOpenSpaceMigrated = epoch
     return system.spatialAnomalies
   }
 
@@ -156,10 +300,12 @@ export function ensureSystemAnomalies(system, epochOrGalaxy = 0) {
   count = Math.min(4, Math.max(1, count))
 
   const anomalies = []
+  const occupied = []
   for (let i = 0; i < count; i++) {
     const type = rng() < 0.5 ? 'alien_incursion' : 'datacore'
     const id = `anomaly-${system.id}-e${epoch}-${i}`
-    const position = randomAnomalyPosition(rng)
+    const position = randomAnomalyPosition(rng, system, occupied)
+    occupied.push(position)
     const anomaly = {
       id,
       systemId: system.id,
@@ -209,6 +355,7 @@ export function ensureSystemAnomalies(system, epochOrGalaxy = 0) {
   }
   system.spatialAnomalies = anomalies
   system.anomalyEpoch = epoch
+  system.anomalyOpenSpaceMigrated = epoch
   return anomalies
 }
 

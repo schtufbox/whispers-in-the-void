@@ -95,7 +95,7 @@ ${ITEM_ICON_CSS}
   max-height: calc(100vh - 6vh - 2vh); overflow-y: auto; padding: 18px 22px;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.95), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.9));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.22), inset 0 0 26px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
 #docking-ui .panel { width: 720px; }
 #docking-ui .side-column {
@@ -136,7 +136,7 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel.loadout-side .lo-ship {
   font-size: 12px; color: var(--ui-accent); margin: 0 0 10px 0;
   letter-spacing: 0.3px;
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #docking-ui .side-panel.loadout-side .lo-class {
   opacity: 0.65; font-size: 11px; margin-left: 4px;
@@ -146,7 +146,7 @@ ${ITEM_ICON_CSS}
   border-top: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.2);
   font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--ui-accent); opacity: 0.9;
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #docking-ui .side-panel.loadout-side .lo-section:first-of-type {
   margin-top: 4px; padding-top: 0; border-top: none;
@@ -224,7 +224,7 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel.loadout-side select.equip-drone:focus {
   outline: none;
   border-color: var(--ui-accent-mid);
-  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #docking-ui select:disabled,
 #docking-ui .side-panel.loadout-side select:disabled {
@@ -249,7 +249,7 @@ ${ITEM_ICON_CSS}
 }
 #docking-ui .side-panel.loadout-side button.unequip-drone:hover {
   background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22);
-  box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #docking-ui .side-panel.ore-side {
   max-height: min(52vh, calc(100vh - 6vh - 2vh - 100px)); overflow-y: auto;
@@ -262,7 +262,7 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel .panel-kicker {
   font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--ui-accent); opacity: 0.75; margin: 0 0 10px 0;
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #docking-ui .side-panel .meta-line {
   font-size: 11px; opacity: 0.75; margin: 0 0 8px 0;
@@ -284,7 +284,7 @@ ${ITEM_ICON_CSS}
 #docking-ui .xfer-item.xfer-dragging { opacity: 0.45; }
 #docking-ui .xfer-drop-target.drag-over {
   outline: 1px solid rgba(127,224,160,0.55);
-  box-shadow: inset 0 0 18px rgba(127,224,160,0.1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.55);
   background: rgba(127,224,160,0.06);
 }
 #docking-ui .xfer-hint {
@@ -303,7 +303,7 @@ ${ITEM_ICON_CSS}
   background: transparent; border: none; color: var(--ui-accent); cursor: pointer;
   font-family: monospace; font-size: 11px; letter-spacing: 1.5px;
   text-transform: uppercase; padding: 0; text-align: left;
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #docking-ui .bp-toggle:hover { color: var(--ui-text); }
 #docking-ui .bp-toggle .chev { opacity: 0.7; margin-right: 4px; display: inline-block; width: 0.9em; }
@@ -313,7 +313,7 @@ ${ITEM_ICON_CSS}
   margin-right: 0;
 }
 #docking-ui button.store-all-bps:hover {
-  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #docking-ui .bp-body { margin-top: 4px; }
 #docking-ui .side-panel .job-row { font-size: 12px; margin-bottom: 10px; }
@@ -330,13 +330,13 @@ ${ITEM_ICON_CSS}
 #docking-ui .side-panel .ship-row .ship-actions button {
   margin-right: 0; padding: 3px 8px; font-size: 11px;
 }
-#docking-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5); }
-#docking-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6); margin: 18px 0 8px; }
+#docking-ui h2 { font-weight: normal; letter-spacing: 2px; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); }
+#docking-ui h3 { font-weight: normal; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--ui-accent); text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); margin: 18px 0 8px; }
 #docking-ui .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 12px; }
 #docking-ui .header .body-name { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #docking-ui .header-credits {
   flex-shrink: 0; font-size: 13px; letter-spacing: 1px; color: #ffe08a;
-  text-shadow: 0 0 8px rgba(255,210,70,0.4); white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9); white-space: nowrap;
 }
 #docking-ui .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.25); }
 #docking-ui .tab {
@@ -345,7 +345,7 @@ ${ITEM_ICON_CSS}
   letter-spacing: 1.5px; text-transform: uppercase; transition: color 0.15s ease, border-color 0.15s ease;
 }
 #docking-ui .tab:hover { color: var(--ui-text); }
-#docking-ui .tab.active { color: var(--ui-accent); border-bottom-color: var(--ui-accent-mid); text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6); }
+#docking-ui .tab.active { color: var(--ui-accent); border-bottom-color: var(--ui-accent-mid); text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); }
 #docking-ui table { width: 100%; border-collapse: collapse; }
 #docking-ui th { text-align: left; padding: 6px 8px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ui-dim); font-weight: normal; border-bottom: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.3); }
 #docking-ui td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(42,58,85,0.5); }
@@ -363,18 +363,18 @@ ${ITEM_ICON_CSS}
   color: #fff6c8;
   padding: 13px 26px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
   font-size: 13px; font-weight: 600; text-transform: uppercase;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 10px rgba(255,210,70,0.55);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.75);
   box-shadow:
-    0 0 20px rgba(255,210,70,0.45),
-    0 3px 10px rgba(0,0,0,0.55),
+    0 3px 8px rgba(0,0,0,0.85),
+    0 8px 18px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.25);
   transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease, filter 0.12s ease;
 }
 #docking-ui button.services-btn:hover {
   background: linear-gradient(180deg, rgba(255,220,90,0.58), rgba(210,150,30,0.65));
   box-shadow:
-    0 0 28px rgba(255,210,70,0.65),
-    0 4px 12px rgba(0,0,0,0.6),
+    0 4px 10px rgba(0,0,0,0.85),
+    0 10px 20px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.35);
   transform: translateY(-1px);
   filter: brightness(1.06);
@@ -382,9 +382,9 @@ ${ITEM_ICON_CSS}
 #docking-ui.services-open button.services-btn {
   background: linear-gradient(180deg, rgba(255,220,100,0.55), rgba(200,140,25,0.62));
   box-shadow:
-    0 0 24px rgba(255,210,70,0.55),
-    0 2px 8px rgba(0,0,0,0.5),
-    inset 0 0 12px rgba(255,210,70,0.2);
+    0 2px 8px rgba(0,0,0,0.85),
+    0 6px 16px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.2);
 }
 #docking-ui button.undock-btn {
   background: linear-gradient(180deg, rgba(224,90,90,0.45), rgba(140,30,30,0.62));
@@ -392,18 +392,18 @@ ${ITEM_ICON_CSS}
   color: #ffe0e0;
   padding: 13px 28px; cursor: pointer; font-family: monospace; letter-spacing: 2px;
   font-size: 13px; font-weight: 600; text-transform: uppercase;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 10px rgba(255,100,100,0.45);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.75);
   box-shadow:
-    0 0 20px rgba(224,90,90,0.45),
-    0 3px 10px rgba(0,0,0,0.55),
+    0 3px 8px rgba(0,0,0,0.85),
+    0 8px 18px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.2);
   transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease, filter 0.12s ease;
 }
 #docking-ui button.undock-btn:hover {
   background: linear-gradient(180deg, rgba(240,110,110,0.58), rgba(170,40,40,0.7));
   box-shadow:
-    0 0 28px rgba(224,90,90,0.65),
-    0 4px 12px rgba(0,0,0,0.6),
+    0 4px 10px rgba(0,0,0,0.85),
+    0 10px 20px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.28);
   transform: translateY(-1px);
   filter: brightness(1.06);
@@ -428,7 +428,7 @@ ${ITEM_ICON_CSS}
   margin-left: 6px; line-height: 1.2;
 }
 #docking-ui button.discard-item:hover {
-  background: rgba(224,90,90,0.22); box-shadow: 0 0 10px rgba(224,90,90,0.35);
+  background: rgba(224,90,90,0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #docking-ui button.buy:hover, #docking-ui button.sell:hover, #docking-ui button.buy-ore:hover, #docking-ui button.sell-ore:hover,
 #docking-ui button.buy-parts:hover, #docking-ui button.buy-ship:hover, #docking-ui button.accept-mission:hover, #docking-ui button.turnin:hover,
@@ -440,7 +440,7 @@ ${ITEM_ICON_CSS}
 #docking-ui button.buy-drone:hover, #docking-ui button.sell-drone:hover, #docking-ui button.install-drone:hover,
 #docking-ui button.store-weapons:hover, #docking-ui button.store-all-bps:hover,
 #docking-ui button.assemble-btn:hover:not(:disabled) {
-  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #docking-ui button.assemble-btn:disabled,
 #docking-ui button.buy:disabled,
@@ -451,7 +451,7 @@ ${ITEM_ICON_CSS}
 #docking-ui button.install-drone:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 #docking-ui .armoury-section-title {
   margin: 16px 0 8px; font-weight: normal; letter-spacing: 2px; text-transform: uppercase;
-  color: var(--ui-accent); font-size: 12px; text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
+  color: var(--ui-accent); font-size: 12px; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #docking-ui .armoury-section-title:first-child { margin-top: 0; }
 #docking-ui .armoury-actions { white-space: nowrap; }
@@ -475,7 +475,7 @@ ${ITEM_ICON_CSS}
 #docking-ui .svc-subtab:hover { color: var(--ui-text); }
 #docking-ui .svc-subtab.active {
   color: var(--ui-accent); border-bottom-color: var(--ui-accent-mid);
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 /* Shipyard: current ship header + sub-tabs */
 #docking-ui .shipyard-current {
@@ -490,7 +490,7 @@ ${ITEM_ICON_CSS}
 #docking-ui .shipyard-main h3 { margin-top: 0; }
 #docking-ui .shipyard-main tr[data-class] { cursor: pointer; }
 #docking-ui .shipyard-main tr[data-class]:hover td { background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.08); }
-#docking-ui .shipyard-main tr[data-class].selected td { color: #7fe0a0; text-shadow: 0 0 6px rgba(127,224,160,0.5); }
+#docking-ui .shipyard-main tr[data-class].selected td { color: #7fe0a0; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); }
 #docking-ui .shipyard-main .acc-desc {
   font-size: 11px; opacity: 0.65; max-width: 280px; line-height: 1.35;
 }
@@ -510,7 +510,7 @@ ${ITEM_ICON_CSS}
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 #docking-ui button.move-all-bps:hover:not(:disabled) {
-  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.35);
+  background: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #docking-ui button.move-all-bps:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 #docking-ui .bp-kind {

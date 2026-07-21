@@ -73,25 +73,39 @@ export function markPlayerCombatEngagement(gameState, proj, target, isPlayerTarg
   gameState.player.combatEngagedNpcIds ??= {}
   if (proj.ownerId === 'player' && !isPlayerTarget && target?.id) {
     const already = !!gameState.player.combatEngagedNpcIds[target.id]
-    // Law penalty only in Sec 3–6, and only for non-hostiles who never shot first.
-    // Pirates/aliens are fair game; police attacks still cost standing in high security.
-    if (!already && target.faction !== 'pirate' && target.faction !== 'alien') {
-      // Fixtures / early boot may omit galaxy — skip law standing then.
-      const system = gameState.galaxy
-        ? getSystem(gameState.galaxy, gameState.player.currentSystemId)
-        : null
-      if (system) {
-        ensureSystemSecurity(system)
-        if (lawPenaltyAppliesInSystem(system)) {
-          applyLawPenaltyForAttack(gameState, false)
-        }
-      }
-    }
+    // Sticky flag + map: radar/AI flip with no per-frame system lookups.
     gameState.player.combatEngagedNpcIds[target.id] = true
+    target.hostileToPlayer = true
+    // Law penalty only in Sec 3–6 for first strike on non-hostiles.
+    if (!already && target.faction !== 'pirate' && target.faction !== 'alien') {
+      // Queue only — never touch security/DOM on the hit frame.
+      gameState._pendingLawPenalties = (gameState._pendingLawPenalties ?? 0) + 1
+      gameState._pendingLawNpcId = gameState.player.currentSystemId
+    }
   }
   if (isPlayerTarget && proj.ownerId && proj.ownerId !== 'player') {
     gameState.player.combatEngagedNpcIds[proj.ownerId] = true
+    // Shooter is now hostile if we can find them.
+    const shooter = gameState.npcs?.find((n) => n.id === proj.ownerId)
+    if (shooter) shooter.hostileToPlayer = true
   }
+}
+
+/** Apply deferred innocent-attack law penalties (call once per frame, after combat). */
+export function flushPendingLawPenalties(gameState) {
+  const n = gameState?._pendingLawPenalties | 0
+  if (!n) return
+  gameState._pendingLawPenalties = 0
+  const system = gameState.galaxy
+    ? getSystem(gameState.galaxy, gameState._pendingLawSystemId ?? gameState.player.currentSystemId)
+    : null
+  gameState._pendingLawSystemId = null
+  if (system) {
+    if (system.securityRating == null) ensureSystemSecurity(system)
+    if (!lawPenaltyAppliesInSystem(system)) return
+  }
+  // One standing loss per first-strike even if multiple shots landed same frame.
+  applyLawPenaltyForAttack(gameState, false)
 }
 
 export function isNpcEngagedWithPlayer(gameState, npcId) {
@@ -102,9 +116,12 @@ export function isNpcEngagedWithPlayer(gameState, npcId) {
 export function pruneCombatEngagement(gameState) {
   const map = gameState?.player?.combatEngagedNpcIds
   if (!map) return
+  const live = new Set()
+  for (const n of gameState.npcs ?? []) {
+    if (!n.destroyed && n.id) live.add(n.id)
+  }
   for (const id of Object.keys(map)) {
-    const npc = gameState.npcs?.find((n) => n.id === id && !n.destroyed)
-    if (!npc) delete map[id]
+    if (!live.has(id)) delete map[id]
   }
 }
 
@@ -202,6 +219,11 @@ const _aimPoint = new THREE.Vector3()
 const _projDir = new THREE.Vector3()
 const _projQuat = new THREE.Quaternion()
 const _localForward = new THREE.Vector3(0, 0, 1)
+// fireProjectile scratch — avoid per-hardpoint Vector3/Quaternion allocs.
+const _fireQuat = new THREE.Quaternion()
+const _firePos = new THREE.Vector3()
+const _fireFwd = new THREE.Vector3()
+const _fireMuzzle = new THREE.Vector3()
 
 /**
  * @param {string|null} weaponTypeFilter 'laser' | 'missile' | null (all)
@@ -221,17 +243,17 @@ export function fireProjectile(
   shooter.hardpointCooldowns ??= {}
   shooter.equippedWeapons ??= {}
 
-  const quat = new THREE.Quaternion().fromArray(shooter.quaternion)
-  quat.normalize()
-  const shooterPos = new THREE.Vector3().fromArray(shooter.position)
-  const forward = _localForward.clone().applyQuaternion(quat)
-  if (forward.lengthSq() < 1e-8) forward.set(0, 0, 1)
-  else forward.normalize()
+  // Reuse scratch vectors — fire is called every held-frame / multi-hardpoint.
+  _fireQuat.fromArray(shooter.quaternion).normalize()
+  _firePos.fromArray(shooter.position)
+  _fireFwd.copy(_localForward).applyQuaternion(_fireQuat)
+  if (_fireFwd.lengthSq() < 1e-8) _fireFwd.set(0, 0, 1)
+  else _fireFwd.normalize()
 
   if (Array.isArray(aimWorld) && aimWorld.length === 3) {
     _aimPoint.fromArray(aimWorld)
   } else {
-    _aimPoint.copy(shooterPos).addScaledVector(forward, DEFAULT_AIM_DISTANCE)
+    _aimPoint.copy(_firePos).addScaledVector(_fireFwd, DEFAULT_AIM_DISTANCE)
   }
 
   // Player: include accessory-granted mounts; NPCs use class hardpoints only.
@@ -244,6 +266,23 @@ export function fireProjectile(
   // Stable indices among all mounts of each type (not just those ready this frame).
   const laserHps = hardpoints.filter((h) => h.type !== 'missile')
   const missileHps = hardpoints.filter((h) => h.type === 'missile')
+
+  // Skill mult once per fire call (not per hardpoint).
+  let gunneryMult = 1
+  let launchersMult = 1
+  if (ownerId === 'player') {
+    try {
+      const b = playerSkillBonuses(gameState)
+      gunneryMult = b.gunneryMult
+      launchersMult = b.launchersMult
+    } catch {
+      /* */
+    }
+  }
+
+  // One fire SFX per mount type per call (multi-turret used to stack N samples).
+  let firedLaserSfx = false
+  let firedMissileSfx = false
 
   for (const hp of hardpoints) {
     const mountType = hp.type === 'missile' ? 'missile' : 'laser'
@@ -315,26 +354,18 @@ export function fireProjectile(
       }
     }
 
-    const worldPos = new THREE.Vector3(localX, localY, localZ).applyQuaternion(quat).add(shooterPos)
+    _fireMuzzle.set(localX, localY, localZ).applyQuaternion(_fireQuat).add(_firePos)
     if (ownerId === 'player' && mountType === 'laser') {
-      _projDir.copy(forward)
+      _projDir.copy(_fireFwd)
     } else {
-      _projDir.copy(_aimPoint).sub(worldPos)
-      if (_projDir.lengthSq() < 1e-8) _projDir.copy(forward)
+      _projDir.copy(_aimPoint).sub(_fireMuzzle)
+      if (_projDir.lengthSq() < 1e-8) _projDir.copy(_fireFwd)
       else _projDir.normalize()
     }
     _projQuat.setFromUnitVectors(_localForward, _projDir)
 
-    // Gunnery / Launchers skills boost player hardpoint damage only.
-    let dmg = weapon.damage
-    if (ownerId === 'player') {
-      try {
-        const b = playerSkillBonuses(gameState)
-        dmg *= mountType === 'missile' ? b.launchersMult : b.gunneryMult
-      } catch {
-        /* */
-      }
-    }
+    const dmg =
+      weapon.damage * (ownerId === 'player' ? (mountType === 'missile' ? launchersMult : gunneryMult) : 1)
 
     gameState.projectiles.push({
       id: `proj-${projectileCounter++}`,
@@ -342,16 +373,33 @@ export function fireProjectile(
       targetRef,
       weaponType: mountType,
       weaponId,
-      position: worldPos.toArray(),
-      quaternion: _projQuat.toArray(),
-      velocity: _projDir.clone().multiplyScalar(weapon.speed).toArray(),
+      position: [_fireMuzzle.x, _fireMuzzle.y, _fireMuzzle.z],
+      quaternion: [_projQuat.x, _projQuat.y, _projQuat.z, _projQuat.w],
+      velocity: [
+        _projDir.x * weapon.speed,
+        _projDir.y * weapon.speed,
+        _projDir.z * weapon.speed
+      ],
       damage: dmg,
       ttl: weapon.ttl
     })
-    try {
-      onFire?.(weaponId, mountType)
-    } catch (err) {
-      console.error('onFire callback failed:', err)
+    // One SFX per weapon category so multi-turret volleys don't N× audio work.
+    if (mountType === 'laser') {
+      if (!firedLaserSfx) {
+        firedLaserSfx = true
+        try {
+          onFire?.(weaponId, mountType)
+        } catch (err) {
+          console.error('onFire callback failed:', err)
+        }
+      }
+    } else if (!firedMissileSfx) {
+      firedMissileSfx = true
+      try {
+        onFire?.(weaponId, mountType)
+      } catch (err) {
+        console.error('onFire callback failed:', err)
+      }
     }
   }
 }
@@ -360,12 +408,25 @@ export function getShipCollisionRadius(shipClass) {
   return shipClass.hull.length / 2
 }
 
+// Scratch vectors — closestDistanceToSegment used to clone 3–4 Vector3s per
+// ship/projectile test (GC hitch on first combat volley in busy systems).
+const _seg = new THREE.Vector3()
+const _toStart = new THREE.Vector3()
+const _closest = new THREE.Vector3()
+const _projPrev = new THREE.Vector3()
+const _projNext = new THREE.Vector3()
+const _projVel = new THREE.Vector3()
+const _targetPos = new THREE.Vector3()
+const _inbound = new THREE.Vector3()
+
 function closestDistanceToSegment(point, segStart, segEnd) {
-  const seg = segEnd.clone().sub(segStart)
-  const len2 = seg.lengthSq()
+  _seg.subVectors(segEnd, segStart)
+  const len2 = _seg.lengthSq()
   if (len2 === 0) return point.distanceTo(segStart)
-  const t = Math.max(0, Math.min(1, point.clone().sub(segStart).dot(seg) / len2))
-  return point.distanceTo(segStart.clone().addScaledVector(seg, t))
+  _toStart.subVectors(point, segStart)
+  const t = Math.max(0, Math.min(1, _toStart.dot(_seg) / len2))
+  _closest.copy(segStart).addScaledVector(_seg, t)
+  return point.distanceTo(_closest)
 }
 
 // Player lasers that no longer track current ship +Z (fired during a turn) are
@@ -395,74 +456,143 @@ export function prunePlayerLasersOffBoresight(gameState) {
   })
 }
 
+// Debris field collision size (world units) — large enough to hit when aimed.
+const WRECK_HIT_RADIUS = 22
+// ~few laser hits / one missile to scrap a wreck instead of looting.
+const WRECK_DEFAULT_HULL = 90
+
+// Missed a ship by less than this → treat volley as ship combat, skip rock scans.
+const SHIP_NEAR_MISS = 90
+// When any live ship is this close to the player, skip rock mining tests for
+// player projectiles. Lasers spend many frames in transit; scanning every belt
+// rock each frame until they near-miss the hull was the remaining combat hitch
+// (especially first volley on a neutral in a field). Intentional mining with
+// no ships nearby is unchanged.
+const SHIP_COMBAT_ROCK_SKIP_RANGE = 380
+const SHIP_COMBAT_ROCK_SKIP_RANGE_SQ =
+  SHIP_COMBAT_ROCK_SKIP_RANGE * SHIP_COMBAT_ROCK_SKIP_RANGE
+
 export function updateProjectiles(gameState, dt, onHit) {
   const alive = []
   // Only the player can mine, and only if galaxy/currentSystemId are present
   // (test fixtures often omit them — no asteroid check happens in that case).
   const currentSystem = gameState.galaxy ? getSystem(gameState.galaxy, gameState.player.currentSystemId) : null
+  const npcs = gameState.npcs
+  // Once any player shot hits a ship (or near-misses one) this frame, skip belt
+  // rock tests for the rest of the volley.
+  let skipRockTestsThisFrame = false
+  // Pre-check: ships near the player (or already engaged) → ship combat, not mining.
+  if (npcs?.length && gameState.player?.ship?.position) {
+    const pp = gameState.player.ship.position
+    const engaged = gameState.player.combatEngagedNpcIds
+    for (const n of npcs) {
+      if (n.destroyed) continue
+      if (engaged?.[n.id]) {
+        skipRockTestsThisFrame = true
+        break
+      }
+      const dx = n.position[0] - pp[0]
+      const dy = n.position[1] - pp[1]
+      const dz = n.position[2] - pp[2]
+      if (dx * dx + dy * dy + dz * dz < SHIP_COMBAT_ROCK_SKIP_RANGE_SQ) {
+        skipRockTestsThisFrame = true
+        break
+      }
+    }
+  }
 
   for (const proj of gameState.projectiles) {
     proj.ttl -= dt
     if (proj.ttl <= 0) continue
 
-    const prevPos = new THREE.Vector3().fromArray(proj.position)
-    const newPos = prevPos.clone().addScaledVector(new THREE.Vector3().fromArray(proj.velocity), dt)
-    proj.position = newPos.toArray()
+    _projPrev.fromArray(proj.position)
+    _projVel.fromArray(proj.velocity)
+    _projNext.copy(_projPrev).addScaledVector(_projVel, dt)
+    proj.position[0] = _projNext.x
+    proj.position[1] = _projNext.y
+    proj.position[2] = _projNext.z
 
-    const targets =
-      proj.ownerId === 'player'
-        ? gameState.npcs
-        : proj.targetRef?.kind === 'npc'
-          ? gameState.npcs.filter((n) => n.id === proj.targetRef.id)
-          : [gameState.player.ship]
     let hit = false
-    for (const target of targets) {
-      if (target.destroyed) continue
-      const targetShipClass = getShipClass(target.shipClassId ?? target.classId)
-      const targetPos = new THREE.Vector3().fromArray(target.position)
-      const hitDistance = HIT_RADIUS + getShipCollisionRadius(targetShipClass)
-      if (closestDistanceToSegment(targetPos, prevPos, newPos) < hitDistance) {
-        const isPlayer = target === gameState.player.ship
-        applyDamage(target, proj.damage, gameState.simTime, { player: isPlayer })
-        // Firefight bookkeeping for player drones (engage only after shots exchanged).
-        markPlayerCombatEngagement(gameState, proj, target, isPlayer)
-        // Firing on a non-hostile ship (a trader) while home permanently
-        // breaks the starting system's peace — see main.js's ambient
-        // spawner, which otherwise only ever spawns neutral traffic there.
-        if (proj.ownerId === 'player' && target.faction === 'trader' && gameState.player.currentSystemId === gameState.player.startingSystemId) {
+    if (proj.ownerId === 'player') {
+      for (const target of npcs) {
+        if (target.destroyed) continue
+        // Cache hit radius on the NPC (class stats are fixed).
+        if (target._hitRadius == null) {
+          try {
+            target._hitRadius =
+              HIT_RADIUS + getShipCollisionRadius(getShipClass(target.shipClassId))
+          } catch {
+            target._hitRadius = HIT_RADIUS + 8
+          }
+        }
+        _targetPos.fromArray(target.position)
+        const dist = closestDistanceToSegment(_targetPos, _projPrev, _projNext)
+        // Near-miss on a hull: this volley is ship combat, not mining.
+        if (dist < SHIP_NEAR_MISS) skipRockTestsThisFrame = true
+        if (dist >= target._hitRadius) continue
+        applyDamage(target, proj.damage, gameState.simTime, { player: false })
+        markPlayerCombatEngagement(gameState, proj, target, false)
+        if (
+          target.faction === 'trader' &&
+          gameState.player.currentSystemId === gameState.player.startingSystemId
+        ) {
           gameState.flags.startingSystemPeaceBroken = true
         }
-        // Only a kill the player is directly responsible for (their own
-        // projectile) leaves a lootable wreck — an NPC-vs-NPC kill or a
-        // suicide ram don't count, per its own design.
-        if (proj.ownerId === 'player' && target.destroyed) {
+        if (target.destroyed) {
           gameState.wrecks.push(
             spawnWreckWithSkills(
-              newPos.toArray(),
+              proj.position.slice(),
               gameState.simTime,
               Math.random,
-              target.shipClassId ?? target.classId,
+              target.shipClassId,
               gameState
             )
           )
           if (target.faction === 'pirate') {
             applyLawBonusForPirateKill(gameState)
           }
-          // Random bounty credits — higher in lower-security systems.
           if (currentSystem) ensureSystemSecurity(currentSystem)
           applyShipBounty(gameState, target, getSystemSecurity(currentSystem), Math.random)
         }
+        _inbound.subVectors(_projPrev, _projNext)
         onHit?.({
-          position: newPos.toArray(),
+          position: proj.position.slice(),
+          weaponType: proj.weaponType,
+          weaponId: proj.weaponId,
+          destroyed: !!target.destroyed,
+          hitPlayer: false,
+          ownerId: 'player',
+          inboundDir: [_inbound.x, _inbound.y, _inbound.z],
+          targetNpcId: target.id ?? null
+        })
+        hit = true
+        skipRockTestsThisFrame = true
+        break
+      }
+    } else {
+      // NPC projectile — hit player or specific NPC target.
+      const targets =
+        proj.targetRef?.kind === 'npc'
+          ? npcs.filter((n) => n.id === proj.targetRef.id)
+          : [gameState.player.ship]
+      for (const target of targets) {
+        if (target.destroyed) continue
+        const targetShipClass = getShipClass(target.shipClassId ?? target.classId)
+        _targetPos.fromArray(target.position)
+        const hitDistance = HIT_RADIUS + getShipCollisionRadius(targetShipClass)
+        if (closestDistanceToSegment(_targetPos, _projPrev, _projNext) >= hitDistance) continue
+        const isPlayer = target === gameState.player.ship
+        applyDamage(target, proj.damage, gameState.simTime, { player: isPlayer })
+        markPlayerCombatEngagement(gameState, proj, target, isPlayer)
+        _inbound.subVectors(_projPrev, _projNext)
+        onHit?.({
+          position: proj.position.slice(),
           weaponType: proj.weaponType,
           weaponId: proj.weaponId,
           destroyed: !!target.destroyed,
           hitPlayer: isPlayer,
-          // Shooter id (npc id or 'player') — used for death-screen killer credit.
           ownerId: proj.ownerId ?? null,
-          // Incoming shot direction (world) for directional damage vignette.
-          inboundDir: prevPos.clone().sub(newPos).toArray(),
-          // NPC id when a ship is killed (for ship-death FX, avoid double-play).
+          inboundDir: [_inbound.x, _inbound.y, _inbound.z],
           targetNpcId: !isPlayer && target.id ? target.id : null
         })
         hit = true
@@ -475,23 +605,24 @@ export function updateProjectiles(gameState, dt, onHit) {
       const drones = gameState.player?.ship?.drones ?? []
       for (const drone of drones) {
         if (!drone.deployed || drone.destroyed || drone.hull <= 0) continue
-        const dPos = new THREE.Vector3().fromArray(drone.position)
-        if (closestDistanceToSegment(dPos, prevPos, newPos) < HIT_RADIUS + 4) {
+        _targetPos.fromArray(drone.position)
+        if (closestDistanceToSegment(_targetPos, _projPrev, _projNext) < HIT_RADIUS + 4) {
           const destroyed = damageDrone(drone, proj.damage, gameState.simTime)
           // Hitting a player drone counts as engaging the player.
           if (proj.ownerId && proj.ownerId !== 'player') {
             gameState.player.combatEngagedNpcIds ??= {}
             gameState.player.combatEngagedNpcIds[proj.ownerId] = true
           }
+          _inbound.subVectors(_projPrev, _projNext)
           onHit?.({
-            position: newPos.toArray(),
+            position: proj.position.slice(),
             weaponType: proj.weaponType,
             weaponId: proj.weaponId,
             destroyed,
             hitPlayer: false,
             hitDrone: true,
             droneId: drone.id,
-            inboundDir: prevPos.clone().sub(newPos).toArray()
+            inboundDir: [_inbound.x, _inbound.y, _inbound.z]
           })
           hit = true
           break
@@ -501,24 +632,35 @@ export function updateProjectiles(gameState, dt, onHit) {
 
     // Hit-tests individual rocks (matching the per-rock Tab-targeting system
     // in main.js) rather than the field's whole bounding sphere, since ore is
-    // now a finite, depletable, per-rock resource.
-    if (!hit && proj.ownerId === 'player' && currentSystem) {
+    // now a finite, depletable, per-rock resource. Skipped while this frame's
+    // volley is clearly ship combat (hit or near-miss on an NPC).
+    if (!hit && proj.ownerId === 'player' && currentSystem && !skipRockTestsThisFrame) {
       fieldLoop: for (const body of currentSystem.bodies) {
         if (body.kind !== 'asteroidField') continue
+        // Skip whole field if projectile is nowhere near its scatter volume.
+        const fr = (body.radius ?? 0) + 120
+        const fdx = body.position[0] - _projNext.x
+        const fdy = body.position[1] - _projNext.y
+        const fdz = body.position[2] - _projNext.z
+        if (fdx * fdx + fdy * fdy + fdz * fdz > fr * fr) continue
         const rocks = getAsteroidRocks(body)
         for (let i = 0; i < rocks.length; i++) {
           if (!isRockAlive(gameState, body.id, i)) continue
           const rock = rocks[i]
-          const rockPos = new THREE.Vector3(body.position[0] + rock.position[0], body.position[1] + rock.position[1], body.position[2] + rock.position[2])
+          _targetPos.set(
+            body.position[0] + rock.position[0],
+            body.position[1] + rock.position[1],
+            body.position[2] + rock.position[2]
+          )
           const hitR = rockCollisionRadius(rock) + MINE_HIT_PAD
-          if (closestDistanceToSegment(rockPos, prevPos, newPos) < hitR) {
+          if (closestDistanceToSegment(_targetPos, _projPrev, _projNext) < hitR) {
             const shipClass = getShipClass(gameState.player.ship.classId)
             // Stronger guns chip more ore (pulse laser 1, rocket pod 2, …).
             const yieldAmt = mineYieldForWeapon(proj.weaponId ?? proj.weaponType)
             const mined = mineRock(gameState, shipClass, currentSystem, body.id, i, yieldAmt)
             onHit?.({
-              position: newPos.toArray(),
-              rockPosition: rockPos.toArray(),
+              position: proj.position.slice(),
+              rockPosition: [_targetPos.x, _targetPos.y, _targetPos.z],
               weaponType: proj.weaponType,
               weaponId: proj.weaponId,
               destroyed: !!mined.destroyed,
@@ -530,6 +672,30 @@ export function updateProjectiles(gameState, dt, onHit) {
             break fieldLoop
           }
         }
+      }
+    }
+
+    // Player can destroy wrecks instead of looting (F) — scrap is lost.
+    if (!hit && proj.ownerId === 'player' && gameState.wrecks?.length) {
+      for (let wi = 0; wi < gameState.wrecks.length; wi++) {
+        const wreck = gameState.wrecks[wi]
+        _targetPos.fromArray(wreck.position)
+        if (closestDistanceToSegment(_targetPos, _projPrev, _projNext) >= WRECK_HIT_RADIUS) continue
+        wreck.hull = (wreck.hull ?? WRECK_DEFAULT_HULL) - (proj.damage ?? 10)
+        const destroyed = wreck.hull <= 0
+        if (destroyed) {
+          gameState.wrecks.splice(wi, 1)
+        }
+        onHit?.({
+          position: proj.position.slice(),
+          weaponType: proj.weaponType,
+          weaponId: proj.weaponId,
+          destroyed,
+          hitWreck: true,
+          wreckId: wreck.id
+        })
+        hit = true
+        break
       }
     }
 
@@ -810,23 +976,34 @@ export function updateNpcAI(npc, gameState, dt, onFire, onPlayerHit, combatFrame
   npc.quaternion = quat.toArray()
 }
 
+const _combatFlagPlayer = new THREE.Vector3()
+const _combatFlagNpc = new THREE.Vector3()
+
 export function updateCombatFlag(gameState, combatFrame = null) {
   const ctx = combatFrame ?? prepareCombatFrame(gameState)
-  const playerPos = new THREE.Vector3().fromArray(ctx.playerPos)
+  _combatFlagPlayer.fromArray(ctx.playerPos)
   // Aliens always hostile; pirates unless truced; police when wanted/engaged;
   // civilians when outlaw SOS or engaged.
-  const hostileNearby = gameState.npcs.some((n) => {
-    if (n.destroyed) return false
-    const dist = new THREE.Vector3().fromArray(n.position).distanceTo(playerPos)
-    if (dist >= ATTACK_RANGE) return false
-    if (n.faction === 'alien') return true
-    if (n.faction === 'pirate' && !ctx.truce) return true
-    if (n.faction === 'police' && (ctx.policeSos || ctx.engagedMap[n.id])) return true
-    if ((n.faction === 'trader' || !n.faction) && (ctx.civSos || ctx.engagedMap[n.id])) {
-      return true
+  const attackRangeSq = ATTACK_RANGE * ATTACK_RANGE
+  let hostileNearby = false
+  for (const n of gameState.npcs) {
+    if (n.destroyed) continue
+    let isHostile = !!n.hostileToPlayer
+    if (!isHostile) {
+      if (n.faction === 'alien') isHostile = true
+      else if (n.faction === 'pirate' && !ctx.truce) isHostile = true
+      else if (n.faction === 'police' && (ctx.policeSos || ctx.engagedMap[n.id])) isHostile = true
+      else if ((n.faction === 'trader' || !n.faction) && (ctx.civSos || ctx.engagedMap[n.id])) {
+        isHostile = true
+      }
     }
-    return false
-  })
+    if (!isHostile) continue
+    _combatFlagNpc.fromArray(n.position)
+    if (_combatFlagPlayer.distanceToSquared(_combatFlagNpc) < attackRangeSq) {
+      hostileNearby = true
+      break
+    }
+  }
   if (hostileNearby) {
     gameState.inCombat = true
     gameState.lastCombatContactAt = gameState.simTime

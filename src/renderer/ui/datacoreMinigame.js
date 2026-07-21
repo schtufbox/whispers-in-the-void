@@ -15,7 +15,7 @@ const STYLE = `
   width: 420px; padding: 18px 20px;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.96), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.92));
   border: 1px solid rgba(201,160,255,0.5); border-left: 3px solid #c9a0ff;
-  box-shadow: 0 0 28px rgba(160,100,255,0.25);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
 #datacore-hack h2 {
   margin: 0 0 6px; font-weight: normal; letter-spacing: 2px; font-size: 15px; color: #e0c0ff;
@@ -31,7 +31,7 @@ const STYLE = `
 }
 #datacore-hack .dh-cursor {
   position: absolute; top: 0; bottom: 0; width: 3px;
-  background: #fff; box-shadow: 0 0 8px #c9a0ff; left: 0%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.9); left: 0%;
 }
 #datacore-hack .dh-actions { display: flex; gap: 8px; }
 #datacore-hack button {

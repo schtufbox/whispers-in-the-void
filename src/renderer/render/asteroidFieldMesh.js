@@ -19,7 +19,11 @@ const MIN_SEP_MUL = 1.55
 // rocks. Spread matches body.radius (field extent for targeting / spawn
 // clearance). Flight collision uses each rock individually — see collision.js.
 // Exported so main.js targeting and game/collision.js share one rock layout.
+// Cached on the body — regenerating every projectile/frame was a belt combat hitch.
 export function getAsteroidRocks(body) {
+  if (!body) return []
+  if (body._asteroidRocks) return body._asteroidRocks
+
   const rng = mulberry32(hashString(body.id))
   // Field scatter radius (procgen ~180–320×system scale).
   const spread = Math.max(80, body.radius ?? 120)
@@ -80,6 +84,7 @@ export function getAsteroidRocks(body) {
       collisionRadius: collR
     })
   }
+  body._asteroidRocks = rocks
   return rocks
 }
 

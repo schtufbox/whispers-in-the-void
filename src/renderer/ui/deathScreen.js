@@ -79,7 +79,7 @@ const STYLE = `
   transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 #death-screen.reveal button { animation: fadeUp 0.6s ease-out 0.65s forwards; }
-#death-screen button:hover { background: #3a1a1a; border-color: #d94f4f; box-shadow: 0 0 14px rgba(217,79,79,0.4); }
+#death-screen button:hover { background: #3a1a1a; border-color: #d94f4f; box-shadow: 0 2px 6px rgba(0,0,0,0.65); }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 `
 

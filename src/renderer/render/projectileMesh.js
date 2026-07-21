@@ -268,10 +268,19 @@ export function preloadProjectileMeshes(weaponIds = []) {
   }
 }
 
+// Template materials by color — clone per flash so opacity anim is independent,
+// but shaders compile once (avoids first-hit GPU hitch).
+const _flashMatByColor = new Map()
+
 export function buildImpactFlash(color = 0xffcc66) {
   if (!_flashGeo) _flashGeo = new THREE.SphereGeometry(1, 8, 8)
-  const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
-  const mesh = new THREE.Mesh(_flashGeo, material)
+  const key = typeof color === 'number' ? color : String(color)
+  let template = _flashMatByColor.get(key)
+  if (!template) {
+    template = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
+    _flashMatByColor.set(key, template)
+  }
+  const mesh = new THREE.Mesh(_flashGeo, template.clone())
   mesh.scale.setScalar(0.5)
   return mesh
 }

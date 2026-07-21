@@ -4,8 +4,8 @@ const STYLE = `
 #hud { font-family: monospace; color: var(--ui-text); user-select: none; }
 
 /*
- * Unified HUD chrome surface — square corners, thin cyan border.
- * Radar is bare canvas (no panel chrome).
+ * Unified HUD chrome surface — square corners, thin border.
+ * No coloured outer glow: black drop-shadow only. Radar is bare canvas.
  */
 #hud .status-panel,
 #hud .system-label,
@@ -13,13 +13,13 @@ const STYLE = `
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.92), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.82));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 16px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 22px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.06);
-  filter:
-    drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-    drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+  box-shadow:
+    0 2px 4px rgba(0,0,0,0.85),
+    0 6px 14px rgba(0,0,0,0.55);
+  filter: none;
 }
 
-/* Status (bottom center): thin cyan on both sides */
+/* Status (top center): thin cyan on both sides */
 #hud .status-panel {
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
@@ -32,8 +32,8 @@ const STYLE = `
 #hud .cockpit-frame .corner {
   position: absolute; width: 34px; height: 34px; border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5);
   filter:
-    drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-    drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
+    drop-shadow(0 1px 2px rgba(0,0,0,0.95))
+    drop-shadow(0 3px 6px rgba(0,0,0,0.7));
 }
 #hud .cockpit-frame .corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
 #hud .cockpit-frame .corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
@@ -44,10 +44,10 @@ const STYLE = `
   background: repeating-linear-gradient(0deg, rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.025) 0px, rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.025) 1px, transparent 1px, transparent 4px);
 }
 
-/* Ship status + velocity — bottom center. */
+/* Ship status + velocity — top center (floating prompts stack just below). */
 #hud .status-panel {
-  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-  top: auto; right: auto;
+  position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+  bottom: auto; right: auto;
   width: 280px;
   padding: 12px 18px 10px 20px;
   z-index: 8;
@@ -121,9 +121,7 @@ const STYLE = `
 }
 #hud .panel-title {
   font-size: 10px; letter-spacing: 3px; opacity: 0.65; color: var(--ui-accent);
-  text-shadow:
-    0 1px 2px rgba(0,0,0,0.85),
-    0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.7);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.75);
   margin-bottom: 8px;
 }
 #hud .row { margin-bottom: 7px; }
@@ -204,15 +202,15 @@ const STYLE = `
   background-size: 220% 100%;
   animation: hud-shine 3.2s linear infinite;
 }
-#hud .shield .fill { background: linear-gradient(90deg, var(--ui-deep), var(--ui-accent)); box-shadow: 0 0 6px rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.6); }
-#hud .armor .fill { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
-#hud .hull .fill { background: linear-gradient(90deg, #7a2626, #c24a4a); box-shadow: 0 0 6px rgba(194,74,74,0.5); }
+#hud .shield .fill { background: linear-gradient(90deg, var(--ui-deep), var(--ui-accent)); box-shadow: none; }
+#hud .armor .fill { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: none; }
+#hud .hull .fill { background: linear-gradient(90deg, #7a2626, #c24a4a); box-shadow: none; }
 #hud .hull .fill.critical { animation: hud-critical-pulse 0.6s ease-in-out infinite; }
 
 #hud .bar.velocity { position: relative; }
 #hud .bar.velocity .zero-marker { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: rgba(207,227,255,0.4); }
-#hud .bar.velocity .fill { position: absolute; top: 0; background: linear-gradient(90deg, #3a8f5c, #7fe0a0); box-shadow: 0 0 6px rgba(127,224,160,0.5); }
-#hud .bar.velocity .fill.reversing { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: 0 0 6px rgba(217,181,106,0.5); }
+#hud .bar.velocity .fill { position: absolute; top: 0; background: linear-gradient(90deg, #3a8f5c, #7fe0a0); box-shadow: none; }
+#hud .bar.velocity .fill.reversing { background: linear-gradient(90deg, #8a6a2a, #d9b56a); box-shadow: none; }
 
 /* Current system — top left; whole chip opens System Scan (B). */
 #hud .system-label {
@@ -253,12 +251,12 @@ const STYLE = `
 #hud .system-label .sys-tag {
   display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
   color: var(--ui-accent); opacity: 0.7;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.6);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
   margin-bottom: 2px;
 }
 #hud .system-label .sys-name {
   display: block; font-size: 14px; letter-spacing: 1.5px; color: var(--ui-bright);
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 8px rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.55);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
   white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
 }
 #hud .system-label .sys-name .sec-badge {
@@ -266,7 +264,7 @@ const STYLE = `
   font-size: 11px; letter-spacing: 1px; vertical-align: middle;
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45); border-radius: 2px;
   color: var(--ui-accent); background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.1);
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
 }
 #hud .system-label .sys-name .sec-badge.sec-high {
   color: #7fe0a0; border-color: rgba(127,224,160,0.5); background: rgba(127,224,160,0.1);
@@ -280,7 +278,7 @@ const STYLE = `
 #hud .system-label .nearest-body {
   display: none; margin-top: 4px; font-size: 11px; letter-spacing: 1px;
   color: var(--ui-soft); opacity: 0.9;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.4);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
   white-space: nowrap; max-width: 42vw; overflow: hidden; text-overflow: ellipsis;
 }
 #hud .system-label .nearest-body.visible { display: block; }
@@ -294,7 +292,7 @@ const STYLE = `
   border-top: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.28);
   font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
   color: #c9e8ff; opacity: 0.9;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.45);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #hud .system-label:hover .sys-scan-hint { color: var(--ui-bright); opacity: 1; }
 
@@ -307,17 +305,19 @@ const STYLE = `
 #hud .target-panel.visible { display: block; }
 #hud .target-panel.hostile {
   border-color: rgba(224,90,90,0.55); border-left-color: #e05a5a;
-  box-shadow: 0 0 14px rgba(224,90,90,0.25), inset 0 0 16px rgba(224,90,90,0.05);
+  box-shadow:
+    0 2px 4px rgba(0,0,0,0.85),
+    0 6px 14px rgba(0,0,0,0.55);
 }
 #hud .target-panel .tp-tag {
   font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
   color: var(--ui-accent); opacity: 0.75; margin-bottom: 2px;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
 }
 #hud .target-panel.hostile .tp-tag { color: #ff9a7a; }
 #hud .target-panel .tp-name {
   font-size: 13px; letter-spacing: 0.8px; color: var(--ui-bright);
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 6px rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.4);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;
 }
 #hud .target-panel .tp-meta {
@@ -334,20 +334,20 @@ const STYLE = `
 #hud .target-panel .tp-row-label .value { opacity: 0.95; }
 #hud .target-panel .bar { height: 7px; }
 #hud .target-panel .bar.ore .fill {
-  background: linear-gradient(90deg, #6a5a2a, #d9b56a); box-shadow: 0 0 5px rgba(217,181,106,0.45);
+  background: linear-gradient(90deg, #6a5a2a, #d9b56a); box-shadow: none;
 }
 
 
 
 @keyframes hud-shine { 0% { background-position: 220% 0; } 100% { background-position: -20% 0; } }
 @keyframes hud-critical-pulse {
-  0%, 100% { box-shadow: 0 0 6px rgba(194,74,74,0.5); }
-  50% { box-shadow: 0 0 16px 2px rgba(255,90,90,0.95); }
+  0%, 100% { opacity: 1; filter: none; }
+  50% { opacity: 0.55; filter: brightness(1.35); }
 }
 
-/* Radar — flush to top of viewport; bare canvas (no panel chrome). */
+/* Radar — flush to bottom of viewport; bare canvas (no panel chrome). */
 #radar {
-  position: fixed; left: 50%; top: 0; transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: 0; top: auto; transform: translateX(-50%);
   width: 420px; height: 160px;
   margin: 0; padding: 0;
   font-family: monospace; color: var(--ui-text); user-select: none;
@@ -396,158 +396,138 @@ const STYLE = `
 #hud.cruise-glitch .cockpit-frame .corner.bl { animation-delay: 0.06s; }
 #hud.cruise-glitch .cockpit-frame .corner.br { animation-delay: 0.09s; }
 
+/* Rest frames: no glow (panel box-shadow handles depth). Chromatic slices keep SC glitch. */
 @keyframes hudCruisePanelGlitch {
   0%, 78%, 100% {
-    filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    filter: none;
     transform: none;
   }
   79% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(-5px 0 0 rgba(255, 40, 90, 0.85))
-      drop-shadow(5px 0 0 rgba(40, 220, 255, 0.85))
-      hue-rotate(-35deg);
+      drop-shadow(5px 0 0 rgba(40, 220, 255, 0.85));
     transform: translate(-5px, 0) skewX(-1.4deg);
   }
   80% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(6px 0 0 rgba(255, 40, 90, 0.75))
-      drop-shadow(-4px 0 0 rgba(40, 220, 255, 0.75))
-      hue-rotate(40deg);
+      drop-shadow(-4px 0 0 rgba(40, 220, 255, 0.75));
     transform: translate(6px, 2px) skewX(1.6deg);
   }
   81% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(-3px 1px 0 rgba(255, 80, 120, 0.7))
-      drop-shadow(4px -1px 0 rgba(80, 200, 255, 0.7))
-      hue-rotate(-20deg);
+      drop-shadow(4px -1px 0 rgba(80, 200, 255, 0.7));
     transform: translate(-3px, -1px) skewX(0.8deg);
   }
   82% {
-    filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    filter: none;
     transform: none;
   }
   90% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(-4px 0 0 rgba(255, 50, 100, 0.7))
-      drop-shadow(4px 0 0 rgba(50, 210, 255, 0.7))
-      hue-rotate(25deg);
+      drop-shadow(4px 0 0 rgba(50, 210, 255, 0.7));
     transform: translate(4px, 0) skewX(-1deg);
   }
   91% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(3px 0 0 rgba(255, 50, 100, 0.55))
       drop-shadow(-5px 0 0 rgba(50, 210, 255, 0.55));
     transform: translate(-4px, 1px);
   }
   92% {
-    filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    filter: none;
     transform: none;
   }
 }
 @keyframes hudCruisePanelGlitchCenter {
   0%, 78%, 100% {
-    filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    filter: none;
     transform: translateX(-50%);
   }
   79% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(-5px 0 0 rgba(255, 40, 90, 0.85))
-      drop-shadow(5px 0 0 rgba(40, 220, 255, 0.85))
-      hue-rotate(-35deg);
+      drop-shadow(5px 0 0 rgba(40, 220, 255, 0.85));
     transform: translateX(calc(-50% - 5px)) skewX(-1.4deg);
   }
   80% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(6px 0 0 rgba(255, 40, 90, 0.75))
-      drop-shadow(-4px 0 0 rgba(40, 220, 255, 0.75))
-      hue-rotate(40deg);
+      drop-shadow(-4px 0 0 rgba(40, 220, 255, 0.75));
     transform: translateX(calc(-50% + 6px)) translateY(2px) skewX(1.6deg);
   }
   81% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(-3px 1px 0 rgba(255, 80, 120, 0.7))
-      drop-shadow(4px -1px 0 rgba(80, 200, 255, 0.7))
-      hue-rotate(-20deg);
+      drop-shadow(4px -1px 0 rgba(80, 200, 255, 0.7));
     transform: translateX(calc(-50% - 3px)) translateY(-1px) skewX(0.8deg);
   }
   82% {
-    filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    filter: none;
     transform: translateX(-50%);
   }
   90% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(-4px 0 0 rgba(255, 50, 100, 0.7))
-      drop-shadow(4px 0 0 rgba(50, 210, 255, 0.7))
-      hue-rotate(25deg);
+      drop-shadow(4px 0 0 rgba(50, 210, 255, 0.7));
     transform: translateX(calc(-50% + 4px)) skewX(-1deg);
   }
   91% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
+      drop-shadow(0 2px 4px rgba(0,0,0,0.85))
       drop-shadow(3px 0 0 rgba(255, 50, 100, 0.55))
       drop-shadow(-5px 0 0 rgba(50, 210, 255, 0.55));
     transform: translateX(calc(-50% - 4px)) translateY(1px);
   }
   92% {
-    filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-      drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    filter: none;
     transform: translateX(-50%);
   }
 }
 @keyframes hudCruiseCornerGlitch {
   0%, 78%, 100% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-      drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
+      drop-shadow(0 1px 2px rgba(0,0,0,0.95))
+      drop-shadow(0 3px 6px rgba(0,0,0,0.7));
   }
   79% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(0 1px 2px rgba(0,0,0,0.95))
       drop-shadow(-4px 0 0 rgba(255, 40, 90, 0.9))
-      drop-shadow(4px 0 0 rgba(40, 220, 255, 0.9))
-      drop-shadow(0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.8));
+      drop-shadow(4px 0 0 rgba(40, 220, 255, 0.9));
   }
   80% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(0 1px 2px rgba(0,0,0,0.95))
       drop-shadow(5px 0 0 rgba(255, 40, 90, 0.75))
       drop-shadow(-5px 0 0 rgba(40, 220, 255, 0.75));
   }
   81%, 82% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-      drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
+      drop-shadow(0 1px 2px rgba(0,0,0,0.95))
+      drop-shadow(0 3px 6px rgba(0,0,0,0.7));
   }
   90% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
+      drop-shadow(0 1px 2px rgba(0,0,0,0.95))
       drop-shadow(-3px 0 0 rgba(255, 50, 100, 0.7))
       drop-shadow(3px 0 0 rgba(50, 210, 255, 0.7));
   }
   91%, 92% {
     filter:
-      drop-shadow(0 2px 3px rgba(0,0,0,0.75))
-      drop-shadow(0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.55));
+      drop-shadow(0 1px 2px rgba(0,0,0,0.95))
+      drop-shadow(0 3px 6px rgba(0,0,0,0.7));
   }
 }
 @keyframes hudCruiseScanGlitch {
@@ -681,13 +661,14 @@ export function createHud(container) {
   const radarH = radarCanvas.height
   const systemLabelEl = hud.querySelector('.system-label')
 
-  // Ships yellow, stations blue, planets/moons/sun green, gates + datacores purple.
+  // Ships: neutral yellow, hostile flashing red. Stations blue, worlds green,
+  // gates + datacores purple, asteroids brown.
   const contactColor = (kind) => {
     const PURPLE = '#b070ff'
     const fixed = {
       // Ships
       neutral: '#f0d24a',
-      hostile: '#f0d24a',
+      hostile: '#ff3030',
       // Stations / docks
       station: '#4aa8ff',
       // Planets, moons, sun
@@ -699,9 +680,9 @@ export function createHud(container) {
       gate: PURPLE,
       anomaly: PURPLE,
       datacore: PURPLE,
-      // Other contacts
-      belt: '#9a8a6a',
-      asteroid: '#b0a070',
+      // Other contacts — rocks are brown; belt kind unused (fields not on radar).
+      belt: '#8B5A2B',
+      asteroid: '#8B5A2B',
       waypoint: '#7fe0a0',
       mission: '#ff8a3d',
       wreck: '#c27a3a',
@@ -847,7 +828,7 @@ export function createHud(container) {
       }
     },
     /**
-     * Tab-lock target panel (between system name and radar).
+     * Tab-lock target panel (top right, left of system overview).
      * @param {null|{
      *   name:string, hostile?:boolean, meta?:string,
      *   shields?:number, maxShields?:number,
@@ -861,6 +842,7 @@ export function createHud(container) {
       if (!targetPanel) return
       if (!info) {
         targetPanel.classList.remove('visible', 'hostile')
+        targetPanel.dataset.barsKey = ''
         return
       }
       targetPanel.classList.add('visible')
@@ -868,6 +850,20 @@ export function createHud(container) {
       targetNameEl.textContent = info.name || '—'
       targetMetaEl.textContent = info.meta || ''
       targetMetaEl.style.display = info.meta ? 'block' : 'none'
+
+      // Only rebuild bar HTML when values change (was every frame → layout thrash).
+      const barsKey = [
+        info.shields | 0,
+        info.maxShields | 0,
+        info.armor | 0,
+        info.maxArmor | 0,
+        info.hull | 0,
+        info.maxHull | 0,
+        info.oreLeft | 0,
+        info.oreMax | 0
+      ].join('|')
+      if (targetPanel.dataset.barsKey === barsKey) return
+      targetPanel.dataset.barsKey = barsKey
 
       const parts = []
       if (info.maxShields != null && info.maxShields > 0) {
@@ -942,7 +938,7 @@ export function createHud(container) {
     // Bare canvas (no panel chrome). elapsed: gameState.simTime.
     updateRadar(contacts, range, elapsed = 0) {
       radarCtx.clearRect(0, 0, radarW, radarH)
-      const { accentRgb, accent } = getUiPalette()
+      const { accentRgb } = getUiPalette()
       const ar = (a) => `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},${a})`
       const invRange = 1 / Math.max(1, range)
 
@@ -1065,9 +1061,12 @@ export function createHud(container) {
       const px = -fy
       const py = fx
       const palette = getUiPalette()
+      // Black drop-shadow under ship marker (no coloured glow).
+      radarCtx.shadowColor = 'rgba(0,0,0,0.9)'
+      radarCtx.shadowBlur = 4
+      radarCtx.shadowOffsetX = 1
+      radarCtx.shadowOffsetY = 2
       radarCtx.fillStyle = palette.bright
-      radarCtx.shadowColor = accent
-      radarCtx.shadowBlur = 6
       radarCtx.beginPath()
       radarCtx.moveTo(origin.sx + fx * 5, origin.sy + fy * 5)
       radarCtx.lineTo(origin.sx - fx * 3 + px * 3.2, origin.sy - fy * 3 + py * 3.2)
@@ -1076,6 +1075,8 @@ export function createHud(container) {
       radarCtx.closePath()
       radarCtx.fill()
       radarCtx.shadowBlur = 0
+      radarCtx.shadowOffsetX = 0
+      radarCtx.shadowOffsetY = 0
 
       // Contacts (ship-local → grid rotates with ship); height stems off floor.
       const plotted = []
@@ -1089,31 +1090,36 @@ export function createHud(container) {
       }
       plotted.sort((a, b) => b.depth - a.depth)
 
+      // Precompute hostile blink once per frame (cheap; avoids per-blip string churn).
+      const hostileBlink = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(elapsed * 10))
+      const hostileFill = `rgba(255,48,48,${hostileBlink.toFixed(3)})`
+      const hostileStem = `rgba(255,48,48,${(0.35 + 0.45 * hostileBlink).toFixed(3)})`
+
       for (const c of plotted) {
-        const color = contactColor(c.kind)
+        const isHostile = c.kind === 'hostile'
+        const color = isHostile ? hostileStem : contactColor(c.kind)
         radarCtx.strokeStyle = color
-        radarCtx.globalAlpha = 0.5
+        radarCtx.globalAlpha = isHostile ? 0.55 : 0.5
         radarCtx.lineWidth = 1
         radarCtx.beginPath()
         radarCtx.moveTo(c.foot.sx, c.foot.sy)
         radarCtx.lineTo(c.blip.sx, c.blip.sy)
         radarCtx.stroke()
-        radarCtx.globalAlpha = 0.55
+        radarCtx.globalAlpha = isHostile ? 0.6 : 0.55
         radarCtx.beginPath()
         radarCtx.arc(c.foot.sx, c.foot.sy, 1.5, 0, Math.PI * 2)
         radarCtx.stroke()
         radarCtx.globalAlpha = 1
-        const pulse = c.kind === 'hostile' ? 1 + 0.35 * Math.sin(elapsed * 8) : 1
-        const r = (c.kind === 'hostile' ? 3.2 : 2.4) * pulse
-        radarCtx.fillStyle = color
-        radarCtx.shadowColor = color
-        radarCtx.shadowBlur = 7
+        // Hostile: soft size pulse only (no per-frame shadowBlur — that hitching on engage).
+        const pulse = isHostile ? 1 + 0.28 * Math.sin(elapsed * 10) : 1
+        const r = (isHostile ? 3.2 : 2.4) * pulse
+        radarCtx.fillStyle = isHostile ? hostileFill : color
         radarCtx.beginPath()
         radarCtx.arc(c.blip.sx, c.blip.sy, r, 0, Math.PI * 2)
         radarCtx.fill()
         if (Math.abs(c.y) > 0.08) {
-          radarCtx.shadowBlur = 0
           radarCtx.strokeStyle = color
+          radarCtx.globalAlpha = isHostile ? hostileBlink : 1
           radarCtx.lineWidth = 1.2
           const dy = c.y > 0 ? -r - 2 : r + 2
           radarCtx.beginPath()
@@ -1121,20 +1127,20 @@ export function createHud(container) {
           radarCtx.lineTo(c.blip.sx, c.blip.sy + dy)
           radarCtx.lineTo(c.blip.sx + 2.2, c.blip.sy + dy + (c.y > 0 ? 2.5 : -2.5))
           radarCtx.stroke()
+          radarCtx.globalAlpha = 1
         }
         // Tab-lock: pure red flashing square border on the radar blip.
         if (c.targeted) {
           const flash = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(elapsed * 12))
           const br = r + 4
-          radarCtx.shadowBlur = 12 * flash
-          radarCtx.shadowColor = '#ff0000'
           radarCtx.strokeStyle = `rgba(255, 0, 0, ${flash})`
           radarCtx.lineWidth = 2.25
           radarCtx.strokeRect(c.blip.sx - br, c.blip.sy - br, br * 2, br * 2)
-          radarCtx.shadowBlur = 0
         }
       }
       radarCtx.shadowBlur = 0
+      radarCtx.shadowOffsetX = 0
+      radarCtx.shadowOffsetY = 0
       radarCtx.globalAlpha = 1
     },
     /** Sparse chromatic glitch on all HUD chrome while supercruising. */

@@ -47,7 +47,7 @@ const STYLE = `
   overflow: hidden;
   background: linear-gradient(135deg, rgba(var(--ui-bg-r),var(--ui-bg-g),var(--ui-bg-b),0.96), rgba(var(--ui-bg2-r),var(--ui-bg2-g),var(--ui-bg2-b),0.92));
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.42); border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 28px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.22), inset 0 0 28px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.05);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.85), 0 10px 24px rgba(0,0,0,0.55);
 }
 ${floatingPanelElevationCss('#character-ui .panel')}
 #character-ui .char-header {
@@ -60,7 +60,7 @@ ${floatingPanelElevationCss('#character-ui .panel')}
 #character-ui .char-header.dragging { cursor: grabbing; }
 #character-ui .char-header h2 {
   margin: 0; font-weight: normal; letter-spacing: 2px; font-size: 15px;
-  text-shadow: 0 0 8px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #character-ui .char-header-right {
   display: flex; align-items: center; gap: 8px; flex-shrink: 0; cursor: default;
@@ -88,7 +88,7 @@ ${floatingResizeHandleCss('#character-ui .float-resize')}
 #character-ui .portrait-frame {
   width: 160px; height: 160px;
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.5);
-  box-shadow: 0 0 16px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 14px rgba(0,0,0,0.4);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.85), 0 6px 14px rgba(0,0,0,0.5), inset 0 0 14px rgba(0,0,0,0.4);
   background: rgba(8,12,22,0.9);
   overflow: hidden; position: relative;
 }
@@ -110,7 +110,7 @@ ${floatingResizeHandleCss('#character-ui .float-resize')}
 }
 #character-ui .portrait-actions button:hover,
 #character-ui button.upload-btn:hover {
-  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.2); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3);
+  background: rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.2); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #character-ui .portrait-actions button.danger {
   border-color: rgba(224,90,90,0.45); color: #ffb3b3; background: rgba(224,90,90,0.08);
@@ -133,10 +133,10 @@ ${floatingResizeHandleCss('#character-ui .float-resize')}
 #character-ui .stat-row .value {
   font-size: 14px; color: var(--ui-bright); letter-spacing: 0.5px; text-align: right;
 }
-#character-ui .stat-row .value.credits { color: #ffe08a; text-shadow: 0 0 8px rgba(255,210,70,0.35); }
+#character-ui .stat-row .value.credits { color: #ffe08a; text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7); }
 #character-ui .stat-row .value.law-good { color: #7fe0a0; }
 #character-ui .stat-row .value.law-mid { color: #ffe08a; }
-#character-ui .stat-row .value.law-bad { color: #ff8a7a; text-shadow: 0 0 8px rgba(224,90,90,0.4); }
+#character-ui .stat-row .value.law-bad { color: #ff8a7a; text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
 #character-ui .stat-row .ship-class {
   font-size: 11px; color: var(--ui-dim); opacity: 0.85; margin-top: 2px;
 }
@@ -150,7 +150,7 @@ ${floatingResizeHandleCss('#character-ui .float-resize')}
   padding: 6px 10px; outline: none;
 }
 #character-ui .name-field input:focus {
-  border-color: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.7); box-shadow: 0 0 10px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.25);
+  border-color: rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.7); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #character-ui .name-field button.apply {
   flex-shrink: 0;
@@ -158,7 +158,7 @@ ${floatingResizeHandleCss('#character-ui .float-resize')}
   padding: 6px 12px; cursor: pointer; font-family: monospace; font-size: 11px; letter-spacing: 1px;
 }
 #character-ui .name-field button.apply:hover {
-  background: rgba(127,224,160,0.22); box-shadow: 0 0 10px rgba(127,224,160,0.3);
+  background: rgba(127,224,160,0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65);
 }
 #character-ui .name-field button.apply:disabled {
   opacity: 0.4; cursor: not-allowed; box-shadow: none;
@@ -176,7 +176,7 @@ ${floatingResizeHandleCss('#character-ui .float-resize')}
   background: rgba(224,90,90,0.12); border: 1px solid rgba(224,90,90,0.5); color: #ffb3b3;
   padding: 7px 16px; cursor: pointer; font-family: monospace; letter-spacing: 1px;
 }
-#character-ui button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 0 12px rgba(224,90,90,0.35); }
+#character-ui button.close:hover { background: rgba(224,90,90,0.22); box-shadow: 0 2px 6px rgba(0,0,0,0.65); }
 #character-ui input[type=file] { display: none; }
 #character-ui .upload-err {
   font-size: 10px; color: #ff9a7a; max-width: 160px; text-align: center; margin-top: 2px;
@@ -192,7 +192,7 @@ ${floatingResizeHandleCss('#character-ui .float-resize')}
 #character-ui .ship-stats-panel .ss-title {
   font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--ui-accent); opacity: 0.9; margin: 0 0 6px;
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.4);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #character-ui .ship-stats-panel .ss-name {
   font-size: 11px; color: var(--ui-bright); letter-spacing: 0.3px;
@@ -323,7 +323,7 @@ export function createCharacterUI(container, gameState) {
           </div>
         </div>
         <div class="footer">
-          <span class="hint">Kill pirates to rebuild standing · F1 / Esc to close · Drag header to move</span>
+          <span class="hint">Kill pirates to rebuild standing · Close button or F1 to close · Drag header to move</span>
         </div>
       </div>
       <div class="float-resize" title="Resize" aria-label="Resize character panel"></div>

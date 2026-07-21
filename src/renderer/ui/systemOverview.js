@@ -17,10 +17,10 @@ const STYLE = `
   border: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-left: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
   border-right: 1px solid rgba(var(--ui-ar),var(--ui-ag),var(--ui-ab),0.45);
-  box-shadow: 0 0 16px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.3), inset 0 0 22px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.06);
-  filter:
-    drop-shadow(0 2px 3px rgba(0,0,0,0.7))
-    drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+  box-shadow:
+    0 2px 4px rgba(0,0,0,0.85),
+    0 6px 14px rgba(0,0,0,0.55);
+  filter: none;
 }
 #system-overview.visible { display: flex; flex-direction: column; }
 /* Clickable only when not in flight-mode (Space to free the mouse). */
@@ -31,7 +31,7 @@ const STYLE = `
 }
 #system-overview .ov-title {
   font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ui-accent);
-  text-shadow: 0 0 6px rgba(var(--ui-gr),var(--ui-gg),var(--ui-gb),0.5);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.7);
 }
 #system-overview .ov-hint {
   font-size: 8px; opacity: 0.55; letter-spacing: 0.3px; white-space: nowrap;
@@ -52,7 +52,7 @@ const STYLE = `
 }
 #system-overview .ov-row.waypoint {
   color: #7fe0a0; border-left-color: #7fe0a0;
-  text-shadow: 0 0 6px rgba(127,224,160,0.4);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
 }
 #system-overview .ov-row.mission { color: #ffb07a; }
 #system-overview .ov-row.warp { color: #c9a0ff; }
